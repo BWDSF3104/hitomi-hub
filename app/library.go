@@ -71,6 +71,13 @@ func readStateRow(db *sql.DB, galleryID int) (map[string]any, error) {
 	return map[string]any{"gallery_id": galleryID, "last_page": lastPage, "fully_read": fully, "favorite": fav}, nil
 }
 
+func recordPage(db *sql.DB, galleryID, pageIndex int, hash string) error {
+	_, err := db.Exec(`INSERT INTO pageorder (gallery_id, page_index, hash) VALUES (?, ?, ?)
+		ON CONFLICT(gallery_id, page_index) DO UPDATE SET hash = excluded.hash`,
+		galleryID, pageIndex, hash)
+	return err
+}
+
 func galleryDir(root string, galleryID int) string {
 	return filepath.Join("Galleries", strconv.Itoa(galleryID))
 }

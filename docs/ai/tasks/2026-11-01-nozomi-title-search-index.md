@@ -28,6 +28,13 @@ hitomi に server-side の全文検索 API はなく、client は `hash_term`（
 
 `app/check.go` + `hub.exe check`。`bookmark_queries` を 1 回引いて `galleries` に無い id だけを記録し `last_run_at` を更新。multi-term は term ごとの nozomi 集合の共通部分（`TestSearchQueryIntersectsTermsAndLanguage` で lock）。`language:` term は fetch せず lang を設定し、単独 `language:x` は `/n/index-<lang>.nozomi`（`nozomiPathParts` を term 単位に修正）。`notify` 列は現行実装では未使用。
 
+### エクスポート（cbz・pdf）
+
+`app/export.go` + `app/pdf.go` + `hub.exe export`。page 順は新設の `pageorder`（download 時に記録）、無ければ `files` 行の rowid 順。entry 名 `NNN_<hash>.<ext>`・zip は Store。`hit`/`scan_error`/`missing` は skip。`--out` は root 内限定。
+
+- `recordFile` に `gallery_id` を追加（path の `<gallery_dir>/<id>/` から解析）。過去の行は scan 再実行で埋まる
+- pdf は decoder が通る形式のみ（webp・png・jpeg）。webp は `golang.org/x/image/webp`（pure Go）。AVIF は pure-Go decoder が無く skip。1 ページ 1 画像・FlateDecode の raw RGB
+
 ## Verification（2026-11-01）
 
 - `go vet ./...` clean、`go test -count=1 ./...` → ok（23 tests）。追加: `TestHashTermIsSHA256Prefix`、`TestDecodeNodeMatchesSearchlibLayout`、`TestIndexTokensSplitsHyphenAndUnderscore`、`TestSearchTitleIntersectsTokensInFirstTokenOrder`、`TestSearchTitleDescendsToLeafNode`、`TestDecodeIDsLengthGuard`
@@ -39,6 +46,12 @@ checkpoint 10（`check`）:
 - `go vet ./...` clean、`go test -count=1 ./...` → ok（26 tests）。追加: `TestRunSavedQueriesTracksNewGalleries`、`TestRunSavedQueriesUsesIndexForPlainQuery`、`TestSearchQueryIntersectsTermsAndLanguage`
 - live: `check --limit 10` → `artist:kikunyi language:japanese` で 10 件記録、再実行で残り 15 件、3 回目は 0 件（新着判定は `galleries` 行）。`female:yuri language:english` は 25 件 seen・0 新着（multi-term が正しく解けた）
 - `list --list queries` の `last_run_at` が `2026-10-31T19:33:38Z` で更新されたことを確認
+
+checkpoint 11（`export`）:
+
+- `go vet ./...` clean、`go test -count=1 ./...` → ok（30 tests）。追加: `TestExportCBZUsesPageOrderAndSkipsHit`（Store method 確認）、`TestExportCBZFallsBackToInsertionOrder`、`TestExportPDFWritesPagesAndSkipsUndecodable`、`TestExportRefusesOutputOutsideRoot`
+- live: `export --id 4294614` → cbz entry `001_2d18a9a8…webp`（method 0・210784 bytes）。`--format pdf` → `4294614.pdf` 2114910 bytes・`%PDF-1.4`・`/Count 1`・xref `startxref 2114723`・`%%EOF`
+- `scan` 再実行（`--no-vt`）で `files.gallery_id` が path から埋まり、過去の行（4252697）でも export が 1 entry を出した
 
 ## 解った既知問題
 

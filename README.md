@@ -25,6 +25,7 @@ hub.exe read --id <id> --page N [--complete]
 hub.exe fav --id <id> [--unfav]
 hub.exe list --list unread | favorites | queries
 hub.exe check --lang english [--limit N]                       # 保存検索の新着を追跡（galleries に記録）
+hub.exe export --id <id> [--format cbz|pdf] [--out <file>]     # page 順で cbz / decoder が通れば pdf
 hub.exe view [--port 8731]                      # 1 ページのローカル Web ビューア（127.0.0.1）
 go build -o hub.exe .                                   # CGO_ENABLED=0
 ```
@@ -41,6 +42,8 @@ hitomi-hub/
 │   ├── searchindex.go         # galleriesindex の B-tree 降下（hash_term・node 解码・token 共通部分）
 │   ├── library.go             # galleries upsert・read_state・favorite・bookmark_queries
 │   ├── check.go               # 保存検索の新着追跡（term ごとの集合の共通部分・last_run_at）
+│   ├── export.go              # cbz エクスポート（page 順・Store・hit/scan_error skip）
+│   ├── pdf.go                 # pdf エクスポート（webp/png/jpeg decoder・FlateDecode の raw RGB）
 │   ├── viewer.go              # ビューア（1 ページ Web・local-first・path guard）
 │   ├── ui.html                # embed される単一ページ（外部 asset なし）
 │   ├── ggset.go               # gg.js（ltn）から生成した sharding 集合

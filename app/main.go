@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -198,13 +199,27 @@ func addFinding(db *sql.DB, path, sha, rule, detail string) error {
 	return err
 }
 
-func recordFile(db *sql.DB, path, sha string, size int64, ext, magic, status, source string) error {
-	_, err := db.Exec(`INSERT INTO files (path, sha256, size, ext, magic, scan_status, scan_source, scan_time)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+func recordFile(db *sql.DB, path string, galleryID int, sha string, size int64, ext, magic, status, source string) error {
+	_, err := db.Exec(`INSERT INTO files (path, gallery_id, sha256, size, ext, magic, scan_status, scan_source, scan_time)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET scan_status = excluded.scan_status, scan_source = excluded.scan_source,
-		scan_time = excluded.scan_time, sha256 = excluded.sha256, magic = excluded.magic`,
-		path, sha, size, ext, magic, status, source, nowISO())
+		scan_time = excluded.scan_time, sha256 = excluded.sha256, magic = excluded.magic,
+		gallery_id = excluded.gallery_id`,
+		path, galleryID, sha, size, ext, magic, status, source, nowISO())
 	return err
+}
+
+// galleryIDForPath は `<gallery_dir>/<id>/<file>` の `<id>` を読む（scan は path からしか判断できない）
+func galleryIDForPath(rel, galleryDirName string) int {
+	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
+	if len(parts) < 2 || parts[0] != galleryDirName {
+		return 0
+	}
+	id, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0
+	}
+	return id
 }
 
 func verifyMissing(db *sql.DB, root string) (int, error) {
@@ -250,7 +265,7 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 	}
 	if status == "scan_error" {
 		summary["scan_error"]++
-		_ = recordFile(db, rel, sha, fileSize(path), ext, magic, status, "structural")
+		_ = recordFile(db, rel, galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries")), sha, fileSize(path), ext, magic, status, "structural")
 		return status
 	}
 	if status != "hit" && ext != "" && scanTargets[ext] && cfg.Yr != "" {
@@ -290,7 +305,7 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 	if cfg.VirusTotal.Enabled {
 		source = "structural+virustotal"
 	}
-	_ = recordFile(db, rel, sha, fileSize(path), ext, magic, status, source)
+		_ = recordFile(db, rel, galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries")), sha, fileSize(path), ext, magic, status, source)
 	return status
 }
 
@@ -312,6 +327,8 @@ type flags struct {
 	unfav    bool
 	list     string
 	port     int
+	format   string
+	out      string
 }
 
 func main() {
@@ -338,6 +355,8 @@ func main() {
 	fsFlags.BoolVar(&f.unfav, "unfav", false, "clear favorite instead of setting it")
 	fsFlags.StringVar(&f.list, "list", "", "unread | favorites | queries")
 	fsFlags.IntVar(&f.port, "port", 0, "viewer port (default 8731)")
+	fsFlags.StringVar(&f.format, "format", "cbz", "export format: cbz | pdf")
+	fsFlags.StringVar(&f.out, "out", "", "export output file (default Galleries/<id>.<format>)")
 	_ = fsFlags.Parse(args)
 
 	if dataDir == "" {
@@ -480,7 +499,7 @@ func main() {
 		format := orDefault(cfg.Hitomi.ImageFormat, "webp")
 		attempted := 0
 		written := 0
-		for _, entry := range info.Files {
+		for i, entry := range info.Files {
 			if f.limit > 0 && attempted >= f.limit {
 				break
 			}
@@ -496,9 +515,33 @@ func main() {
 				continue
 			}
 			written++
+			if err := recordPage(db, info.ID, i+1, entry.Hash); err != nil {
+				fmt.Fprintf(os.Stderr, "pageorder: %s\n", err.Error())
+			}
 			processFile(db, cfg, state, root, path, summary)
 		}
 		printJSON(map[string]any{"gallery_id": info.ID, "attempted": attempted, "written": written, "summary": summary})
+	case "export":
+		id, err := targetID(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "export: "+err.Error())
+			os.Exit(2)
+		}
+		var result map[string]any
+		switch f.format {
+		case "cbz":
+			result, err = exportCBZ(db, cfg, root, id, f.out)
+		case "pdf":
+			result, err = exportPDF(db, cfg, root, id, f.out)
+		default:
+			fmt.Fprintln(os.Stderr, "export: format must be cbz or pdf")
+			os.Exit(2)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "export: "+err.Error())
+			os.Exit(1)
+		}
+		printJSON(result)
 	case "read":
 		id, err := targetID(f)
 		if err != nil {
@@ -529,6 +572,14 @@ func main() {
 			os.Exit(1)
 		}
 		printJSON(map[string]any{"gallery_id": id, "favorite": boolToInt(!f.unfav)})
+	case "check":
+		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		results, err := runSavedQueries(db, client, root, f.lang, f.limit)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check: "+err.Error())
+			os.Exit(1)
+		}
+		printJSON(results)
 	case "list":
 		rows, err := listRows(db, f.list)
 		if err != nil {
@@ -562,7 +613,7 @@ func boolToInt(value bool) int {
 var valueFlags = map[string]bool{
 	"root": true, "gallery-dir": true, "data-dir": true, "term": true, "lang": true,
 	"title": true, "page": true, "id": true, "url": true, "limit": true, "name": true, "query": true,
-	"list": true, "port": true,
+	"list": true, "port": true, "format": true, "out": true,
 }
 
 // findCommand はサブコマンドを許容位置で拾い、残りをフラグ引数として返す

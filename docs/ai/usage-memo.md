@@ -34,6 +34,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 .\hub.exe fav --id 4294614                                       # お気に入り（--unfav で解除）
 .\hub.exe list --list unread                                     # unread | favorites | queries
 .\hub.exe check --lang english --limit 10                        # 保存検索の新着を追跡し galleries に記録
+.\hub.exe export --id 4294614                                    # cbz（page 順）。--format pdf で pdf
 .\hub.exe search --term "female:yuri" --name "yuri-en" --query "female:yuri language:english"  # 保存検索
 .\hub.exe view --port 8731                                     # 1 ページのローカル Web ビューア（127.0.0.1）
 ```
@@ -57,6 +58,15 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - namespace なし（phrase・単一 word）は galleriesindex の token 共通部分
 - 新着判定は `galleries` 行の有無。重复実行は 0 件になる（実測: `artist:kikunyi language:japanese` → 10 件記録 → 再実行で残り 15 件 → 3 回目は 0）
 - `--limit N` は query ごとの記録上限。`notify` 列は現行実装では未使用
+
+### エクスポート（`export`）
+
+- page 順は `pageorder`（download 時に記録）。`pageorder` が無い gallery は `files` 行の挿入順（rowid）
+- entry 名は `NNN_<hash>.<ext>`。zip は Store（再圧縮なし）
+- `hit`・`scan_error` のファイルは skip。`missing`（ファイル消失）も skip。`--out` は root 外へ出せない
+- `files.gallery_id` を使う。過去の行は NULL なので `scan` を再実行すると path から埋まる（ON CONFLICT で更新）
+- pdf は decoder が通る形式のみ embed（webp・png・jpeg）。AVIF は pure-Go decoder が無いので skip。webp は `golang.org/x/image/webp`（pure Go・CGO なし）
+- pdf は 1 ページ 1 画像（MediaBox は画像サイズ・FlateDecode の raw RGB）
 
 ### 検索の分区規則（hitomi と同じ）
 
@@ -151,6 +161,7 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 | 既読管理 | 動作 | `read --id 4294614 --page 3` → `last_page=3`、`--complete` → `fully_read=1` |
 | お気に入り | 動作 | `fav --id` → `favorite=1`。`--unfav` で解除 |
 | 保存検索 | 動作 | `--name/--query` で `bookmark_queries` に記録、`list --list queries`。`check` で新着を galleries に記録し `last_run_at` 更新（実測: `artist:kikunyi language:japanese` → 10 件記録・再実行 15 件・3 回目 0） |
+| CBZ/PDF エクスポート | 動作 | `export --id 4294614` → cbz entry `001_<hash>.webp`（Store・page 順）。`--format pdf` → 1 ページ 1 画像（webp decoder が通る）。実測: cbz 1 entry・pdf 2114910 bytes・xref/EOF 確認 |
 | ウイルスチェック | 動作 | 構造検査 hit 2（`path_traversal`・`executable_entry`・`pdf_object:/Launch`）/ pass 1 / not_evaluated 1。VT cache・rate gate はテストで検証 |
 | VirusTotal | 動作（key 要） | key なしでは `no_key` を返し何も書かない。テストは mock（外部 API 呼ばず） |
 | YARA-X | 動作（任意） | `yr` 設定時に規則実行。integration test で 5 規則の hit を確認 |
@@ -165,7 +176,7 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 ## 未実装
 
-- CBZ/PDF エクスポート（DL 経路ができてから）
+- AVIF の pdf embed（pure-Go decoder が無い）
 - デバイス間同期
 - native GUI（1 ページ Web で代替。CGO・webview 依存を避けるため不採用）
 

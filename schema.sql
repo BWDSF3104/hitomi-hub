@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS files (
     missing_at_verify INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS pageorder (
+    gallery_id INTEGER NOT NULL REFERENCES galleries(gallery_id),
+    page_index INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    PRIMARY KEY (gallery_id, page_index)
+);
+
 CREATE TABLE IF NOT EXISTS scan_cache (
     sha256 TEXT PRIMARY KEY,
     verdict TEXT NOT NULL,
