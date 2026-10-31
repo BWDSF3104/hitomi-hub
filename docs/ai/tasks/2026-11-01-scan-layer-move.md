@@ -171,7 +171,9 @@ endpoint と呼出し方針は `decisions/2026-11-01-hitomi-client-endpoints.md`
   - `GET /files/4252697/899dc188…webp` → 200（357106 bytes）
   - `GET /files/4252697/../../hitomi.db` → 404（gallery dir 内に解消。外へ出ない）
   - `POST /api/read` → `last_page=9`→`1`、`POST /api/fav` → `favorite=0`（DB 更新を確認）
-  - browser（playwright）で `#/g/4252697` を開き title/tags・`203 files・local 1（format webp）`・local-first の src を表示。初期 hash は読まない（読まない場合は URL に `#` を付けて開く）
+  - browser（playwright）で `#/g/4252697` を開き title/tags・`203 files・local 1（format webp）`・local-first の src を表示。初期 hash は load 時に読む（`ui.html` の load 時 open を追加して再 build 後に確認。favicon 404 のみで console error なし）
+
+checkpoint B commit: `12f71fc`（push 済み）。使い方メモの正典は `docs/ai/usage-memo.md`、完成フォルダ側はコピー。
 
 ## 完了時 Memory Bank 操作
 
