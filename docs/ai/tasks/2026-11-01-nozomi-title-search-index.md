@@ -1,6 +1,6 @@
 # nozomiurlindex 降下（phrase・タイトル全文検索）実装
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-01
 **Next Action**: hitomi の search 経路と urlindex の实际格式を確認
 
