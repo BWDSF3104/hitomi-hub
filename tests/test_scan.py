@@ -16,18 +16,19 @@ from pathlib import Path
 import pytest
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "src"
+DATA_DIR = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import scan  # noqa: E402
 
-CFG = json.loads((SCRIPT_DIR / "config.example.json").read_text(encoding="utf-8"))
+CFG = json.loads((DATA_DIR / "config.example.json").read_text(encoding="utf-8"))
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
 def make_db(tmp_path: Path) -> sqlite3.Connection:
     conn = scan.open_db(tmp_path / "hitomi.db")
-    scan.ensure_schema(conn, SCRIPT_DIR / "schema.sql")
+    scan.ensure_schema(conn, DATA_DIR / "schema.sql")
     return conn
 
 
@@ -149,16 +150,16 @@ def test_run_yara_rules_on_fixture(tmp_path):
     if not yr.exists():
         pytest.skip("tools/yr.exe not present")
     cbz = make_zip(tmp_path / "100.cbz", {"../payload.exe": b"MZ\x90\x00", "bomb.webp": b"\x00" * 2000000})
-    rules = scan.run_yara(cbz, SCRIPT_DIR / "rules" / "structural.yar", str(yr), CFG["limits"])
+    rules = scan.run_yara(cbz, DATA_DIR / "rules" / "structural.yar", str(yr), CFG["limits"])
     assert "Zip_Path_Traversal" in rules
     assert "Zip_Executable_Entry" in rules
     assert "Zip_Decompression_Ratio" in rules
     spoofed = tmp_path / "image.png"
     spoofed.write_bytes(b"MZ\x90\x00" + b"\x00" * 60)
-    assert scan.run_yara(spoofed, SCRIPT_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["MZ_Header_At_Offset0"]
+    assert scan.run_yara(spoofed, DATA_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["MZ_Header_At_Offset0"]
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /OpenAction << /S /JavaScript /JS (x) >> >>\n")
-    assert scan.run_yara(pdf, SCRIPT_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["PDF_Structural_Risk"]
+    assert scan.run_yara(pdf, DATA_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["PDF_Structural_Risk"]
 
 
 def test_status_constraint_and_verify_missing(tmp_path):

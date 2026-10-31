@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-01
-**Next Action**: 単体静的バイナリ化（Go）の承認取得。yr 導入時は規則実行検証
+**Next Action**: 完成フォルダの manifest（exe + data ファイル）整備と、検索/閲覧/DL・既読・お気に入り層の実装。スキャン層の Go port は parity 検証済み
 
 ## 意図 / 背景
 
@@ -41,6 +41,114 @@ Common_Operations 側は `.gitignore` の `tools/*.exe` 行を取り消し（移
 - `--max-rules` は `yr` に存在しない（classic YARA のフラグ）。scan.py を `yr scan` の有効フラグ（`--timeout`/`--cpu-limit`/`--skip-larger`/`--fast-scan`）に修正。ndjson 解析を `parse_yara_output()` に分離
 - 規則実行結果（fixture・`--fast-scan --timeout 10 --cpu-limit 50`）: cbz で `Zip_Path_Traversal`・`Zip_Executable_Entry`・`Zip_Decompression_Ratio`、拡張子偽装 PNG で `MZ_Header_At_Offset0`、PDF で `PDF_Structural_Risk`
 - scan.py 端到端（`yr` 設定込み）: hit 3 / pass 0 / scan_error 0。findings に structural 8 件
+
+## checkpoint 3（2026-11-01）: Go 単体静的バイナリ port（アプリ本体）
+
+正典 data ファイルをリポジトリルート（完成フォルダ直下）へ移動: `schema.sql`、`rules/structural.yar`、`config.example.json`。Python 参照実装は `DATA_DIR`（`src` の親）から読む。Go 実装は exe と同フォルダの data ファイルを読む（`--data-dir` で上書き）。
+
+`app/`（Go 実装）:
+
+- `main.go`: CLI（`--root`/`--config`/`--gallery-dir`/`--data-dir`/`--no-vt`/`--verify`）、DB（`database/sql` + `modernc.org/sqlite`）、walk、findings 記録、`verify_missing`、JSON summary
+- `scan.go`: magic 判別、zip entry 検査（`max_entries` で切る・`infos[:max_entries]` と同じ）、PDF key 検査、status 決定
+- `vt.go`: hash-only lookup、分/日 rate gate、cache、`yr` 呼び出し（有効フラグのみ）、ndjson 解析
+- `scan_test.go`、`go.mod`/`go.sum`
+
+parity 方針: Python 参照実装と同じ status 語彙と同じ finding 文字列（`path_traversal:`、`executable_entry:`、`ratio_exceeded:`、`entry_size_exceeded:`、`entry_count_exceeded:`、`magic_mismatch:<ext>_vs_<magic>`、`mz_without_pe_header`、`bad_zip`）。
+
+FTS5 は現行 schema で未使用 → pure-Go ドライバの未確認領域に触れていない。導入する場合は使用前に `modernc.org/sqlite` の FTS5 対応を確認すること。
+
+### Verification（2026-11-01）
+
+- `go vet ./...` → clean
+- `go test ./...`（`app/`）→ ok 0.18s（magic 判別、zip findings、decompression ratio、status 語彙と `bad_zip`、VT rate gate（分・日・skipped）、ndjson 解析、data ファイル位置）
+- `python -m pytest tests/ -q` → 13 passed（0.89s。data ファイル移動に合わせて `DATA_DIR` を追加）
+- parity 点検 `docs/ai/tmp/parity_check.py`（fixture 7 件・`--no-vt`）→ status/findings 完全一致（`mismatches: []`）。両実装 summary: hit 3 / pass 2 / not_evaluated 1 / scan_error 1 / cached 0
+- build（`CGO_ENABLED=0 -trimpath -ldflags="-s -w"`）→ 19.5s、`scratch/dist/hub.exe` 10.9 MB（非追跡・exe はコミットしない）。ビルド済み exe を同一 fixture で実行 → summary 一致（exe 自身の検証）
+
+## checkpoint 4（2026-11-01）: 完成品フォルダと機能動作確認
+
+完成品フォルダ `output/hitomi-hub/`（exe + data ファイル）に `使い方メモ.md` を作成。
+
+機能点検（`docs/ai/tmp/feature_check.py`・fixture 4 件・exe 単体・VT key なし・外部 API 呼ばず）:
+
+| 機能 | 結果 |
+| --- | --- |
+| 検索 | 未実装（hitomi.la 通信口なし） |
+| 閲覧 | 未実装（UI なし。DB 参照のみ） |
+| 一括ダウンロード | 未実装 |
+| 既読管理 | `read_state` テーブル作成は成功。書き込み口なし（0 行） |
+| お気に入り | `read_state.favorite` 列あり。書き込み口なし |
+| ウイルスチェック（構造） | 動作: hit 2（`path_traversal`・`executable_entry`・`pdf_object:/Launch`）/ pass 1 / not_evaluated 1。files 4 件・findings 3 件を DB に記録 |
+| VirusTotal | `no_key` を返し何も書かない（key なし）。rate gate・cache はテストで検証済み |
+| `--verify` | 消失ファイルの `external_removal` 更新をテストで確認 |
+
+exe を data ファイルと同フォルダに置いた形（`--data-dir` 省略）で実行 → 参照実装と同一 summary。書き込みはフォルダ内（`hitomi.db`）に閉じる。
+
+- YARA は main ループで実質 no-op（`yr` は構造 findings 無しファイルにのみ走る。現行規則は構造検査と重複）。integration test（`run_yara` 直接呼出し）では規則.hit を確認 → `docs/ai/known-issues/2026-11-01-yara-no-op-in-main-loop.md` に記録
+
+## checkpoint 5（2026-11-01）: 検索・DL・既読・お気に入り層（Go 実装）
+
+追加: `app/hitomi.go`（nozomi 検索・gallery メタ・URL 構築・rate gate）、`app/library.go`（galleries upsert・read_state・favorite・bookmark_queries）、`app/ggset.go`（`gg.js` の 0 集合 2112 件を `docs/ai/tmp/gen_ggset.py` で生成）、CLI サブコマンド（`search`/`gallery`/`download`/`read`/`fav`/`list`）。`processFile()` を scan と download で共有。
+
+endpoint と呼出し方針は `decisions/2026-11-01-hitomi-client-endpoints.md`（実測で確定）。`api-rate-limits.md` の hitomi 行を運用値で更新。
+
+### Verification（2026-11-01）
+
+- `go vet ./...` clean。`go test ./...` → ok（13 tests・0.38s）。external API は呼ばない（`Client.fetch` mock）。テストで確認: URL 構築（実測値 `w2/1793469601/2488/<hash>.webp`）、nozomi decode（big-endian int32）と Range（page 2 → bytes=100-199）、gallery JSON 解析（`id` は文字列）、rate gate、read/favorite/query の DB 書き込み
+- live 確認（6 呼出し・間隔 1000 ms）:
+  - `search --term "female:yuri" --lang english` → 25 件（page 1・page 2）
+  - `gallery --id 4294614` → title `Heroine Profile⑪`・22 files
+  - `download --id 4294614 --limit 2` → 2 件保存。files に sha256・magic `webp`・status `not_evaluated` 記録（実体は webp）
+  - `read --id 4294614 --page 3` → `last_page=3`。`read --id 4294613 --complete` → `fully_read=1`（gallery 行を先に upsert する修正後）
+  - `fav --id 4294614` → `favorite=1`。`list --list unread` / `favorites` / `queries` すべて期待通り
+- `ltn.hitomi.la` はこの環境で A レコードなし（解決失敗）。data 正典は `ltn.gold-usergeneratedcontent.net`
+
+## checkpoint 6（2026-11-01）: nozomi の namespace 分区規則と `--url`
+
+`app/hitomi.go` の `Search` を hitomi の `get_galleryids_for_query` と同じ分区規則に修正（実測で確定）:
+
+- `female:`/`male:` → area = `tag`・tag = クエリ全体
+- other namespace（`type:`/`artist:`/`group:`/`series:`/`character:`）→ area = namespace・tag = 右辺
+- `language:` → lang に反映
+- 旧実装は area を常に `tag` にしていたため `type:doujinshi` が 404（`/n/tag/type:doujinshi-japanese.nozomi`）
+
+`ExtractGalleryID`（hitomi の `GetGalleryId` と同じ `<digits>.html` 規則）を追加し、`gallery`/`download`/`read`/`fav` で `--url` を受けられるようにした（`targetID()`）。
+
+### Verification（2026-11-01）
+
+- `go vet ./...` clean。`go test ./...` → ok（13 tests・2.4s。`TestSearchNozomiDecodeAndRange` は area 分区と raw colon を期待するよう更新）
+- live 確認（追加 5 呼出し・間隔 1000 ms）:
+  - `search --term "female:yuri" --lang english --page 1` → raw colon（`/n/tag/female:yuri-english.nozomi`）で 25 件
+  - `search --term "type:doujinshi" --lang japanese --page 1` → `/n/type/doujinshi-japanese.nozomi`（200・1192956 bytes）で 25 件
+  - `gallery --url "https://hitomi.la/doujinshi/ケモ姉さん10-日本語-4252697.html"` → id 4252697 を抽出、title `Kemo Nee-san 10`（`ケモ姉さん10`）・203 files・artists `kikunyi`・groups `kimuchi-tei`
+  - 同一 URL で `read --page 1` → `last_page=1`、`fav` → `favorite=1`、`list --list favorites` に表示
+- namespace なし multi-word / タイトル全文検索は `nozomiurlindex` の B-tree 降下が必要で未実装 → `docs/ai/known-issues/2026-11-01-plain-title-search-needs-index.md`
+- `使い方メモ.md` に `--url` と分区規則、全文検索の制限を追加。`hub.exe` 再ビルド（10.9 MB）
+
+## checkpoint 7（2026-11-01）: 実装済み層の動作確認と 2 件の修正
+
+### 修正
+
+1. サブコマンド位置（`app/main.go` の `findCommand`）
+   - 旧: 最初の非フラグ語をサブコマンドと解釈 → `hub.exe --root <path> --no-vt` で `<path>` をコマンドと誤読し、`--root` の値が `--no-vt` になって DB path が `app\--no-vt\hitomi.db` で失敗（sqlite error 14）
+   - `valueFlags` の値を消費するフラグを踏んで走査する方式に変更。サブコマンドは前後どちらに置いても可。テスト `TestFindCommandKeepsFlagValues`（4 ケース）
+2. ダウンロードの URL ext（`app/hitomi.go` の `StorageURL`）
+   - shard には webp / avif ののみ格納。実測: hash `2d18a9a8…42b89` は `…/2488/<hash>.webp` → 200（210784 bytes）、同じ hash の `.jpg` → 404
+   - `galleryinfo.files[].name` の ext（例 `001.jpg`）は元の形式で、shard の ext と違う。旧実装は name の ext を URL に使って全件 404（203 件）
+   - URL は保存形式（既定 webp、config `hitomi.image_format`）で組み、保存名は `<hash>.<format>`
+   - `--limit` は成功数ではなく試行数を上限化（失敗時に上限を無視して全件試行していた）
+
+### Verification（2026-11-01）
+
+- `go vet ./...` clean、`go test -count=1 ./...` → ok（15 tests・2.4s。追加: `TestFindCommandKeepsFlagValues`、`TestStorageURLUsesFormatNotNameExt`）
+- `python -m pytest tests/ -q` → 13 passed（0.39s）
+- live（`scratch/live`・呼出し 6 件・間隔 1000 ms）:
+  - `search --term "artist:kikunyi" --lang japanese --page 1` → 25 件（4252697 を含む）
+  - `gallery --url "...-4252697.html"` → title `Kemo Nee-san 10`・203 files・artists `kikunyi`・groups `kimuchi-tei`
+  - `download --id 4294614 --limit 1` → 1 件保存（attempted 1）
+  - `download --url "...4252697.html" --limit 1` → 1 件保存（attempted 1・修正前は 203 件試行で全 404）
+  - scan summary（`--no-vt --verify`）: not_evaluated 3（画像は引擎なし。clean を約束しない）。files 行に sha256・magic `webp`・path を記録
+  - read/fav（`--url`）: `last_page=7`、`favorite=1`、`list --list favorites` に 3 行
 
 ## 完了時 Memory Bank 操作
 

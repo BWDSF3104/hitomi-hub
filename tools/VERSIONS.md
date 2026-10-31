@@ -10,9 +10,20 @@
   - 2026-11-01 取得・照合済み。実測 `dbe8c1ec5d59d8a81c777d949c518fb5e75f1026d3419bca7817727c5d47b327` = GitHub API の asset digest と一致
   - `gh attestation verify` は attestation 未登録（HTTP 404）のため判断根拠は GitHub API の digest 一致。出典は VirusTotal 公式リポジトリ（github-actions 発行）
 - 導入先: `tools/yr.exe`（非追跡）。`yr --version` → `yara-x-cli 1.22.1`
-- 用途: 構造規則 `src/rules/structural.yar` の実行引擎
+- 用途: 構造規則 `rules/structural.yar`（リポジトリルート＝完成フォルダ直下）の実行引擎
 - 留意点: このビルドは msvc target。クリーン環境では `vcruntime140.dll`（VC++ ランタイム）を要求する可能性がある。純粋なコピペ運用が優先なら `yr` なしで `scan.py` の構造検査のみで完結させられる
 - 実行時の上限フラグ（`yr scan` に有効なフラグのみ）: `--timeout 10 --cpu-limit 50 --skip-larger 67108864 --fast-scan --output-format ndjson`。classic YARA の `--max-rules` は `yr` に存在しない
+
+## Go toolchain（開発環境のみ・インストール扱いせず scratch/ に展開）
+
+- 版: **go1.27.3**（stable）
+- asset: `go1.27.3.windows-amd64.zip`
+- 公開 SHA-256: `f26081f438319757f8a1b46d7d0b2c5ec7583d4038e485e0aa725cfde7885fff`
+  - 2026-11-01 取得・照合済み（実測 = 公開 digest 一致）
+- 展開先: `scratch/go/go`（非追跡）。`go version` → `go1.27.3 windows/amd64`
+- GOPATH/GOCACHE は `scratch/gopath`・`scratch/gocache`（非追跡）に隔離
+- ビルド: `CGO_ENABLED=0`（pure-Go・VC++ ランタイム不要）。SQLite ドライバは `modernc.org/sqlite` v1.61.1（CGO 不要）
+- 完成フォルダの形: `hub.exe`（単体静的バイナリ・非追跡）+ data ファイル（`schema.sql`・`rules/`・`config.example.json`）を同フォルダ直下に置く
 
 ## sqlite3 CLI（任意）
 
@@ -30,6 +41,13 @@
 - `zip.entries[i].compressed_size`
 
 配列反復は `for any entry in zip.entries : (expr)`。正規表現デリミタと衝突するため割り算は使わず `a > 100 * b` 形式で書く。
+
+## gg.js（hitomi の sharding 表・client ロジックの根拠）
+
+- 取得元: `https://ltn.gold-usergeneratedcontent.net/gg.js`（2026-11-01）
+- SHA-256: `f388cd6d64e0b845016354355b6de02eb117c81cf29edcc5c7a485b76f19e489`
+- `m(g)` の 0 集合（2112 件）を `docs/ai/tmp/gen_ggset.py` で `app/ggset.go` に生成。endpoint 実測値（`w2/1793469601/2488/<hash>.webp` = HTTP 200）で照合
+- 更新は明示操作とし、このdigest と生成物を同じ日に更新
 
 ## 不使用
 

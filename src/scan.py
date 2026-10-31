@@ -30,6 +30,9 @@ DEFAULT_LIMITS = {
 
 STATUS_VALUES = {"pass", "hit", "not_evaluated", "external_removal", "scan_error"}
 
+# 正典 data ファイル（schema.sql / rules/ / config.example.json）はリポジトリルート（完成フォルダ直下）
+DATA_DIR = Path(__file__).resolve().parent.parent
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -315,7 +318,6 @@ def verify_missing(conn: sqlite3.Connection, root: Path) -> int:
 
 
 def main(argv=None) -> int:
-    script_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description="hitomi hub scan layer (structural + hash reputation)")
     parser.add_argument("--root", default="")
     parser.add_argument("--config", default="")
@@ -325,7 +327,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     root = resolve_root(args.root)
-    cfg_path = Path(args.config) if args.config else script_dir / "config.example.json"
+    cfg_path = Path(args.config) if args.config else DATA_DIR / "config.example.json"
     cfg = load_config(cfg_path)
     if args.no_vt:
         cfg.setdefault("virustotal", {})["enabled"] = False
@@ -333,9 +335,9 @@ def main(argv=None) -> int:
         cfg["gallery_dir"] = args.gallery_dir
 
     db_path = root / cfg.get("db", "hitomi.db")
-    rules_path = script_dir / "rules" / "structural.yar"
+    rules_path = DATA_DIR / "rules" / "structural.yar"
     conn = open_db(db_path)
-    ensure_schema(conn, script_dir / "schema.sql")
+    ensure_schema(conn, DATA_DIR / "schema.sql")
 
     gallery = root / cfg.get("gallery_dir", "Galleries")
     if not gallery.exists():

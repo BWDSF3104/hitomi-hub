@@ -11,6 +11,13 @@
     "max_requests_per_minute": 4,
     "max_daily_requests": 500
   },
+  "hitomi": {
+    "min_interval_ms": 1000,
+    "max_retries": 3,
+    "retry_backoff_ms": 2000,
+    "user_agent": "hitomi-hub/0.1 (local hub client)",
+    "image_format": "webp"
+  },
   "limits": {
     "max_entries": 2000,
     "max_uncompressed_bytes": 209715200,

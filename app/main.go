@@ -1,0 +1,621 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+var errBadZip = errors.New("bad zip")
+
+var dataDir string
+
+type Limits struct {
+	MaxEntries       int   `json:"max_entries"`
+	MaxUncompressed  int64 `json:"max_uncompressed_bytes"`
+	MaxRatio         int64 `json:"max_ratio"`
+	MaxScanBytes     int64 `json:"max_scan_bytes"`
+	YrTimeoutSec     int   `json:"yr_timeout_sec"`
+	YrCpuLimit       int   `json:"yr_cpu_limit"`
+	YrSkipLarger     int64 `json:"yr_skip_larger"`
+	YrFastScan       bool  `json:"yr_fast_scan"`
+	MaxRequestsPerMinute int `json:"-"`
+	MaxDailyRequests int   `json:"-"`
+}
+
+type VTConfig struct {
+	Enabled       bool   `json:"enabled"`
+	HashOnly      bool   `json:"hash_only"`
+	UploadUnknown bool   `json:"upload_unknown"`
+	APIKeyEnv     string `json:"api_key_env"`
+	APIKey        string `json:"api_key"`
+	MaxPerMinute  int    `json:"max_requests_per_minute"`
+	MaxDaily      int    `json:"max_daily_requests"`
+}
+
+type Config struct {
+	DB         string        `json:"db"`
+	GalleryDir string        `json:"gallery_dir"`
+	Yr         string        `json:"yr"`
+	VirusTotal VTConfig      `json:"virustotal"`
+	Hitomi     HitomiConfig  `json:"hitomi"`
+	Limits     Limits        `json:"limits"`
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func readHead(path string, n int) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, n)
+	read, _ := f.Read(buf)
+	return buf[:read]
+}
+
+func nowISO() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
+}
+
+func defaultLimits() Limits {
+	return Limits{
+		MaxEntries:      2000,
+		MaxUncompressed: 209715200,
+		MaxRatio:        100,
+		MaxScanBytes:    2097152,
+		YrTimeoutSec:    10,
+		YrCpuLimit:      50,
+		YrSkipLarger:    67108864,
+		YrFastScan:      true,
+	}
+}
+
+func loadConfig(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := Config{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.Limits.MaxEntries == 0 {
+		cfg.Limits = defaultLimits()
+	}
+	if cfg.VirusTotal.MaxPerMinute == 0 {
+		cfg.VirusTotal.MaxPerMinute = 4
+	}
+	if cfg.VirusTotal.MaxDaily == 0 {
+		cfg.VirusTotal.MaxDaily = 500
+	}
+	if cfg.Hitomi.MinIntervalMS == 0 {
+		cfg.Hitomi = defaultHitomiConfig()
+	}
+	return cfg, nil
+}
+
+func resolveRoot(explicit string) string {
+	if explicit != "" {
+		abs, err := filepath.Abs(explicit)
+		if err == nil {
+			return abs
+		}
+		return explicit
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	probe := cwd
+	for probe != filepath.Dir(probe) {
+		if _, err := os.Stat(filepath.Join(probe, ".git")); err == nil {
+			return probe
+		}
+		probe = filepath.Dir(probe)
+	}
+	return cwd
+}
+
+func openDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+
+func ensureSchema(db *sql.DB) error {
+	text, err := os.ReadFile(filepath.Join(dataDir, "schema.sql"))
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(string(text))
+	return err
+}
+
+func cacheLookup(db *sql.DB, sha string) (string, string, string, string, error) {
+	var verdict, engine, threat, detail sql.NullString
+	err := db.QueryRow("SELECT verdict, engine, threat_name, detail FROM scan_cache WHERE sha256 = ?", sha).
+		Scan(&verdict, &engine, &threat, &detail)
+	if err == sql.ErrNoRows {
+		return "", "", "", "", nil
+	}
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return verdict.String, engine.String, threat.String, detail.String, nil
+}
+
+func cacheStore(db *sql.DB, sha, verdict, engine, threat, detail string) error {
+	_, err := db.Exec(`INSERT INTO scan_cache (sha256, verdict, engine, threat_name, detail, cached_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(sha256) DO UPDATE SET verdict = excluded.verdict, engine = excluded.engine,
+		threat_name = excluded.threat_name, detail = excluded.detail, cached_at = excluded.cached_at`,
+		sha, verdict, engine, threat, detail, nowISO())
+	return err
+}
+
+func addFinding(db *sql.DB, path, sha, rule, detail string) error {
+	_, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+		path, sha, rule, detail, nowISO())
+	return err
+}
+
+func recordFile(db *sql.DB, path, sha string, size int64, ext, magic, status, source string) error {
+	_, err := db.Exec(`INSERT INTO files (path, sha256, size, ext, magic, scan_status, scan_source, scan_time)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET scan_status = excluded.scan_status, scan_source = excluded.scan_source,
+		scan_time = excluded.scan_time, sha256 = excluded.sha256, magic = excluded.magic`,
+		path, sha, size, ext, magic, status, source, nowISO())
+	return err
+}
+
+func verifyMissing(db *sql.DB, root string) (int, error) {
+	rows, err := db.Query("SELECT path FROM files WHERE missing_at_verify = 0")
+	if err != nil {
+		return 0, err
+	}
+	paths := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		paths = append(paths, p)
+	}
+	rows.Close()
+	count := 0
+	for _, p := range paths {
+		if _, err := os.Stat(filepath.Join(root, p)); err != nil {
+			if _, err := db.Exec("UPDATE files SET missing_at_verify = 1, scan_status = 'external_removal' WHERE path = ?", p); err != nil {
+				return count, err
+			}
+			count++
+		}
+	}
+	return count, nil
+}
+
+func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int) string {
+	sha, err := Sha256File(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sha: %s\n", err.Error())
+		return ""
+	}
+	ext, magic, findings, status := ScanFile(path, cfg)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = path
+	}
+	for _, item := range findings {
+		_ = addFinding(db, rel, sha, "structural", item)
+	}
+	if status == "scan_error" {
+		summary["scan_error"]++
+		_ = recordFile(db, rel, sha, fileSize(path), ext, magic, status, "structural")
+		return status
+	}
+	if status != "hit" && ext != "" && scanTargets[ext] && cfg.Yr != "" {
+		for _, rule := range RunYara(path, rulesFile(root), cfg.Yr, cfg.Limits) {
+			findings = append(findings, rule)
+			_ = addFinding(db, rel, sha, "yara", rule)
+		}
+		if len(findings) > 0 {
+			status = "hit"
+		}
+	}
+	if status != "hit" && cfg.VirusTotal.Enabled && scanTargets[ext] {
+		verdict, engine, threat, detail, err := cacheLookup(db, sha)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cache: %s\n", err.Error())
+		} else if verdict != "" {
+			summary["cached"]++
+			if verdict == "hit" {
+				status = "hit"
+				_ = addFinding(db, rel, sha, engine, firstNonEmpty(detail, threat))
+			} else {
+				_ = addFinding(db, rel, sha, engine, "cache_hit")
+			}
+		} else {
+			result := VTLookup(sha, cfg, state, nil)
+			if result.Status == "pass" || result.Status == "hit" {
+				_ = cacheStore(db, sha, result.Status, "virustotal", result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))
+				if result.Status == "hit" {
+					status = "hit"
+					_ = addFinding(db, rel, sha, "virustotal", fmt.Sprintf("positives=%d", result.Positives))
+				}
+			}
+		}
+	}
+	summary[status] = summary[status] + 1
+	source := "structural"
+	if cfg.VirusTotal.Enabled {
+		source = "structural+virustotal"
+	}
+	_ = recordFile(db, rel, sha, fileSize(path), ext, magic, status, source)
+	return status
+}
+
+type flags struct {
+	root     string
+	gallery  string
+	noVT     bool
+	verify   bool
+	term     string
+	lang     string
+	page     int
+	id       int
+	urlArg   string
+	limit    int
+	name     string
+	query    string
+	complete bool
+	unfav    bool
+	list     string
+}
+
+func main() {
+	args := os.Args[1:]
+	cmd, args := findCommand(args)
+
+	fsFlags := flag.NewFlagSet(cmd, flag.ExitOnError)
+	f := &flags{}
+	fsFlags.StringVar(&f.root, "root", "", "workspace root (default: cwd, or nearest .git parent)")
+	fsFlags.StringVar(&f.gallery, "gallery-dir", "", "gallery dir under root (default: Galleries)")
+	fsFlags.StringVar(&dataDir, "data-dir", "", "data files (schema.sql, rules/, config.example.json)")
+	fsFlags.BoolVar(&f.noVT, "no-vt", false, "skip VirusTotal lookup")
+	fsFlags.BoolVar(&f.verify, "verify", false, "mark recorded files that no longer exist")
+	fsFlags.StringVar(&f.term, "term", "", "search term (nozomi)")
+	fsFlags.StringVar(&f.lang, "lang", "english", "language for nozomi search")
+	fsFlags.IntVar(&f.page, "page", 1, "result page (1 origin)")
+	fsFlags.IntVar(&f.id, "id", 0, "gallery id")
+	fsFlags.StringVar(&f.urlArg, "url", "", "gallery URL (id is parsed from it)")
+	fsFlags.IntVar(&f.limit, "limit", 0, "max files to download (0 = all)")
+	fsFlags.StringVar(&f.name, "name", "", "saved query name")
+	fsFlags.StringVar(&f.query, "query", "", "saved query text")
+	fsFlags.BoolVar(&f.complete, "complete", false, "mark read_state as fully_read")
+	fsFlags.BoolVar(&f.unfav, "unfav", false, "clear favorite instead of setting it")
+	fsFlags.StringVar(&f.list, "list", "", "unread | favorites | queries")
+	_ = fsFlags.Parse(args)
+
+	if dataDir == "" {
+		dataDir = filepath.Dir(executablePath())
+	}
+	root := resolveRoot(f.root)
+	cfgPath := filepath.Join(dataDir, "config.example.json")
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config: "+err.Error())
+		os.Exit(1)
+	}
+	if f.noVT {
+		cfg.VirusTotal.Enabled = false
+	}
+
+	dbPath := filepath.Join(root, orDefault(cfg.DB, "hitomi.db"))
+	db, err := openDB(dbPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "db: "+dbPath+": "+err.Error())
+		os.Exit(1)
+	}
+	defer db.Close()
+	if err := ensureSchema(db); err != nil {
+		fmt.Fprintln(os.Stderr, "schema: "+err.Error())
+		os.Exit(1)
+	}
+
+	summary := map[string]int{"pass": 0, "hit": 0, "not_evaluated": 0, "scan_error": 0, "cached": 0}
+	galleryRoot := filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries"))
+
+	switch cmd {
+	case "scan":
+		if _, err := os.Stat(galleryRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "gallery dir not found: %s\n", galleryRoot)
+			os.Exit(2)
+		}
+		files := []string{}
+		_ = filepath.WalkDir(galleryRoot, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			files = append(files, path)
+			return nil
+		})
+		sort.Strings(files)
+		state := &RateState{}
+		for _, path := range files {
+			processFile(db, cfg, state, root, path, summary)
+		}
+		if f.verify {
+			count, err := verifyMissing(db, root)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "verify: %s\n", err.Error())
+			}
+			summary["external_removal"] = count
+		}
+		printJSON(summary)
+	case "search":
+		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		ids, err := client.Search(f.term, f.lang, f.page)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "search: "+err.Error())
+			os.Exit(1)
+		}
+		for _, id := range ids {
+			if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+				fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
+			}
+		}
+		if f.name != "" && f.query != "" {
+			if err := addQuery(db, f.name, f.query, 0); err != nil {
+				fmt.Fprintf(os.Stderr, "query: %s\n", err.Error())
+			}
+		}
+		printJSON(map[string]any{"term": f.term, "lang": f.lang, "page": f.page, "ids": ids, "count": len(ids)})
+	case "gallery":
+		id, err := targetID(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
+			os.Exit(2)
+		}
+		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		info, err := client.Gallery(id)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
+			os.Exit(1)
+		}
+		if err := upsertGallery(db, info, galleryDir(root, info.ID)); err != nil {
+			fmt.Fprintf(os.Stderr, "upsert: %s\n", err.Error())
+		}
+		printJSON(info)
+	case "download":
+		id, err := targetID(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "download: "+err.Error())
+			os.Exit(2)
+		}
+		client := &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi}
+		info, err := client.Gallery(id)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
+			os.Exit(1)
+		}
+		target := filepath.Join(root, galleryDir(root, info.ID))
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "mkdir: "+err.Error())
+			os.Exit(1)
+		}
+		if err := upsertGallery(db, info, galleryDir(root, info.ID)); err != nil {
+			fmt.Fprintf(os.Stderr, "upsert: %s\n", err.Error())
+		}
+		state := &RateState{}
+		format := orDefault(cfg.Hitomi.ImageFormat, "webp")
+		attempted := 0
+		written := 0
+		for _, entry := range info.Files {
+			if f.limit > 0 && attempted >= f.limit {
+				break
+			}
+			attempted++
+			path := filepath.Join(target, entry.Hash+"."+format)
+			body, err := client.get(context.Background(), StorageURL(entry.Hash, format), [2]int64{-1, -1})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "download: %s\n", err.Error())
+				continue
+			}
+			if err := os.WriteFile(path, body, 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "write: %s\n", err.Error())
+				continue
+			}
+			written++
+			processFile(db, cfg, state, root, path, summary)
+		}
+		printJSON(map[string]any{"gallery_id": info.ID, "attempted": attempted, "written": written, "summary": summary})
+	case "read":
+		id, err := targetID(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "read: "+err.Error())
+			os.Exit(2)
+		}
+		if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
+			os.Exit(1)
+		}
+		if err := setReadState(db, id, f.page, f.complete); err != nil {
+			fmt.Fprintln(os.Stderr, "read: "+err.Error())
+			os.Exit(1)
+		}
+		printJSON(map[string]any{"gallery_id": id, "last_page": f.page, "fully_read": boolToInt(f.complete)})
+	case "fav":
+		id, err := targetID(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fav: "+err.Error())
+			os.Exit(2)
+		}
+		if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
+			os.Exit(1)
+		}
+		if err := setFavorite(db, id, !f.unfav); err != nil {
+			fmt.Fprintln(os.Stderr, "fav: "+err.Error())
+			os.Exit(1)
+		}
+		printJSON(map[string]any{"gallery_id": id, "favorite": boolToInt(!f.unfav)})
+	case "list":
+		rows, err := listRows(db, f.list)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "list: "+err.Error())
+			os.Exit(1)
+		}
+		printJSON(rows)
+	default:
+		fmt.Fprintln(os.Stderr, "unknown command: "+cmd)
+		os.Exit(2)
+	}
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+// valueFlags は値を消費するフラグ。findCommand がフラグの値をサブコマンドと誤読しないため
+var valueFlags = map[string]bool{
+	"root": true, "gallery-dir": true, "data-dir": true, "term": true, "lang": true,
+	"page": true, "id": true, "url": true, "limit": true, "name": true, "query": true,
+	"list": true, "port": true,
+}
+
+// findCommand はサブコマンドを許容位置で拾い、残りをフラグ引数として返す
+func findCommand(args []string) (string, []string) {
+	rest := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "" || strings.HasPrefix(arg, "-") {
+			rest = append(rest, arg)
+			name := strings.TrimLeft(arg, "-")
+			if !strings.Contains(name, "=") && valueFlags[name] && i+1 < len(args) {
+				i++
+				rest = append(rest, args[i])
+			}
+			continue
+		}
+		rest = append(rest, args[i+1:]...)
+		return arg, rest
+	}
+	return "scan", rest
+}
+
+func targetID(f *flags) (int, error) {
+	if f.urlArg != "" {
+		return ExtractGalleryID(f.urlArg)
+	}
+	if f.id == 0 {
+		return 0, errors.New("--id or --url is required")
+	}
+	return f.id, nil
+}
+
+func printJSON(value any) {
+	out, err := json.Marshal(value)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "json: "+err.Error())
+		return
+	}
+	fmt.Println(string(out))
+}
+
+func orDefault(value, def string) string {
+	if value == "" {
+		return def
+	}
+	return value
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func rulesFile(root string) string {
+	candidate := filepath.Join(root, "rules", "structural.yar")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return filepath.Join(dataDir, "rules", "structural.yar")
+}
+
+func recordDiscovered(db *sql.DB, galleryID int, dir string) error {
+	_, err := db.Exec(`INSERT INTO galleries (gallery_id, title, lang, dir, first_seen, last_seen)
+		VALUES (?, NULL, NULL, ?, ?, ?)
+		ON CONFLICT(gallery_id) DO UPDATE SET last_seen = excluded.last_seen`,
+		galleryID, dir, nowISO(), nowISO())
+	return err
+}
+
+func listRows(db *sql.DB, kind string) ([]map[string]any, error) {
+	query := ""
+	switch kind {
+	case "unread":
+		query = "SELECT gallery_id, last_page, fully_read, favorite FROM read_state WHERE fully_read = 0 ORDER BY gallery_id"
+	case "favorites":
+		query = "SELECT gallery_id, last_page, fully_read, favorite FROM read_state WHERE favorite = 1 ORDER BY gallery_id"
+	case "queries":
+		query = "SELECT id, name, query, last_run_at FROM bookmark_queries ORDER BY id"
+	default:
+		return nil, errors.New("kind must be unread, favorites or queries")
+	}
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		if kind == "queries" {
+			var id int
+			var name, q string
+			var last sql.NullString
+			if err := rows.Scan(&id, &name, &q, &last); err != nil {
+				return nil, err
+			}
+			out = append(out, map[string]any{"id": id, "name": name, "query": q, "last_run_at": last.String})
+			continue
+		}
+		var galleryID, lastPage, fully, fav int
+		if err := rows.Scan(&galleryID, &lastPage, &fully, &fav); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"gallery_id": galleryID, "last_page": lastPage,
+			"fully_read": fully, "favorite": fav})
+	}
+	return out, nil
+}
