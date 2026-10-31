@@ -18,6 +18,10 @@
     "user_agent": "hitomi-hub/0.1 (local hub client)",
     "image_format": "webp"
   },
+  "viewer": {
+    "port": 8731,
+    "bind": "127.0.0.1"
+  },
   "limits": {
     "max_entries": 2000,
     "max_uncompressed_bytes": 209715200,

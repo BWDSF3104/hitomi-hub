@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>hitomi hub viewer</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; }
+  h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
+  .cols { display: flex; gap: 1rem; align-items: flex-start; }
+  .side { width: 22rem; }
+  .main { flex: 1; min-width: 18rem; }
+  section { margin-bottom: 1rem; }
+  h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
+  form { display: flex; gap: .4rem; flex-wrap: wrap; }
+  input { padding: .35rem; background: #1d2126; color: #e8eaed; border: 1px solid #2f343b; }
+  button { padding: .35rem .6rem; background: #2f343b; color: #e8eaed; border: 0; cursor: pointer; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: .25rem 0; border-bottom: 1px solid #23272d; }
+  li a { color: #8ab4f8; text-decoration: none; }
+  .meta { font-size: .9rem; color: #9aa0a6; }
+  img.page { max-width: 100%; background: #1d2126; }
+  .note { font-size: .85rem; color: #f0a441; }
+</style>
+</head>
+<body>
+<h1>hitomi hub viewer（ローカル 1 ページ）</h1>
+<div class="cols">
+  <div class="side">
+    <section>
+      <h2>検索（nozomi）</h2>
+      <form id="search">
+        <input id="term" placeholder="female:yuri / artist:kikunyi" size="22">
+        <input id="lang" value="english" size="8">
+        <input id="page" value="1" size="4">
+        <button>search</button>
+      </form>
+      <ul id="results"></ul>
+    </section>
+    <section>
+      <h2>保存検索</h2>
+      <form id="query">
+        <input id="qname" placeholder="name" size="10">
+        <input id="qtext" placeholder="female:yuri language:english" size="22">
+        <button>save</button>
+      </form>
+      <ul id="queries"></ul>
+    </section>
+    <section>
+      <h2>お気に入り / 未読</h2>
+      <ul id="favorites"></ul>
+      <ul id="unread"></ul>
+    </section>
+  </div>
+  <div class="main">
+    <section>
+      <h2>閲覧</h2>
+      <div id="gallery" class="meta">gallery を選ぶ</div>
+      <div class="note" id="note"></div>
+      <img class="page" id="image" alt="">
+      <form id="nav">
+        <button id="prev">前</button>
+        <input id="pagenum" size="4">
+        <button id="next">次</button>
+        <button id="fav">お気に入り</button>
+      </form>
+    </section>
+  </div>
+</div>
+<script>
+const api = (p) => fetch(p).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || (r.status + " " + p));
+  return data;
+});
+const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify(body) }).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || (r.status + " " + p));
+  return data;
+});
+let current = { id: 0, page: 1, count: 0, favorite: 0 };
+
+function link(id) { return `<li><a href="#/g/${id}">${id}</a></li>`; }
+
+async function showLists() {
+  const lists = await api("/api/lists");
+  document.getElementById("queries").innerHTML = lists.queries.map((q) =>
+    `<li><a href="#/q/${encodeURIComponent(q.query)}">${q.name}</a> <span class="meta">${q.query}</span></li>`).join("");
+  document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
+    `<li><a href="#/g/${row.gallery_id}">${row.gallery_id}</a> <span class="meta">p${row.last_page}${row.fully_read ? " 既読" : ""}</span></li>`).join("") || "<li>なし</li>";
+  document.getElementById("unread").innerHTML = lists.unread.map((row) =>
+    `<li><a href="#/g/${row.gallery_id}">${row.gallery_id}</a> <span class="meta">p${row.last_page}</span></li>`).join("") || "<li>なし</li>";
+}
+
+async function open(id) {
+  const data = await api("/api/gallery/" + id);
+  const g = data.gallery, s = data.read_state;
+  current = { id: g.id, page: s.last_page || 1, count: g.files.length, favorite: s.favorite };
+  document.getElementById("gallery").innerHTML =
+    `<b>${g.title}</b> <span class="meta">${g.language} / ${g.type}</span><br>` +
+    `<span class="meta">${g.artists.join(", ")}${g.groups.length ? " / " + g.groups.join(", ") : ""}</span><br>` +
+    `<span class="meta">${g.tags.join(", ")}</span><br>` +
+    `<span class="meta">${g.files.length} files・local ${data.local}（format ${data.format}）</span>`;
+  document.getElementById("pagenum").value = current.page;
+  await showPage();
+  await showLists();
+}
+
+async function showPage() {
+  if (!current.id) return;
+  const data = await api(`/api/gallery/${current.id}/page/${current.page}`);
+  document.getElementById("image").src = data.src;
+  document.getElementById("note").textContent = data.local ? "local" : "cdn（未ダウンロード）";
+  await post("/api/read", { gallery_id: current.id, page: current.page });
+  await showLists();
+}
+
+document.getElementById("search").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const term = document.getElementById("term").value.trim();
+  const lang = document.getElementById("lang").value.trim() || "english";
+  const page = document.getElementById("page").value || "1";
+  try {
+    const data = await api(`/api/search?term=${encodeURIComponent(term)}&lang=${lang}&page=${page}`);
+    document.getElementById("results").innerHTML = data.ids.map(link).join("") || "<li>0 件</li>";
+    await showLists();
+  } catch (err) { document.getElementById("note").textContent = err.message; }
+});
+
+document.getElementById("query").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("qname").value.trim();
+  const text = document.getElementById("qtext").value.trim();
+  if (!name || !text) return;
+  try { await post("/api/query", { name, query: text }); await showLists(); }
+  catch (err) { document.getElementById("note").textContent = err.message; }
+});
+
+document.getElementById("nav").addEventListener("submit", (e) => { e.preventDefault(); });
+document.getElementById("prev").addEventListener("click", () => { if (current.page > 1) { current.page--; showPage(); } });
+document.getElementById("next").addEventListener("click", () => { if (current.page < current.count) { current.page++; showPage(); } });
+document.getElementById("fav").addEventListener("click", async () => {
+  if (!current.id) return;
+  const on = !current.favorite;
+  await post("/api/fav", { gallery_id: current.id, on });
+  current.favorite = on ? 1 : 0;
+  await showLists();
+});
+
+window.addEventListener("hashchange", () => {
+  const m = window.location.hash.match(/^#\/g\/(\d+)$/);
+  if (m) open(parseInt(m[1], 10));
+});
+
+showLists();
+const initial = window.location.hash.match(/^#\/g\/(\d+)$/);
+if (initial) open(parseInt(initial[1], 10));
+</script>
+</body>
+</html>

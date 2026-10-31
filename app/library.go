@@ -58,6 +58,19 @@ func markQueryRun(db *sql.DB, id int) error {
 	return err
 }
 
+func readStateRow(db *sql.DB, galleryID int) (map[string]any, error) {
+	var lastPage, fully, fav int
+	err := db.QueryRow("SELECT last_page, fully_read, favorite FROM read_state WHERE gallery_id = ?", galleryID).
+		Scan(&lastPage, &fully, &fav)
+	if err == sql.ErrNoRows {
+		return map[string]any{"gallery_id": galleryID, "last_page": 0, "fully_read": 0, "favorite": 0}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"gallery_id": galleryID, "last_page": lastPage, "fully_read": fully, "favorite": fav}, nil
+}
+
 func galleryDir(root string, galleryID int) string {
 	return filepath.Join("Galleries", strconv.Itoa(galleryID))
 }

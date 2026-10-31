@@ -150,6 +150,29 @@ endpoint と呼出し方針は `decisions/2026-11-01-hitomi-client-endpoints.md`
   - scan summary（`--no-vt --verify`）: not_evaluated 3（画像は引擎なし。clean を約束しない）。files 行に sha256・magic `webp`・path を記録
   - read/fav（`--url`）: `last_page=7`、`favorite=1`、`list --list favorites` に 3 行
 
+## checkpoint 8（2026-11-01）: 閲覧（ビューア）実装
+
+`app/viewer.go` + `app/ui.html`（embed）+ `view` サブコマンド。設計は `decisions/2026-11-01-viewer-single-page-web.md`。
+
+- native GUI 不採用（CGO・webview 依存が完成フォルダの前提を壊す）。1 ページのローカル Web を `127.0.0.1:8731`（config `viewer.port`/`viewer.bind`）
+- local-first 表示: `Galleries/<id>/<hash>.<format>` があれば `/files/...`、無ければ `StorageURL`
+- ページ表示で `POST /api/read` → `read_state` 更新（ページ到達基準）。`POST /api/fav`、`POST /api/query`
+- `GET /api/lists`（unread/favorites/queries）、`GET /api/search`、`GET /api/gallery/<id>`
+- path guard: `safeGalleryPath` が `filepath.Clean("/"+rel)` で gallery dir に固定（`..`・絶対路径は dir 内の名前に解消され外へ出られない）
+- SQLite 単一接続（`SetMaxOpenConns(1)`）で handler 同時書込みの SQLITE_BUSY を回避
+
+### Verification（2026-11-01）
+
+- `go vet ./...` clean、`go test -count=1 ./...` → ok（19 tests・2.6s。viewer 4 件: path guard、local-first・CDN fallback、read/fav/query handler、embed index）
+- live（`scratch/live`・exe 単体・hitomi 呼出し 0。guard 確認のみ）:
+  - `GET /` → 200（外部 asset なし。favicon 404 のみ）
+  - `GET /api/lists` → unread 2・favorites 3・queries 1
+  - `GET /api/gallery/4252697/page/1` → `local:true`、`src:/files/4252697/899dc188…webp`
+  - `GET /files/4252697/899dc188…webp` → 200（357106 bytes）
+  - `GET /files/4252697/../../hitomi.db` → 404（gallery dir 内に解消。外へ出ない）
+  - `POST /api/read` → `last_page=9`→`1`、`POST /api/fav` → `favorite=0`（DB 更新を確認）
+  - browser（playwright）で `#/g/4252697` を開き title/tags・`203 files・local 1（format webp）`・local-first の src を表示。初期 hash は読まない（読まない場合は URL に `#` を付けて開く）
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

@@ -18,11 +18,12 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 python src/scan.py --root <root> --gallery-dir Galleries
 hub.exe scan --root <root>
 hub.exe search --term "female:yuri" --lang english --page 1
-hub.exe gallery --id <id>
+hub.exe gallery --id <id> | --url <hitomi URL>
 hub.exe download --id <id> --limit N
 hub.exe read --id <id> --page N [--complete]
 hub.exe fav --id <id> [--unfav]
 hub.exe list --list unread | favorites | queries
+hub.exe view [--port 8731]                      # 1 ページのローカル Web ビューア（127.0.0.1）
 go build -o hub.exe .                                   # CGO_ENABLED=0
 ```
 
@@ -36,6 +37,8 @@ hitomi-hub/
 │   ├── vt.go                  # hash-only lookup・rate gate・cache・yr 呼び出し
 │   ├── hitomi.go              # nozomi 検索・gallery メタ・URL 構築・呼出し間隔
 │   ├── library.go             # galleries upsert・read_state・favorite・bookmark_queries
+│   ├── viewer.go              # ビューア（1 ページ Web・local-first・path guard）
+│   ├── ui.html                # embed される単一ページ（外部 asset なし）
 │   ├── ggset.go               # gg.js（ltn）から生成した sharding 集合
 │   ├── *_test.go
 │   └── go.mod                 # modernc.org/sqlite（pure-Go・CGO なし）

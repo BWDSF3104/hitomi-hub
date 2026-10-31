@@ -45,12 +45,18 @@ type VTConfig struct {
 	MaxDaily      int    `json:"max_daily_requests"`
 }
 
+type UIConfig struct {
+	Port int    `json:"port"`
+	Bind string `json:"bind"`
+}
+
 type Config struct {
 	DB         string        `json:"db"`
 	GalleryDir string        `json:"gallery_dir"`
 	Yr         string        `json:"yr"`
 	VirusTotal VTConfig      `json:"virustotal"`
 	Hitomi     HitomiConfig  `json:"hitomi"`
+	Viewer     UIConfig      `json:"viewer"`
 	Limits     Limits        `json:"limits"`
 }
 
@@ -111,6 +117,12 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Hitomi.MinIntervalMS == 0 {
 		cfg.Hitomi = defaultHitomiConfig()
 	}
+	if cfg.Viewer.Port == 0 {
+		cfg.Viewer.Port = 8731
+	}
+	if cfg.Viewer.Bind == "" {
+		cfg.Viewer.Bind = "127.0.0.1"
+	}
 	return cfg, nil
 }
 
@@ -144,6 +156,8 @@ func openDB(path string) (*sql.DB, error) {
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		return nil, err
 	}
+	// viewer の handler が同時に書込むと SQLITE_BUSY になるため単一接続に固定
+	db.SetMaxOpenConns(1)
 	return db, nil
 }
 
@@ -296,6 +310,7 @@ type flags struct {
 	complete bool
 	unfav    bool
 	list     string
+	port     int
 }
 
 func main() {
@@ -320,6 +335,7 @@ func main() {
 	fsFlags.BoolVar(&f.complete, "complete", false, "mark read_state as fully_read")
 	fsFlags.BoolVar(&f.unfav, "unfav", false, "clear favorite instead of setting it")
 	fsFlags.StringVar(&f.list, "list", "", "unread | favorites | queries")
+	fsFlags.IntVar(&f.port, "port", 0, "viewer port (default 8731)")
 	_ = fsFlags.Parse(args)
 
 	if dataDir == "" {
@@ -492,6 +508,15 @@ func main() {
 			os.Exit(1)
 		}
 		printJSON(rows)
+	case "view":
+		if f.port > 0 {
+			cfg.Viewer.Port = f.port
+		}
+		v := newViewer(db, cfg, root)
+		if err := v.serve(); err != nil {
+			fmt.Fprintln(os.Stderr, "viewer: "+err.Error())
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintln(os.Stderr, "unknown command: "+cmd)
 		os.Exit(2)
