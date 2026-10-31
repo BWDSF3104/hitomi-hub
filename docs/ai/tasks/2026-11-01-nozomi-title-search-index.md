@@ -24,11 +24,21 @@ hitomi に server-side の全文検索 API はなく、client は `hash_term`（
 
 実装（`app/searchindex.go`）: `hashTerm`・`decodeNode`・`locateKey`・`isLeaf`・`decodeIDs`（length guard）・`indexVersion`（client 内 cache）・`indexNode`・`indexData`・`IndexIDs`・`indexTokens`・`SearchTitle`。`main.go` に `--title` を追加（`valueFlags` 登録済み）。`--page`/`--limit` は共通部分の後に適用し、DB 記録は表示分のみ。
 
+### 保存検索の新着追跡（`check`）
+
+`app/check.go` + `hub.exe check`。`bookmark_queries` を 1 回引いて `galleries` に無い id だけを記録し `last_run_at` を更新。multi-term は term ごとの nozomi 集合の共通部分（`TestSearchQueryIntersectsTermsAndLanguage` で lock）。`language:` term は fetch せず lang を設定し、単独 `language:x` は `/n/index-<lang>.nozomi`（`nozomiPathParts` を term 単位に修正）。`notify` 列は現行実装では未使用。
+
 ## Verification（2026-11-01）
 
 - `go vet ./...` clean、`go test -count=1 ./...` → ok（23 tests）。追加: `TestHashTermIsSHA256Prefix`、`TestDecodeNodeMatchesSearchlibLayout`、`TestIndexTokensSplitsHyphenAndUnderscore`、`TestSearchTitleIntersectsTokensInFirstTokenOrder`、`TestSearchTitleDescendsToLeafNode`、`TestDecodeIDsLengthGuard`
 - live: `search --title "kemo nee-san 10"` → total 22・page 1 に 22 件・`4252697` を含む（scratch `idx_phrase.py` の照合と一致）
 - version 実測: `1793467632`。word `kemo` data 402908 bytes（100726 件）
+
+checkpoint 10（`check`）:
+
+- `go vet ./...` clean、`go test -count=1 ./...` → ok（26 tests）。追加: `TestRunSavedQueriesTracksNewGalleries`、`TestRunSavedQueriesUsesIndexForPlainQuery`、`TestSearchQueryIntersectsTermsAndLanguage`
+- live: `check --limit 10` → `artist:kikunyi language:japanese` で 10 件記録、再実行で残り 15 件、3 回目は 0 件（新着判定は `galleries` 行）。`female:yuri language:english` は 25 件 seen・0 新着（multi-term が正しく解けた）
+- `list --list queries` の `last_run_at` が `2026-10-31T19:33:38Z` で更新されたことを確認
 
 ## 解った既知問題
 

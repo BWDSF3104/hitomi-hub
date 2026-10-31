@@ -60,6 +60,38 @@ func TestSearchNozomiDecodeAndRange(t *testing.T) {
 	}
 }
 
+func TestSearchQueryIntersectsTermsAndLanguage(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	var urls []string
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "/n/tag/female:yuri-english.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return beIDs([]uint32{20, 30, 99}), nil
+	}
+	ids, err := c.SearchQuery("female:yuri type:doujinshi language:english", "english", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != 20 || ids[1] != 30 {
+		t.Errorf("intersection: got %v", ids)
+	}
+	if len(urls) != 2 {
+		t.Errorf("expected one fetch per term, got %v", urls)
+	}
+	if !strings.Contains(urls[0], "/n/tag/female:yuri-english.nozomi") || !strings.Contains(urls[1], "/n/type/doujinshi-english.nozomi") {
+		t.Errorf("paths: got %v", urls)
+	}
+	ids, err = c.SearchQuery("language:japanese", "english", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 3 || !strings.Contains(urls[2], "/n/index-japanese.nozomi") {
+		t.Errorf("language-only query: got %v ids %v", urls, ids)
+	}
+}
+
 func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	// galleryinfo の name が 001.jpg でも shard 保存形式は webp（同じ hash の .jpg は 404 実測）
 	want := "https://w2.gold-usergeneratedcontent.net/1793469601/2488/" + sampleHash + ".webp"

@@ -33,6 +33,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 .\hub.exe read --id 4294614 --page 3                             # read_state 更新（--complete で完全既読）
 .\hub.exe fav --id 4294614                                       # お気に入り（--unfav で解除）
 .\hub.exe list --list unread                                     # unread | favorites | queries
+.\hub.exe check --lang english --limit 10                        # 保存検索の新着を追跡し galleries に記録
 .\hub.exe search --term "female:yuri" --name "yuri-en" --query "female:yuri language:english"  # 保存検索
 .\hub.exe view --port 8731                                     # 1 ページのローカル Web ビューア（127.0.0.1）
 ```
@@ -48,6 +49,14 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - 保存検索の自動更新（新着追跡）は未実装。保存と一覧のみ
 
 `--id` の代わりに `--url` を `gallery`/`download`/`read`/`fav` で使える（hitomi の `GetGalleryId` と同じ規則で `<digits>.html` から id を抽出）。
+
+### 保存検索の新着追跡（`check`）
+
+- `bookmark_queries` の各 query を 1 回引き、`galleries` にまだ無い id だけを記録し、`last_run_at` を更新
+- multi-term query は term ごとの集合の共通部分（nozomi）。`language:` term は fetch せず lang を設定（hitomi と同じ）。`language:x` 単独は `/n/index-<lang>.nozomi`
+- namespace なし（phrase・単一 word）は galleriesindex の token 共通部分
+- 新着判定は `galleries` 行の有無。重复実行は 0 件になる（実測: `artist:kikunyi language:japanese` → 10 件記録 → 再実行で残り 15 件 → 3 回目は 0）
+- `--limit N` は query ごとの記録上限。`notify` 列は現行実装では未使用
 
 ### 検索の分区規則（hitomi と同じ）
 
@@ -141,7 +150,7 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 | 一括ダウンロード | 動作 | `--limit 2` で 2 件保存し、そのまま scan 実行（files に sha256・magic・status を記録） |
 | 既読管理 | 動作 | `read --id 4294614 --page 3` → `last_page=3`、`--complete` → `fully_read=1` |
 | お気に入り | 動作 | `fav --id` → `favorite=1`。`--unfav` で解除 |
-| 保存検索 | 動作 | `--name/--query` で `bookmark_queries` に記録、`list --list queries` |
+| 保存検索 | 動作 | `--name/--query` で `bookmark_queries` に記録、`list --list queries`。`check` で新着を galleries に記録し `last_run_at` 更新（実測: `artist:kikunyi language:japanese` → 10 件記録・再実行 15 件・3 回目 0） |
 | ウイルスチェック | 動作 | 構造検査 hit 2（`path_traversal`・`executable_entry`・`pdf_object:/Launch`）/ pass 1 / not_evaluated 1。VT cache・rate gate はテストで検証 |
 | VirusTotal | 動作（key 要） | key なしでは `no_key` を返し何も書かない。テストは mock（外部 API 呼ばず） |
 | YARA-X | 動作（任意） | `yr` 設定時に規則実行。integration test で 5 規則の hit を確認 |
@@ -156,7 +165,6 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 ## 未実装
 
-- 保存検索の自動更新（新着追跡）
 - CBZ/PDF エクスポート（DL 経路ができてから）
 - デバイス間同期
 - native GUI（1 ページ Web で代替。CGO・webview 依存を避けるため不採用）
