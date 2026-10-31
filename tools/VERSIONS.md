@@ -14,14 +14,15 @@
 - 留意点: このビルドは msvc target。クリーン環境では `vcruntime140.dll`（VC++ ランタイム）を要求する可能性がある。純粋なコピペ運用が優先なら `yr` なしで `scan.py` の構造検査のみで完結させられる
 - 実行時の上限フラグ（`yr scan` に有効なフラグのみ）: `--timeout 10 --cpu-limit 50 --skip-larger 67108864 --fast-scan --output-format ndjson`。classic YARA の `--max-rules` は `yr` に存在しない
 
-## Go toolchain（開発環境のみ・インストール扱いせず scratch/ に展開）
+## Go toolchain（開発環境・winget でインストール済み）
 
-- 版: **go1.27.3**（stable）
-- asset: `go1.27.3.windows-amd64.zip`
-- 公開 SHA-256: `f26081f438319757f8a1b46d7d0b2c5ec7583d4038e485e0aa725cfde7885fff`
-  - 2026-11-01 取得・照合済み（実測 = 公開 digest 一致）
-- 展開先: `scratch/go/go`（非追跡）。`go version` → `go1.27.3 windows/amd64`
-- GOPATH/GOCACHE は `scratch/gopath`・`scratch/gocache`（非追跡）に隔離
+- 版: **GoLang.Go 1.27.0**（winget package）
+- 実測 toolchain version: `go1.27.3 windows/amd64`（`app/go.mod` が `go 1.27.3` を要求し、winget MSI 起動時に toolchain 1.27.3 が解決される）
+- 導入コマンド: `winget install --id GoLang.Go -e --source winget --accept-package-agreements --accept-source-agreements`
+- 実測インストール path: `C:\Program Files\Go\bin\go.exe`
+- User PATH に追加済み: `C:\Users\fujim\go\bin`
+- 留意点: 起動済み Kilo tool process には PATH refresh が反映されないことがある。この shell で `go` が失敗しても、正典 Go path `C:\Program Files\Go\bin\go.exe` を絶対パスで使う。Kilo プロセスを再起動すると `go` として使える想定。
+- scratch Go path は今後の開発環境参照用として不適切。この project の dev command では `go` を使う。
 - ビルド: `CGO_ENABLED=0`（pure-Go・VC++ ランタイム不要）。SQLite ドライバは `modernc.org/sqlite` v1.61.1（CGO 不要）
 - 完成フォルダの形: `hub.exe`（単体静的バイナリ・非追跡）+ data ファイル（`schema.sql`・`rules/`・`config.example.json`）を同フォルダ直下に置く
 

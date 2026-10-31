@@ -44,6 +44,8 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /api/search", v.search)
 	mux.HandleFunc("GET /api/gallery/{id}", v.gallery)
 	mux.HandleFunc("GET /api/gallery/{id}/page/{page}", v.pageSource)
+	mux.HandleFunc("GET /api/thumb/{hash}", v.thumbProxy)
+	mux.HandleFunc("GET /api/image/{hash}", v.imageProxy)
 	mux.HandleFunc("POST /api/read", v.read)
 	mux.HandleFunc("POST /api/fav", v.fav)
 	mux.HandleFunc("POST /api/query", v.query)
@@ -73,6 +75,35 @@ func (v *viewer) index(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("content-type", "text/html; charset=utf-8")
 	w.Write(page)
+}
+
+// hitomi の galleryinfo.hash は 64 hex を前提にしているが、galleryblock の tn path で
+// 46〜64 hex の hash を見た。proxy は len>=3 lowercase hex を許可する。
+func validHash(hash string) bool {
+	if len(hash) < 3 {
+		return false
+	}
+	for _, c := range hash {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func imageContentType(format string) string {
+	switch format {
+	case "webp":
+		return "image/webp"
+	case "avif":
+		return "image/avif"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "png":
+		return "image/png"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // safeGalleryPath は完成フォルダ内の gallery dir に閉じた路径解決（`..` と絶対路径を拒否）
@@ -121,9 +152,15 @@ func (v *viewer) lists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
-	term := r.URL.Query().Get("term")
-	if term == "" {
-		http.Error(w, "term is required", http.StatusBadRequest)
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		q = r.URL.Query().Get("query")
+	}
+	if q == "" {
+		q = r.URL.Query().Get("term")
+	}
+	if q == "" {
+		http.Error(w, "q or term is required", http.StatusBadRequest)
 		return
 	}
 	page, err := strconv.Atoi(orDefault(r.URL.Query().Get("page"), "1"))
@@ -131,7 +168,12 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "page must be >= 1", http.StatusBadRequest)
 		return
 	}
-	ids, err := v.client.Search(term, orDefault(r.URL.Query().Get("lang"), "english"), page)
+	limit, err := strconv.Atoi(orDefault(r.URL.Query().Get("limit"), "0"))
+	if err != nil || limit < 0 {
+		http.Error(w, "limit must be 0 or positive", http.StatusBadRequest)
+		return
+	}
+	ids, total, err := v.client.SearchHTML(q, orDefault(r.URL.Query().Get("lang"), "all"), page, limit)
 	if err != nil {
 		http.Error(w, "search: "+err.Error(), http.StatusBadGateway)
 		return
@@ -139,7 +181,34 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
 	}
-	jsonOut(w, map[string]any{"term": term, "lang": r.URL.Query().Get("lang"), "page": page, "ids": ids})
+	results := []map[string]any{}
+	for _, id := range ids {
+		results = append(results, v.searchResult(id))
+	}
+	jsonOut(w, map[string]any{"query": q, "lang": r.URL.Query().Get("lang"), "page": page,
+		"total": total, "ids": ids, "results": results})
+}
+
+func (v *viewer) searchResult(id int) map[string]any {
+	info, err := v.info(id)
+	if err != nil {
+		return map[string]any{"id": id, "error": err.Error(), "tags": []string{}, "pages": []map[string]any{}}
+	}
+	pages := []map[string]any{}
+	for i := 0; i < len(info.Files) && i < 4; i++ {
+    format := imageFormat(v.cfg)
+		hash := info.Files[i].Hash
+		pages = append(pages, map[string]any{"page": i + 1, "hash": hash, "format": format,
+			"src": "/api/thumb/" + hash + "?format=" + format})
+	}
+	thumbnail := ""
+	if len(info.Files) > 0 {
+    format := imageFormat(v.cfg)
+		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format
+	}
+	return map[string]any{"id": id, "title": info.Title, "language": info.Language,
+		"type": info.Type, "url": info.URL, "tags": info.Tags, "artists": info.Artists,
+		"count": len(info.Files), "local": v.localCount(id), "thumbnail": thumbnail, "pages": pages}
 }
 
 func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
@@ -196,8 +265,50 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	jsonOut(w, map[string]any{"page": page, "src": StorageURL(entry.Hash, format), "local": false,
+	jsonOut(w, map[string]any{"page": page, "src": "/api/image/" + entry.Hash + "?format=" + format, "local": false,
 		"width": entry.Width, "height": entry.Height})
+}
+
+func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	if !validHash(hash) {
+		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)
+		return
+	}
+	format := imageFormat(v.cfg)
+	if q := r.URL.Query().Get("format"); q != "" {
+		format = q
+	}
+	body, err := v.client.get(r.Context(), ThumbnailURL(hash, format), [2]int64{-1, -1})
+	if err != nil {
+		http.Error(w, "thumb: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("content-type", imageContentType(format))
+	w.Header().Set("cross-origin-resource-policy", "same-origin")
+	w.Header().Set("cache-control", "private, max-age=604800")
+	w.Write(body)
+}
+
+func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	if !validHash(hash) {
+		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)
+		return
+	}
+	format := imageFormat(v.cfg)
+	if q := r.URL.Query().Get("format"); q != "" {
+		format = q
+	}
+	body, err := v.client.get(r.Context(), StorageURL(hash, format), [2]int64{-1, -1})
+	if err != nil {
+		http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("content-type", imageContentType(format))
+	w.Header().Set("cross-origin-resource-policy", "same-origin")
+	w.Header().Set("cache-control", "private, max-age=604800")
+	w.Write(body)
 }
 
 func (v *viewer) read(w http.ResponseWriter, r *http.Request) {

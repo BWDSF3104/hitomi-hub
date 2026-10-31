@@ -7,19 +7,29 @@
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; }
   h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
   .cols { display: flex; gap: 1rem; align-items: flex-start; }
-  .side { width: 22rem; }
-  .main { flex: 1; min-width: 18rem; }
+  .side { width: 30rem; }
+  .main { flex: 1; min-width: 20rem; }
   section { margin-bottom: 1rem; }
   h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
-  form { display: flex; gap: .4rem; flex-wrap: wrap; }
+  form { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
   input { padding: .35rem; background: #1d2126; color: #e8eaed; border: 1px solid #2f343b; }
   button { padding: .35rem .6rem; background: #2f343b; color: #e8eaed; border: 0; cursor: pointer; }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { padding: .25rem 0; border-bottom: 1px solid #23272d; }
-  li a { color: #8ab4f8; text-decoration: none; }
+  li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
+  a { color: #8ab4f8; text-decoration: none; }
   .meta { font-size: .9rem; color: #9aa0a6; }
-  img.page { max-width: 100%; background: #1d2126; }
   .note { font-size: .85rem; color: #f0a441; }
+  .card { display: flex; gap: .5rem; align-items: flex-start; }
+  .cover, .mini img, .strip img { object-fit: cover; background: #1d2126; }
+  .cover { width: 130px; height: 130px; }
+  .mini img { width: 58px; height: 58px; }
+  .card .text { flex: 1; min-width: 12rem; }
+  .card a { font-weight: 600; }
+  .tags, .mini, .strip { margin-top: .35rem; }
+  .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
+  .strip img { width: 90px; height: 90px; }
+  .current { border: 2px solid #8ab4f8; }
+  .pageimg { max-width: 100%; max-height: 78vh; background: #1d2126; object-fit: contain; }
 </style>
 </head>
 <body>
@@ -27,13 +37,14 @@
 <div class="cols">
   <div class="side">
     <section>
-      <h2>検索（nozomi）</h2>
+      <h2>検索（hitomi search.html と同じ term routing）</h2>
       <form id="search">
-        <input id="term" placeholder="female:yuri / artist:kikunyi" size="22">
-        <input id="lang" value="english" size="8">
+        <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
+        <input id="lang" value="all" size="8">
         <input id="page" value="1" size="4">
-        <button>search</button>
+        <button>検索</button>
       </form>
+      <div id="count" class="meta"></div>
       <ul id="results"></ul>
     </section>
     <section>
@@ -54,15 +65,18 @@
   <div class="main">
     <section>
       <h2>閲覧</h2>
-      <div id="gallery" class="meta">gallery を選ぶ</div>
-      <div class="note" id="note"></div>
-      <img class="page" id="image" alt="">
+      <div id="gallery" class="meta">検索結果から gallery を選ぶ</div>
+      <div id="note" class="note"></div>
+      <img class="pageimg" id="image" alt="">
       <form id="nav">
         <button id="prev">前</button>
         <input id="pagenum" size="4">
         <button id="next">次</button>
+        <button id="complete">読み完了</button>
         <button id="fav">お気に入り</button>
       </form>
+      <div class="meta">キーボード: ← / → でページ送リ</div>
+      <div class="strip" id="thumbs"></div>
     </section>
   </div>
 </div>
@@ -78,55 +92,99 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
   if (!r.ok) throw new Error(data.error || (r.status + " " + p));
   return data;
 });
-let current = { id: 0, page: 1, count: 0, favorite: 0 };
 
-function link(id) { return `<li><a href="#/g/${id}">${id}</a></li>`; }
+let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
 
-async function showLists() {
-  const lists = await api("/api/lists");
-  document.getElementById("queries").innerHTML = lists.queries.map((q) =>
-    `<li><a href="#/q/${encodeURIComponent(q.query)}">${q.name}</a> <span class="meta">${q.query}</span></li>`).join("");
-  document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
-    `<li><a href="#/g/${row.gallery_id}">${row.gallery_id}</a> <span class="meta">p${row.last_page}${row.fully_read ? " 既読" : ""}</span></li>`).join("") || "<li>なし</li>";
-  document.getElementById("unread").innerHTML = lists.unread.map((row) =>
-    `<li><a href="#/g/${row.gallery_id}">${row.gallery_id}</a> <span class="meta">p${row.last_page}</span></li>`).join("") || "<li>なし</li>";
+function escapeHTML(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+function route(id, page) {
+  return "#/g/" + id + "/page/" + page;
+}
+function setRoute(id, page) {
+  history.replaceState(null, "", route(id, page));
+}
+function setGalleryMeta(data) {
+  const g = data.gallery, s = data.read_state;
+  current = { id: g.id, page: current.page || s.last_page || 1, count: g.files.length, favorite: s.favorite, files: g.files, format: data.format || "webp" };
+  document.getElementById("gallery").innerHTML =
+    "<b>" + escapeHTML(g.title || current.id) + "</b> <span class='meta'>" + escapeHTML(g.language) + " / " + escapeHTML(g.type) + "</span><br>" +
+    "<span class='meta'>" + escapeHTML((g.artists || []).join(", ")) + "</span><br>" +
+    "<span class='meta'>" + escapeHTML((g.tags || []).join(", ")) + "</span><br>" +
+    "<span class='meta'>" + current.count + " files・local " + data.local + "（format " + escapeHTML(data.format) + "）</span>";
+  document.getElementById("pagenum").value = current.page;
+}
+function fileFormatFromName(name) {
+  const ext = String(name || "").split(".").pop().toLowerCase();
+  if (ext === "jpeg") return "jpg";
+  return ext || "webp";
 }
 
-async function open(id) {
-  const data = await api("/api/gallery/" + id);
-  const g = data.gallery, s = data.read_state;
-  current = { id: g.id, page: s.last_page || 1, count: g.files.length, favorite: s.favorite };
-  document.getElementById("gallery").innerHTML =
-    `<b>${g.title}</b> <span class="meta">${g.language} / ${g.type}</span><br>` +
-    `<span class="meta">${g.artists.join(", ")}${g.groups.length ? " / " + g.groups.join(", ") : ""}</span><br>` +
-    `<span class="meta">${g.tags.join(", ")}</span><br>` +
-    `<span class="meta">${g.files.length} files・local ${data.local}（format ${data.format}）</span>`;
-  document.getElementById("pagenum").value = current.page;
-  await showPage();
-  await showLists();
+function thumbURL(hash, format) {
+  if (!hash) return "";
+  return "/api/thumb/" + hash + "?format=" + encodeURIComponent(format || "webp");
 }
 
 async function showPage() {
   if (!current.id) return;
-  const data = await api(`/api/gallery/${current.id}/page/${current.page}`);
+  const data = await api("/api/gallery/" + current.id + "/page/" + current.page);
   document.getElementById("image").src = data.src;
   document.getElementById("note").textContent = data.local ? "local" : "cdn（未ダウンロード）";
+  document.getElementById("pagenum").value = current.page;
+  setRoute(current.id, current.page);
   await post("/api/read", { gallery_id: current.id, page: current.page });
   await showLists();
+  highlightStrip();
 }
-
-document.getElementById("search").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const term = document.getElementById("term").value.trim();
-  const lang = document.getElementById("lang").value.trim() || "english";
-  const page = document.getElementById("page").value || "1";
+function renderStrip() {
+  document.getElementById("thumbs").innerHTML = current.files.slice(0, 20).map((entry, i) => {
+    const page = i + 1;
+    const src = thumbURL(entry.hash, current.format || entry.format || "webp");
+    return "<a href='" + route(current.id, page) + "'><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' loading='lazy' src='" + src + "' alt='" + page + "'></a>";
+  }).join("");
+}
+function highlightStrip() {
+  document.querySelectorAll("#thumbs img").forEach((img) => {
+    img.classList.toggle("current", Number(img.dataset.page) === current.page);
+  });
+}
+async function openGallery(id, page) {
+  const data = await api("/api/gallery/" + id);
+  setGalleryMeta(data);
+  if (page) current.page = page;
+  await showPage();
+  renderStrip();
+  await showLists();
+}
+async function showLists() {
+  const lists = await api("/api/lists");
+  document.getElementById("queries").innerHTML = lists.queries.map((q) =>
+    "<li><a href='#/q/" + encodeURIComponent(q.query) + "'>" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
+  document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
+    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
+  document.getElementById("unread").innerHTML = lists.unread.map((row) =>
+    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
+}
+async function runSearch() {
+  const q = document.getElementById("query").value.trim();
+  const lang = document.getElementById("lang").value.trim() || "all";
+  const page = Number(document.getElementById("page").value || "1");
   try {
-    const data = await api(`/api/search?term=${encodeURIComponent(term)}&lang=${lang}&page=${page}`);
-    document.getElementById("results").innerHTML = data.ids.map(link).join("") || "<li>0 件</li>";
+    const data = await api("/api/search?query=" + encodeURIComponent(q) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
+    document.getElementById("count").textContent = data.total + " 件・page " + data.page;
+    document.getElementById("results").innerHTML = data.results.map((r) => {
+      const mini = (r.pages || []).map((p) =>
+        "<a href='" + route(r.id, p.page) + "'><img data-id='" + r.id + "' data-page='" + p.page + "' loading='lazy' src='" + p.src + "' alt='" + p.page + "'></a>"
+      ).join("");
+      return "<li class='card'><a href='" + route(r.id, 1) + "'><img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'></a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.id) + "</a><div class='meta'>" + escapeHTML(r.language) + " / " + escapeHTML(r.type) + "・" + r.count + " files・local " + r.local + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div><div class='mini'>" + mini + "</div></div></li>";
+    }).join("") || "<li>0 件</li>";
     await showLists();
   } catch (err) { document.getElementById("note").textContent = err.message; }
-});
+}
 
+document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
 document.getElementById("query").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = document.getElementById("qname").value.trim();
@@ -135,10 +193,13 @@ document.getElementById("query").addEventListener("submit", async (e) => {
   try { await post("/api/query", { name, query: text }); await showLists(); }
   catch (err) { document.getElementById("note").textContent = err.message; }
 });
-
 document.getElementById("nav").addEventListener("submit", (e) => { e.preventDefault(); });
-document.getElementById("prev").addEventListener("click", () => { if (current.page > 1) { current.page--; showPage(); } });
-document.getElementById("next").addEventListener("click", () => { if (current.page < current.count) { current.page++; showPage(); } });
+document.getElementById("prev").addEventListener("click", async () => { if (current.page > 1) { current.page--; await showPage(); } });
+document.getElementById("next").addEventListener("click", async () => { if (current.page < current.count) { current.page++; await showPage(); } });
+document.getElementById("pagenum").addEventListener("change", async () => {
+  const page = Number(document.getElementById("pagenum").value || current.page);
+  if (current.id && page >= 1 && page <= current.count) { current.page = page; await showPage(); }
+});
 document.getElementById("fav").addEventListener("click", async () => {
   if (!current.id) return;
   const on = !current.favorite;
@@ -146,15 +207,46 @@ document.getElementById("fav").addEventListener("click", async () => {
   current.favorite = on ? 1 : 0;
   await showLists();
 });
-
-window.addEventListener("hashchange", () => {
-  const m = window.location.hash.match(/^#\/g\/(\d+)$/);
-  if (m) open(parseInt(m[1], 10));
+document.getElementById("complete").addEventListener("click", async () => {
+  if (!current.id) return;
+  await post("/api/read", { gallery_id: current.id, page: current.page, complete: true });
+  current.favorite = current.favorite;
+  await showLists();
+});
+document.getElementById("results").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-id][data-page]");
+  if (!t) return;
+  e.preventDefault();
+  await openGallery(Number(t.dataset.id), Number(t.dataset.page));
+});
+document.getElementById("thumbs").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-id][data-page]");
+  if (!t) return;
+  e.preventDefault();
+  await openGallery(Number(t.dataset.id), Number(t.dataset.page));
+});
+window.addEventListener("keydown", async (e) => {
+  if (!current.id || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
+  if (e.key === "ArrowLeft" && current.page > 1) { current.page--; await showPage(); }
+  if (e.key === "ArrowRight" && current.page < current.count) { current.page++; await showPage(); }
+});
+window.addEventListener("hashchange", async () => {
+  const g = window.location.hash.match(/^#\/g\/(\d+)(?:\/page\/(\d+))?$/);
+  if (g) { await openGallery(Number(g[1]), Number(g[2] || 1)); return; }
+  const q = window.location.hash.match(/^#\/q\/(.+)$/);
+  if (q) {
+    const text = decodeURIComponent(q[1]);
+    document.getElementById("query").value = text;
+    await runSearch();
+  }
 });
 
 showLists();
-const initial = window.location.hash.match(/^#\/g\/(\d+)$/);
-if (initial) open(parseInt(initial[1], 10));
+const initial = window.location.hash.match(/^#\/g\/(\d+)(?:\/page\/(\d+))?$/);
+if (initial) openGallery(Number(initial[1]), Number(initial[2] || 1));
+const initialQ = window.location.hash.match(/^#\/q\/(.+)$/);
+if (initialQ) { document.getElementById("query").value = decodeURIComponent(initialQ[1]); runSearch(); }
+else runSearch();
 </script>
 </body>
 </html>

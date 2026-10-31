@@ -68,6 +68,42 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - pdf は decoder が通る形式のみ embed（webp・png・jpeg）。AVIF は pure-Go decoder が無いので skip。webp は `golang.org/x/image/webp`（pure Go・CGO なし）
 - pdf は 1 ページ 1 画像（MediaBox は画像サイズ・FlateDecode の raw RGB）
 
+### `search.html` exact term 規則（2026-11-01 実測）
+
+- `search.html` の単一 word term は substring 検索ではなく `galleriesindex` の exact term key lookup（`hashTerm(term)`）で扱う。`furry` と `furr` と `fur` は別 term。
+- `hash_term('furry')` live key bytes: `a1d72c62`; Go `hashTerm("furry")` same。
+- Current live total: `furry` `32832`, `furr` `32837`, `fur` `47007`, `furryx` `0`。`furry` first ids: `4295047, 4294784, 4294785, 4294786, 4294788, 4294536, 4294426, 4294423, 4294422`。
+- CLI parity with rebuilt `hub.exe`:
+  - `search --term "furry" --lang all --page 1`: total `32832`, first ids `4295047, 4294784, 4294785, 4294786, 4294788`
+  - `search --term "furr" --lang all --page 1`: total `32837`
+  - `search --term "fur" --lang all --page 1`: total `47007`
+  - `search --term "furryx" --lang all --page 1`: total `0`
+- `results.js` の `do_search()` は order を再ソートせず、`get_galleryids_for_query()` の data order を results として使う。Go `SearchHTML` も index data order を保持し、`orderbydirection:asc` で reverse、`random` で shuffle する。
+- Viewer `/api/search?query=<q>&lang=<lang>&page=<page>` は plain exact term、colon term、negative term、order、pagination を `SearchHTML` に渡す。`lang=all` default。
+
+### Viewer UI / proxy（2026-11-01）
+
+- `http://127.0.0.1:8731` は 1 page single-page UI。結果一覧、cover thumbnail、mini page thumbnails、note、pagenum、reader controls を表示。
+- Browser ORB を避けるため画像は same-origin proxy を使う: `/api/thumb/<hash>?format=webp`、`/api/image/<hash>?format=webp`。UI の `pageSource` / `searchResult` は local file が優先、CDN は proxy path を返す。
+- `ThumbnailURL` は Hitomi live tn path に一致: `<tn bigtn dir>/<last hex char>/<prev two hex chars>/<hash>.<format>`。UI/proxy の tn format は `imageFormat(cfg)`（既定 `webp`）を使い、`fileExt(name)` は使わない。例: `https://tn.gold-usergeneratedcontent.net/webpbigtn/9/b8/2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89.webp`。Live HTML は `avifbigtn`/`webpbigtn` を使う。
+- `validHash` は lowercase hex length `>=3`。Live result hashes は 64 に限らない（48 chars など）。
+- `ggset.go` は current `https://ltn.gold-usergeneratedcontent.net/gg.js` から生成。Current `gg.b = 1793476801/`。`gg.m(3)=1`, `gg.m(3628)=1`, `gg.m(2488)=1`, `gg.m(1)=0`。
+- Live image proxy sample: `/api/image/098fa2e4529e651af3fe594fa57a57053598502d5ead2533edc03726d1f3f2ce?format=webp` returns `200` WEBP. Reader full image loads width `1997`.
+- Screenshot: `scratch\hitomi-usage\viewer-new-ui-loaded.png` (left cards and right reader visible).
+
+### 完成品フォルダ・git 管理（2026-11-01）
+
+- 完成品フォルダは `output\hitomi-hub\`。実体は `hub.exe` と同フォルダ直下の data file（`schema.sql`・`config.example.json`・`rules\structural.yar`・`使い方メモ.md`）。exe と `output/` は `.gitignore` で非追跡。
+- 開発 runtime・scratch・DB（`scratch/`、`*.db`、`scratch/go`、`scratch/gopath`、`scratch/gocache`）は git にコミットしない。repo が追跡するのは source・tests・docs・`tools/VERSIONS.md` など。
+- Go toolchain は winget で適切な開発環境としてインストール済み。この project の command では `go` を使う。
+- Kilo tool process の PATH refresh が反映されない場合は、正典 path を絶対パスで使う:
+  - `C:\Program Files\Go\bin\go.exe`
+- 開発 runtime・scratch・DB（`scratch/`、`*.db`、`scratch/gopath`、`scratch/gocache`）は git にコミットしない。repo が追跡するのは source・tests・docs・`tools/VERSIONS.md` など。
+- 完成 exe の build（pure-Go・CGO なし）:
+  - `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o output\hitomi-hub\hub.exe .`
+- 完成品起動: `hub.exe` を単体静的バイナリとして運用する。view mode は `hub.exe --root <runtime-root> view --port 8731`。`--root` を省略すると cwd または nearest `.git` parent を root とみなす。単体コピペフォルダで使うなら runtime root を完成品フォルダ内（または明示指定した runtime フォルダ）に限定する。
+- 現在の dev viewer は `output\hitomi-hub\hub.exe` から、runtime root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage` を明示して起動している。
+
 ### 検索の分区規則（hitomi と同じ）
 
 - `female:`/`male:` → area = `tag`、tag はクエリ全体（例 `/n/tag/female:yuri-english.nozomi`）

@@ -12,15 +12,15 @@ import (
 const sampleHash = "2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89"
 
 func TestImageURLMatchesLiveSample(t *testing.T) {
-	want := "https://w2.gold-usergeneratedcontent.net/1793469601/2488/" + sampleHash + ".webp"
+	want := "https://w2.gold-usergeneratedcontent.net/1793476801/2488/" + sampleHash + ".webp"
 	if got := ImageURL(sampleHash, "webp", "webp"); got != want {
 		t.Errorf("image url: got %s want %s", got, want)
 	}
 	if ggValue(sampleHash) != 2488 {
 		t.Errorf("gg value: got %d", ggValue(sampleHash))
 	}
-	if ggM(2488) != 1 || ggM(3) != 0 {
-		t.Errorf("gg.m: m(2488)=%d m(3)=%d", ggM(2488), ggM(3))
+	if ggM(2488) != 1 || ggM(3) != 1 || ggM(1) != 0 || ggM(3628) != 1 {
+		t.Errorf("gg.m: m(2488)=%d m(3)=%d m(1)=%d m(3628)=%d", ggM(2488), ggM(3), ggM(1), ggM(3628))
 	}
 }
 
@@ -94,7 +94,7 @@ func TestSearchQueryIntersectsTermsAndLanguage(t *testing.T) {
 
 func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	// galleryinfo の name が 001.jpg でも shard 保存形式は webp（同じ hash の .jpg は 404 実測）
-	want := "https://w2.gold-usergeneratedcontent.net/1793469601/2488/" + sampleHash + ".webp"
+	want := "https://w2.gold-usergeneratedcontent.net/1793476801/2488/" + sampleHash + ".webp"
 	if got := StorageURL(sampleHash, "webp"); got != want {
 		t.Errorf("storage url: got %s want %s", got, want)
 	}

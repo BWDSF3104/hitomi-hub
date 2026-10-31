@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"strings"
 )
 
 // isNewGallery は galleries にまだ無い gallery id
@@ -14,13 +13,13 @@ func isNewGallery(db *sql.DB, galleryID int) (bool, error) {
 	return count == 0, nil
 }
 
-// savedQueryIDs は保存検索文を 1 回引く。namespace 付き（multi-term）は nozomi の term 共通部分（page 1・newest first）、
-// namespace なし（phrase・単一 word）は galleriesindex の token 共通部分
+// savedQueryIDs は保存検索文を hitomi の results.js と同じ routing で 1 回引く。plain term は galleriesindex exact hash、colon term は nozomi。
 func savedQueryIDs(client *Client, query, lang string) ([]int, error) {
-	if strings.Contains(query, ":") {
-		return client.SearchQuery(query, lang, 1)
+	ids, _, err := client.SearchHTML(query, lang, 1, -1)
+	if err != nil {
+		return nil, err
 	}
-	return client.SearchTitle(query)
+	return ids, nil
 }
 
 // runSavedQueries は保存検索の新着を追跡し、表示分を galleries に記録して last_run_at を更新

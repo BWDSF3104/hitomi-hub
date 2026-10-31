@@ -343,7 +343,7 @@ func main() {
 	fsFlags.BoolVar(&f.noVT, "no-vt", false, "skip VirusTotal lookup")
 	fsFlags.BoolVar(&f.verify, "verify", false, "mark recorded files that no longer exist")
 	fsFlags.StringVar(&f.term, "term", "", "search term (nozomi)")
-	fsFlags.StringVar(&f.lang, "lang", "english", "language for nozomi search")
+	fsFlags.StringVar(&f.lang, "lang", "all", "search language (hitomi results.js default is all)")
 	fsFlags.StringVar(&f.title, "title", "", "phrase or title search via galleriesindex (B-tree)")
 	fsFlags.IntVar(&f.page, "page", 1, "result page (1 origin)")
 	fsFlags.IntVar(&f.id, "id", 0, "gallery id")
@@ -417,35 +417,25 @@ func main() {
 		printJSON(summary)
 	case "search":
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
-		mode := "nozomi"
-		var ids []int
+		mode := "html"
+		var shown []int
+		var total int
 		var err error
 		if f.title != "" {
 			mode = "index"
-			ids, err = client.SearchTitle(f.title)
-		} else {
-			ids, err = client.Search(f.term, f.lang, f.page)
-		}
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "search: "+err.Error())
-			os.Exit(1)
-		}
-		total := len(ids)
-		shown := ids
-		if mode == "index" {
-			start := (f.page - 1) * galleriesPerPage
-			if start > total {
-				shown = nil
-			} else {
-				end := start + galleriesPerPage
-				if end > total {
-					end = total
-				}
-				shown = ids[start:end]
+			ids, err := client.SearchTitle(f.title)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "search: "+err.Error())
+				os.Exit(1)
 			}
-		}
-		if f.limit > 0 && len(shown) > f.limit {
-			shown = shown[:f.limit]
+			total = len(ids)
+			shown = searchPageSlice(ids, f.page, f.limit)
+		} else {
+			shown, total, err = client.SearchHTML(f.term, f.lang, f.page, f.limit)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "search: "+err.Error())
+				os.Exit(1)
+			}
 		}
 		for _, id := range shown {
 			if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
@@ -457,8 +447,8 @@ func main() {
 				fmt.Fprintf(os.Stderr, "query: %s\n", err.Error())
 			}
 		}
-		printJSON(map[string]any{"mode": mode, "term": f.term, "title": f.title, "lang": f.lang,
-			"page": f.page, "total": total, "ids": shown, "count": len(shown)})
+		printJSON(map[string]any{"mode": mode, "query": orDefault(f.term, f.title), "title": f.title,
+			"lang": f.lang, "page": f.page, "total": total, "ids": shown, "count": len(shown)})
 	case "gallery":
 		id, err := targetID(f)
 		if err != nil {

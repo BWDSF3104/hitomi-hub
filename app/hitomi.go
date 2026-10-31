@@ -17,7 +17,6 @@ import (
 
 // hitomi の data 正典（ltn）。公式 API は無い。正典ドメインは ltn の common.js（domain2）から
 const hitomiDomain = "gold-usergeneratedcontent.net"
-const ggBucket = "1793469601/"
 const galleriesPerPage = 25
 
 type HitomiConfig struct {
@@ -140,6 +139,40 @@ func StorageURL(hash, format string) string {
 		format = "webp"
 	}
 	return ImageURL(hash, format, format)
+}
+
+// ThumbnailURL は hitomi の tn path と同じ。tn bigtn dir は galleryblock で webpbigtn/avifbigtn を使う。
+// galleryinfo `name` の ext は tn path の format として使わない。hash の末尾は `(last) / (prev two)`。
+func ThumbnailURL(hash, ext string) string {
+	if len(hash) < 3 {
+		return ""
+	}
+	if ext == "" {
+		ext = "webp"
+	}
+	ext = strings.ToLower(ext)
+	if ext == "jpeg" {
+		ext = "jpg"
+	}
+	last := hash[len(hash)-1:]
+	prev2 := hash[len(hash)-3 : len(hash)-1]
+	return "https://tn." + hitomiDomain + "/" + ext + "bigtn/" + last + "/" + prev2 + "/" + hash + "." + ext
+}
+
+// fileExt は galleryinfo `name` の ext。tn path の format には使わない。
+func fileExt(name string) string {
+	i := strings.LastIndex(name, ".")
+	if i < 0 || i+1 >= len(name) {
+		return "webp"
+	}
+	ext := strings.ToLower(name[i+1:])
+	if ext == "jpeg" {
+		ext = "jpg"
+	}
+	if ext == "" {
+		return "webp"
+	}
+	return ext
 }
 
 // SanitizeTerm は hitomi の sanitize と同じ形（小文字化・空白を _・区切り文字を保持）
