@@ -1,0 +1,23 @@
+{
+  "db": "hitomi.db",
+  "gallery_dir": "Galleries",
+  "yr": null,
+  "virustotal": {
+    "enabled": false,
+    "hash_only": true,
+    "upload_unknown": false,
+    "api_key_env": "VIRUSTOTAL_API_KEY",
+    "api_key": "",
+    "max_requests_per_minute": 4,
+    "max_daily_requests": 500
+  },
+  "limits": {
+    "max_entries": 2000,
+    "max_uncompressed_bytes": 209715200,
+    "max_ratio": 100,
+    "max_scan_bytes": 2097152,
+    "yr_timeout_sec": 10,
+    "yr_max_rules": 200,
+    "yr_cpu_limit": 50
+  }
+}

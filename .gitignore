@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+.kilo/
+# 単体 exe はコミットしない（版固定・digest 検証済みのもののみ。記録は tools/VERSIONS.md）
+tools/*.exe
+# 運用生成物
+*.db
+scratch/
+output/
+docs/ai/tmp/
