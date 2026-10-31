@@ -7,15 +7,29 @@
 - 版: **v1.22.1**（2026-10-26 release）
 - asset: `yara-x-v1.22.1-x86_64-pc-windows-msvc.zip`
 - 公開 SHA-256: `dbe8c1ec5d59d8a81c777d949c518fb5e75f1026d3419bca7817727c5d47b327`
-- 出典: VirusTotal 公式リポジトリの release（github-actions 発行。`gh attestation verify` で provenance 確認可）
-- 用途: 構造規則 `scripts/hitomi_hub/rules/structural.yar` の実行引擎。任意（単体 exe、ランタイム依存なし）
+  - 2026-11-01 取得・照合済み。実測 `dbe8c1ec5d59d8a81c777d949c518fb5e75f1026d3419bca7817727c5d47b327` = GitHub API の asset digest と一致
+  - `gh attestation verify` は attestation 未登録（HTTP 404）のため判断根拠は GitHub API の digest 一致。出典は VirusTotal 公式リポジトリ（github-actions 発行）
+- 導入先: `tools/yr.exe`（非追跡）。`yr --version` → `yara-x-cli 1.22.1`
+- 用途: 構造規則 `src/rules/structural.yar` の実行引擎
 - 留意点: このビルドは msvc target。クリーン環境では `vcruntime140.dll`（VC++ ランタイム）を要求する可能性がある。純粋なコピペ運用が優先なら `yr` なしで `scan.py` の構造検査のみで完結させられる
-- 実行時の上限フラグ: `--timeout 10 --max-rules 200 --cpu-limit 50 --output-format ndjson`
+- 実行時の上限フラグ（`yr scan` に有効なフラグのみ）: `--timeout 10 --cpu-limit 50 --skip-larger 67108864 --fast-scan --output-format ndjson`。classic YARA の `--max-rules` は `yr` に存在しない
 
 ## sqlite3 CLI（任意）
 
 - sqlite.org の snapshot 単体バイナリのみ使用（第三者ミラー・バンドル版は不使用）
 - DB 点検・schema 検証用。アプリの動作には不要
+
+## YARA-X zip モジュール（実測フィールド）
+
+`yr dump --module zip` で確認した実際のフィールド名（文書推測でなく実測）。規則はこれに従う:
+
+- `zip.is_zip`
+- `zip.entries[i].file_path`（`name` ではない）
+- `zip.entries[i].compression`
+- `zip.entries[i].uncompressed_size`
+- `zip.entries[i].compressed_size`
+
+配列反復は `for any entry in zip.entries : (expr)`。正規表現デリミタと衝突するため割り算は使わず `a > 100 * b` 形式で書く。
 
 ## 不使用
 

@@ -23,8 +23,9 @@ DEFAULT_LIMITS = {
     "max_ratio": 100,
     "max_scan_bytes": 2097152,
     "yr_timeout_sec": 10,
-    "yr_max_rules": 200,
     "yr_cpu_limit": 50,
+    "yr_skip_larger": 67108864,
+    "yr_fast_scan": True,
 }
 
 STATUS_VALUES = {"pass", "hit", "not_evaluated", "external_removal", "scan_error"}
@@ -246,17 +247,9 @@ def record_file(conn: sqlite3.Connection, path: str, sha256: str, size: int, ext
     conn.commit()
 
 
-def run_yara(path: Path, rules_path: Path, yr: str, limits: dict) -> list:
-    cmd = [yr, "scan", str(rules_path), str(path), "--output-format", "ndjson",
-           "--timeout", str(limits.get("yr_timeout_sec", 10)),
-           "--max-rules", str(limits.get("yr_max_rules", 200)),
-           "--cpu-limit", str(limits.get("yr_cpu_limit", 50))]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=limits.get("yr_timeout_sec", 10) + 15)
-    except Exception as exc:
-        return ["yara_error:%s" % exc]
+def parse_yara_output(text: str) -> list:
     rules = []
-    for line in proc.stdout.splitlines():
+    for line in text.splitlines():
         if not line.strip():
             continue
         try:
@@ -264,9 +257,28 @@ def run_yara(path: Path, rules_path: Path, yr: str, limits: dict) -> list:
         except ValueError:
             continue
         if isinstance(obj.get("rules"), list):
-            rules.extend(obj["rules"])
+            for item in obj["rules"]:
+                if isinstance(item, dict) and item.get("identifier"):
+                    rules.append(item["identifier"])
+                elif isinstance(item, str):
+                    rules.append(item)
         elif obj.get("rule"):
             rules.append(obj["rule"])
+    return rules
+
+
+def run_yara(path: Path, rules_path: Path, yr: str, limits: dict) -> list:
+    cmd = [yr, "scan", str(rules_path), str(path), "--output-format", "ndjson",
+           "--timeout", str(limits.get("yr_timeout_sec", 10)),
+           "--cpu-limit", str(limits.get("yr_cpu_limit", 50)),
+           "--skip-larger", str(limits.get("yr_skip_larger", 67108864))]
+    if limits.get("yr_fast_scan"):
+        cmd.append("--fast-scan")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=limits.get("yr_timeout_sec", 10) + 15)
+    except Exception as exc:
+        return ["yara_error:%s" % exc]
+    rules = parse_yara_output(proc.stdout)
     if proc.returncode not in (0, 1) and not rules:
         return ["yara_error:exit_%d" % proc.returncode]
     return rules

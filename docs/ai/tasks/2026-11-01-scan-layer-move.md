@@ -25,9 +25,22 @@ Common_Operations 側は `.gitignore` の `tools/*.exe` 行を取り消し（移
 
 ## Verification
 
-- `python -m pytest tests/ -v`（本リポジトリ）→ 11 passed (0.88s)
-- Common_Operations 側は移動後 `python -m pytest tests/ -q` → 109 passed（新テストは本リポジトリへ移動済みのため 120 → 109 に戻る）
+- `python -m pytest tests/ -v`（本リポジトリ）→ 13 passed (0.93s)。うち `test_run_yara_rules_on_fixture` は `tools/yr.exe` を実際に呼ぶ integration test（`tools/yr.exe` が無い環境では skip）
+- `python -m pytest tests/ -q`（Common_Operations・移動後）→ 109 passed (6.38s)
 - `git status` で移動後の混入なし（exe・DB・scratch/ は非追跡）
+
+## checkpoint 2（2026-11-01）: 単体 exe の取得と規則の実行検証
+
+- `yr` v1.22.1 を公式 release から取得。GitHub API の asset digest と SHA-256 一致（`dbe8c1ec…b327`）。`gh attestation verify` は attestation 未登録（404）→ 判断根拠は digest 一致のみ。導入先 `tools/yr.exe`（非追跡）、`yr --version` = `yara-x-cli 1.22.1`
+- YARA-X の zip モジュールフィールドを実測（`file_path`・`uncompressed_size`・`compressed_size`）。規則を実測ベースで書き換え
+  - `Zip_Path_Traversal`（`..`、`/`、`\`）
+  - `Zip_Executable_Entry`（exe/dll/scr/jar/js/vbs/ps1/bat/cmd/lnk）
+  - `Zip_Decompression_Ratio`（`uncompressed_size > 100 * compressed_size`。`/` は正規表現デリミタと衝突するため割り算は使わない）
+  - `MZ_Header_At_Offset0`（`$mz at 0`）。フル PE ヘッダ検査は scan.py 側のまま
+  - `PDF_Structural_Risk`（`uint32be(0) == 0x25504446`）
+- `--max-rules` は `yr` に存在しない（classic YARA のフラグ）。scan.py を `yr scan` の有効フラグ（`--timeout`/`--cpu-limit`/`--skip-larger`/`--fast-scan`）に修正。ndjson 解析を `parse_yara_output()` に分離
+- 規則実行結果（fixture・`--fast-scan --timeout 10 --cpu-limit 50`）: cbz で `Zip_Path_Traversal`・`Zip_Executable_Entry`・`Zip_Decompression_Ratio`、拡張子偽装 PNG で `MZ_Header_At_Offset0`、PDF で `PDF_Structural_Risk`
+- scan.py 端到端（`yr` 設定込み）: hit 3 / pass 0 / scan_error 0。findings に structural 8 件
 
 ## 完了時 Memory Bank 操作
 

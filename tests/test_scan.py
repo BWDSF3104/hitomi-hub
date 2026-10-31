@@ -137,6 +137,30 @@ def test_cache_prevents_lookup(tmp_path):
     conn.close()
 
 
+def test_parse_yara_output_matches_real_ndjson_shape():
+    line = '{"path":"a/100.cbz","rules":[{"identifier":"Zip_Path_Traversal"},{"identifier":"Zip_Executable_Entry"}]}'
+    assert scan.parse_yara_output(line) == ["Zip_Path_Traversal", "Zip_Executable_Entry"]
+    assert scan.parse_yara_output('{"rule":"MZ_Header_At_Offset0","path":"a.png"}') == ["MZ_Header_At_Offset0"]
+    assert scan.parse_yara_output("not json\n\n") == []
+
+
+def test_run_yara_rules_on_fixture(tmp_path):
+    yr = Path(__file__).resolve().parents[1] / "tools" / "yr.exe"
+    if not yr.exists():
+        pytest.skip("tools/yr.exe not present")
+    cbz = make_zip(tmp_path / "100.cbz", {"../payload.exe": b"MZ\x90\x00", "bomb.webp": b"\x00" * 2000000})
+    rules = scan.run_yara(cbz, SCRIPT_DIR / "rules" / "structural.yar", str(yr), CFG["limits"])
+    assert "Zip_Path_Traversal" in rules
+    assert "Zip_Executable_Entry" in rules
+    assert "Zip_Decompression_Ratio" in rules
+    spoofed = tmp_path / "image.png"
+    spoofed.write_bytes(b"MZ\x90\x00" + b"\x00" * 60)
+    assert scan.run_yara(spoofed, SCRIPT_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["MZ_Header_At_Offset0"]
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /OpenAction << /S /JavaScript /JS (x) >> >>\n")
+    assert scan.run_yara(pdf, SCRIPT_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["PDF_Structural_Risk"]
+
+
 def test_status_constraint_and_verify_missing(tmp_path):
     conn = make_db(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):

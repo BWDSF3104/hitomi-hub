@@ -17,7 +17,8 @@
     "max_ratio": 100,
     "max_scan_bytes": 2097152,
     "yr_timeout_sec": 10,
-    "yr_max_rules": 200,
-    "yr_cpu_limit": 50
+    "yr_cpu_limit": 50,
+    "yr_skip_larger": 67108864,
+    "yr_fast_scan": true
   }
 }
