@@ -20,7 +20,7 @@
 - 実測 toolchain version: `go1.27.3 windows/amd64`（`app/go.mod` が `go 1.27.3` を要求し、winget MSI 起動時に toolchain 1.27.3 が解決される）
 - 導入コマンド: `winget install --id GoLang.Go -e --source winget --accept-package-agreements --accept-source-agreements`
 - 実測インストール path: `C:\Program Files\Go\bin\go.exe`
-- User PATH に追加済み: `C:\Users\fujim\go\bin`
+- User PATH に追加済み: `C:\Users\fujim\go\bin` と `C:\Program Files\Go\bin`
 - 留意点: 起動済み Kilo tool process には PATH refresh が反映されないことがある。この shell で `go` が失敗しても、正典 Go path `C:\Program Files\Go\bin\go.exe` を絶対パスで使う。Kilo プロセスを再起動すると `go` として使える想定。
 - scratch Go path は今後の開発環境参照用として不適切。この project の dev command では `go` を使う。
 - ビルド: `CGO_ENABLED=0`（pure-Go・VC++ ランタイム不要）。SQLite ドライバは `modernc.org/sqlite` v1.61.1（CGO 不要）
