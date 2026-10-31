@@ -26,6 +26,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 .\hub.exe --root . --no-vt                  # VirusTotal を呼ばずに構造検査のみ
 
 .\hub.exe search --term "female:yuri" --lang english --page 1   # nozomi 検索（25件/ページ）
+.\hub.exe search --title "kemo nee-san 10"                      # galleriesindex（word 倒引の共通部分）
 .\hub.exe gallery --id 4294614                                   # gallery メタ（閲覧）
 .\hub.exe gallery --url "https://hitomi.la/doujinshi/...-4252697.html"  # URL から id を抽出
 .\hub.exe download --id 4294614 --limit 2                        # Galleries/<id>/ へ保存し scan まで実行
@@ -54,7 +55,15 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - other namespace（`type:`・`artist:`・`group:`・`series:`・`character:`）→ area = namespace、tag = 右辺（例 `/n/type/doujinshi-japanese.nozomi`）
 - `language:` → lang に反映
 - namespace なしの単語 term（単一タグ）→ 直Path（例 `/n/goudoushi-japanese.nozomi`）
-- **単語数 2 つ以上の phrase / タイトル全文検索は未実装**（`nozomiurlindex` の B-tree 降下が必要。`docs/ai/known-issues/2026-11-01-plain-title-search-needs-index.md`）
+- **単語数 2 つ以上の phrase / タイトル全文検索**は `--title` で `galleriesindex` を降りる（下記）
+
+### 検索の index 経路（`--title`）
+
+- `hash_term(term)` = sha256(UTF-8(term)) の先頭 4 bytes（小文字化後）。node は big-endian: key 数 → keys（key ≤ 32 bytes）→ datas(offset,length) → subnode `B+1`（`B=16`・`max_node_size=464`）
+- `galleriesindex` の field `galleries` は **word → gallery IDs の倒引**。phrase は token（whitespace と `- / # '` 区切り）ごとの集合の共通部分。順序は最初の token の順序（newest first）
+- version は `https://ltn.gold-usergeneratedcontent.net/galleriesindex/version`（`ltn.hitomi.la` はこの環境で応答せず）。1 実行で 1 回だけ読む
+- 実測: `kemo` → 100726 件（data 402908 bytes）。`--title "kemo nee-san 10"` → 共通部分 22 件（`4252697` を含む）。`nee-san` は 1 key ではなく `nee`・`san` に切れる
+- `--page`（1 origin・25件）と `--limit` は**共通部分の後**に適用。DB に記録するのは表示分だけ
 
 `--root` を省略すると cwd（または `.git` のある祖先）を使う。`--data-dir` を省略すると exe と同じフォルダの `schema.sql`・`rules/`・`config.example.json` を使う。
 
@@ -126,7 +135,7 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 | 機能 | 状況 | 実測結果 |
 | --- | --- | --- |
-| 検索 | 動作（namespace/単一tag） | nozomi 1 ページ 25 件（`female:yuri-english`）。`--page 2` は Range `bytes=100-199` で 25 件。galleries に行を記録。phrase/タイトル全文検索は index 未実装 |
+| 検索 | 動作（nozomi + index） | nozomi 1 ページ 25 件（`female:yuri-english`）。`--page 2` は Range `bytes=100-199`。`--title "kemo nee-san 10"` は galleriesindex 降下・token 共通部分 22 件（`4252697` を含む）。galleries に行を記録（表示分のみ） |
 | URL からの参照 | 動作 | `--url` で `<digits>.html` から id 抽出（`GetGalleryId` と同じ規則）。gallery/download/read/fav で使用可 |
 | 閲覧 | 動作（CLI + 1 ページ Web） | `view` で `http://127.0.0.1:8731`。local-first 表示、ページ到達で `read_state` 更新。実測: `/api/gallery/4252697/page/1` → local（download 済み）、未保存は shard URL。path guard は gallery dir 内固定 |
 | 一括ダウンロード | 動作 | `--limit 2` で 2 件保存し、そのまま scan 実行（files に sha256・magic・status を記録） |
@@ -147,7 +156,6 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 ## 未実装
 
-- phrase・タイトル全文検索（`nozomiurlindex` B-tree 未実装）
 - 保存検索の自動更新（新着追跡）
 - CBZ/PDF エクスポート（DL 経路ができてから）
 - デバイス間同期

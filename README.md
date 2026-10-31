@@ -18,6 +18,7 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 python src/scan.py --root <root> --gallery-dir Galleries
 hub.exe scan --root <root>
 hub.exe search --term "female:yuri" --lang english --page 1
+hub.exe search --title "kemo nee-san 10"                       # galleriesindex（word 倒引の共通部分）
 hub.exe gallery --id <id> | --url <hitomi URL>
 hub.exe download --id <id> --limit N
 hub.exe read --id <id> --page N [--complete]
@@ -36,6 +37,7 @@ hitomi-hub/
 │   ├── scan.go                # magic / zip entry / PDF key / status
 │   ├── vt.go                  # hash-only lookup・rate gate・cache・yr 呼び出し
 │   ├── hitomi.go              # nozomi 検索・gallery メタ・URL 構築・呼出し間隔
+│   ├── searchindex.go         # galleriesindex の B-tree 降下（hash_term・node 解码・token 共通部分）
 │   ├── library.go             # galleries upsert・read_state・favorite・bookmark_queries
 │   ├── viewer.go              # ビューア（1 ページ Web・local-first・path guard）
 │   ├── ui.html                # embed される単一ページ（外部 asset なし）

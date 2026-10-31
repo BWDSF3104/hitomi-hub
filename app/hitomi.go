@@ -33,6 +33,7 @@ type Client struct {
 	cfg    HitomiConfig
 	last   time.Time
 	fetch  func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
+	versions map[string]string
 }
 
 func defaultHitomiConfig() HitomiConfig {

@@ -301,6 +301,7 @@ type flags struct {
 	verify   bool
 	term     string
 	lang     string
+	title    string
 	page     int
 	id       int
 	urlArg   string
@@ -326,6 +327,7 @@ func main() {
 	fsFlags.BoolVar(&f.verify, "verify", false, "mark recorded files that no longer exist")
 	fsFlags.StringVar(&f.term, "term", "", "search term (nozomi)")
 	fsFlags.StringVar(&f.lang, "lang", "english", "language for nozomi search")
+	fsFlags.StringVar(&f.title, "title", "", "phrase or title search via galleriesindex (B-tree)")
 	fsFlags.IntVar(&f.page, "page", 1, "result page (1 origin)")
 	fsFlags.IntVar(&f.id, "id", 0, "gallery id")
 	fsFlags.StringVar(&f.urlArg, "url", "", "gallery URL (id is parsed from it)")
@@ -396,12 +398,37 @@ func main() {
 		printJSON(summary)
 	case "search":
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
-		ids, err := client.Search(f.term, f.lang, f.page)
+		mode := "nozomi"
+		var ids []int
+		var err error
+		if f.title != "" {
+			mode = "index"
+			ids, err = client.SearchTitle(f.title)
+		} else {
+			ids, err = client.Search(f.term, f.lang, f.page)
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "search: "+err.Error())
 			os.Exit(1)
 		}
-		for _, id := range ids {
+		total := len(ids)
+		shown := ids
+		if mode == "index" {
+			start := (f.page - 1) * galleriesPerPage
+			if start > total {
+				shown = nil
+			} else {
+				end := start + galleriesPerPage
+				if end > total {
+					end = total
+				}
+				shown = ids[start:end]
+			}
+		}
+		if f.limit > 0 && len(shown) > f.limit {
+			shown = shown[:f.limit]
+		}
+		for _, id := range shown {
 			if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
 				fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
 			}
@@ -411,7 +438,8 @@ func main() {
 				fmt.Fprintf(os.Stderr, "query: %s\n", err.Error())
 			}
 		}
-		printJSON(map[string]any{"term": f.term, "lang": f.lang, "page": f.page, "ids": ids, "count": len(ids)})
+		printJSON(map[string]any{"mode": mode, "term": f.term, "title": f.title, "lang": f.lang,
+			"page": f.page, "total": total, "ids": shown, "count": len(shown)})
 	case "gallery":
 		id, err := targetID(f)
 		if err != nil {
@@ -533,7 +561,7 @@ func boolToInt(value bool) int {
 // valueFlags は値を消費するフラグ。findCommand がフラグの値をサブコマンドと誤読しないため
 var valueFlags = map[string]bool{
 	"root": true, "gallery-dir": true, "data-dir": true, "term": true, "lang": true,
-	"page": true, "id": true, "url": true, "limit": true, "name": true, "query": true,
+	"title": true, "page": true, "id": true, "url": true, "limit": true, "name": true, "query": true,
 	"list": true, "port": true,
 }
 
