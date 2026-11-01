@@ -1328,6 +1328,65 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIShowsGalleryViewerPositionOnly(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="reader-position"`) {
+		t.Errorf("ui should expose gallery/viewer position display: got %q", s)
+	}
+	if !strings.Contains(s, `function renderPosition() {`) {
+		t.Errorf("ui should have renderPosition for gallery viewer position: got %q", s)
+	}
+	if strings.Contains(s, `function renderSearchPosition`) || strings.Contains(s, `#search-position`) {
+		t.Errorf("#11 search result side should be out of scope: got %q", s)
+	}
+	if !strings.Contains(s, `function renderLoadingPosition(id, pageLabel, pairLabel) {`) {
+		t.Errorf("ui should show a loading position without claiming gallery count: got %q", s)
+	}
+	if !strings.Contains(s, `const page = second ? current.page + "-" + second : String(current.page);`) || !strings.Contains(s, `el.textContent = "position: " + page + " / " + (current.count || "-");`) {
+		t.Errorf("renderPosition should show current page/pair and current count: got %q", s)
+	}
+
+	setStart := strings.Index(s, "function setGalleryMeta(data) {")
+	if setStart < 0 {
+		t.Fatalf("setGalleryMeta function not found")
+	}
+	setBody := s[setStart:strings.Index(s, "\nfunction fileFormatFromName(name) {")]
+	if !strings.Contains(setBody, `renderPosition();`) {
+		t.Errorf("setGalleryMeta should render current gallery position: got %q", setBody)
+	}
+
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+	if !strings.Contains(showBody, `renderPosition();`) {
+		t.Errorf("showPage should render current gallery position: got %q", showBody)
+	}
+
+	viewStart := strings.Index(s, "function setViewMode(mode) {")
+	if viewStart < 0 {
+		t.Fatalf("setViewMode function not found")
+	}
+	viewBody := s[viewStart:strings.Index(s, "\nfunction parseReaderHash(hash) {")]
+	if !strings.Contains(viewBody, `renderPosition();`) {
+		t.Errorf("setViewMode should render current gallery position: got %q", viewBody)
+	}
+
+	loadingStart := strings.Index(s, "function renderGalleryLoading(id, page, second) {")
+	if loadingStart < 0 {
+		t.Fatalf("renderGalleryLoading function not found")
+	}
+	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id) {")]
+	if !strings.Contains(loadingBody, `renderLoadingPosition(id, pageLabel, pairLabel);`) {
+		t.Errorf("renderGalleryLoading should render loading position: got %q", loadingBody)
+	}
+}
+
 func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

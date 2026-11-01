@@ -129,6 +129,7 @@
         </select>
         <span class="meta">キーボード: ← / → / d=見開き / s=単一 / f=フルスクリーン</span>
       </div>
+      <div id="reader-position" class="meta"></div>
       <div id="note" class="note"></div>
       <div id="prefetch-status" class="status"></div>
       <div id="reader" class="reader double"></div>
@@ -236,6 +237,7 @@ function setGalleryMeta(data) {
     "<span class='meta'>" + escapeHTML((g.tags || []).join(", ")) + "</span><br>" +
     "<span class='meta'>" + current.count + " files・local " + data.local + "（format " + escapeHTML(data.format) + "）</span>";
   document.getElementById("pagenum").value = current.page;
+  renderPosition();
   updateTabTitle(g.japanese_title || g.title || current.id);
 }
 function fileFormatFromName(name) {
@@ -480,6 +482,7 @@ function setViewMode(mode) {
   if (select) select.value = mode;
   applyFullscreen();
   renderReader();
+  renderPosition();
   startFullPrefetch();
 }
 
@@ -494,6 +497,24 @@ function parseReaderHash(hash) {
 function setPrefetchStatus(text) {
   const el = document.getElementById("prefetch-status");
   if (el) el.textContent = text;
+}
+
+function renderPosition() {
+  const el = document.getElementById("reader-position");
+  if (!el) return;
+  if (!current.id) {
+    el.textContent = "";
+    return;
+  }
+  const second = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
+  const page = second ? current.page + "-" + second : String(current.page);
+  el.textContent = "position: " + page + " / " + (current.count || "-");
+}
+
+function renderLoadingPosition(id, pageLabel, pairLabel) {
+  const el = document.getElementById("reader-position");
+  if (!el || !id) return;
+  el.textContent = "position: " + pageLabel + pairLabel + " / -";
 }
 
 function galleryDataFromCard(card) {
@@ -530,6 +551,7 @@ function renderGalleryLoading(id, page, second) {
   const note = document.getElementById("note");
   if (note) note.textContent = "reader content loading";
   setPrefetchStatus("gallery read load: " + id);
+  renderLoadingPosition(id, pageLabel, pairLabel);
   updateTabTitle((card && card.japanese_title) || title || id);
 }
 
@@ -847,6 +869,7 @@ async function showPage() {
   highlightStrip();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
+  renderPosition();
   setRoute(current.id, current.page);
   if (showGen !== showGeneration || openGen !== openGeneration) return;
   runBackgroundReadAndLists(showGen, openGen);
