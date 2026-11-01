@@ -1328,6 +1328,52 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIHasSearchPrevNextButtons(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="search-prev"`) || !strings.Contains(s, `id="search-next"`) || !strings.Contains(s, `id="search-page-status"`) {
+		t.Errorf("ui should expose search page prev/next buttons and status: got %q", s)
+	}
+	if !strings.Contains(s, `function searchTotalPages(total) {`) || !strings.Contains(s, `Math.max(1, Math.ceil(Number(total || 0) / 25))`) {
+		t.Errorf("ui should calculate search totalPages from total and 25 page size: got %q", s)
+	}
+	if !strings.Contains(s, `function renderSearchPageStatus() {`) {
+		t.Errorf("ui should have renderSearchPageStatus: got %q", s)
+	}
+	setStart := strings.Index(s, "async function setSearchPage(delta) {")
+	if setStart < 0 {
+		t.Fatalf("setSearchPage function not found")
+	}
+	setBody := s[setStart:strings.Index(s, "\nasync function loadSearchCards(ids, searchGen = searchGeneration) {")]
+	if !strings.Contains(setBody, `if (!total || target < 1 || target > totalPages) return;`) || !strings.Contains(setBody, `await runSearch();`) {
+		t.Errorf("setSearchPage should clamp page and run search once: got %q", setBody)
+	}
+	if strings.Contains(setBody, `location.hash =`) {
+		t.Errorf("setSearchPage should not double-trigger search through hashchange and direct runSearch: got %q", setBody)
+	}
+
+	runStart := strings.Index(s, "async function runSearch() {")
+	if runStart < 0 {
+		t.Fatalf("runSearch function not found")
+	}
+	runBody := s[runStart:strings.Index(s, "document.getElementById(\"search\")")]
+	if !strings.Contains(runBody, `currentSearchTotal = Number(data.total || 0);`) || !strings.Contains(runBody, `renderSearchPageStatus();`) {
+		t.Errorf("runSearch should store total and render page status without changing search-status semantics: got %q", runBody)
+	}
+
+	restoreStart := strings.Index(s, "function restoreSearchState() {")
+	if restoreStart < 0 {
+		t.Fatalf("restoreSearchState function not found")
+	}
+	restoreBody := s[restoreStart:strings.Index(s, "\nasync function loadSearchCards(ids, searchGen = searchGeneration) {")]
+	if !strings.Contains(restoreBody, `currentSearchTotal = Number(state.total || 0);`) || !strings.Contains(restoreBody, `renderSearchPageStatus();`) {
+		t.Errorf("restoreSearchState should render search page status from saved total: got %q", restoreBody)
+	}
+}
+
 func TestEmbeddedUIShowsGalleryViewerPositionOnly(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

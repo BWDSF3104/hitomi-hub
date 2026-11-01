@@ -96,8 +96,11 @@
         <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
         <input id="lang" value="all" size="8">
         <input id="page" value="1" size="4">
+        <button id="search-prev">前</button>
+        <button id="search-next">次</button>
         <button id="search-submit">検索</button>
       </form>
+      <div id="search-page-status" class="meta"></div>
       <div id="search-status" class="status"></div>
       <div id="count" class="meta"></div>
       <ul id="results"></ul>
@@ -193,6 +196,7 @@ const activeObjectUrlKeys = new Set();
 const galleryCache = new Map();
 const searchCardCache = new Map();
 const galleryFormats = new Map();
+let currentSearchTotal = 0;
 let searchGeneration = 0;
 let openGeneration = 0;
 let showGeneration = 0;
@@ -1043,10 +1047,36 @@ function restoreSearchState() {
   if (langInput && state.lang) langInput.value = state.lang;
   if (pageInput) pageInput.value = String(state.page || 1);
   const ids = Array.isArray(state.ids) ? state.ids : [];
+  currentSearchTotal = Number(state.total || 0);
+  renderSearchPageStatus();
   if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
   status.textContent = "検索結果復元: " + state.query;
     results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
   loadSearchCards(ids, searchGeneration);
+}
+function searchTotalPages(total) {
+  return Math.max(1, Math.ceil(Number(total || 0) / 25));
+}
+function renderSearchPageStatus() {
+  const status = document.getElementById("search-page-status");
+  if (!status) return;
+  const page = Number(document.getElementById("page").value || "1");
+  const total = Number(currentSearchTotal || 0);
+  const totalPages = searchTotalPages(total);
+  const prev = document.getElementById("search-prev");
+  const next = document.getElementById("search-next");
+  if (prev) prev.disabled = page <= 1;
+  if (next) next.disabled = total > 0 && page >= totalPages;
+  status.textContent = "page " + page + " / " + (total ? totalPages : "-") + "・total " + total;
+}
+async function setSearchPage(delta) {
+  const total = Number(currentSearchTotal || 0);
+  const totalPages = searchTotalPages(total);
+  const page = Number(document.getElementById("page").value || "1");
+  const target = page + delta;
+  if (!total || target < 1 || target > totalPages) return;
+  document.getElementById("page").value = String(target);
+  await runSearch();
 }
 async function loadSearchCards(ids, searchGen = searchGeneration) {
   const status = document.getElementById("search-status");
@@ -1087,6 +1117,8 @@ async function runSearch() {
     const data = await api("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
     if (searchGen !== searchGeneration) return;
     const ids = data.ids || (data.results || []).map((r) => r.id);
+    currentSearchTotal = Number(data.total || 0);
+    renderSearchPageStatus();
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
     status.textContent = "検索完了・カード読み込み " + ids.length + "件";
   results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
@@ -1109,6 +1141,8 @@ async function runSearch() {
 }
 
 document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
+document.getElementById("search-prev").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(-1); });
+document.getElementById("search-next").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(1); });
 document.getElementById("query").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = document.getElementById("qname").value.trim();
@@ -1188,6 +1222,7 @@ window.addEventListener("hashchange", async () => {
   if (search) {
     document.getElementById("query").value = search.query;
     document.getElementById("page").value = String(search.page);
+    renderSearchPageStatus();
     await runSearch();
   }
 });
@@ -1198,6 +1233,7 @@ if (initialSearch) {
   restoreSearchState();
   document.getElementById("query").value = initialSearch.query;
   document.getElementById("page").value = String(initialSearch.page);
+  renderSearchPageStatus();
   runSearch();
 } else {
   restoreSearchState();

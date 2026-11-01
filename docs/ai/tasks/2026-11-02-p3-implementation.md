@@ -71,6 +71,33 @@ Verification:
 
 Canonical exe was rebuilt and canonical server restarted with the same test build.
 
+## Checkpoint #13 search prev/next buttons
+
+Implemented in `app/ui.html`:
+
+- Added `#search-prev`, `#search-next`, `#search-page-status`.
+- Added `searchTotalPages(total)`, `renderSearchPageStatus()`, `setSearchPage(delta)`.
+- `runSearch()` stores `currentSearchTotal` and renders status without changing `search-status` semantics.
+- `restoreSearchState()` renders saved total page status.
+- Buttons clamp to page bounds and run search once.
+
+Test added in `app/viewer_test.go`:
+
+- `TestEmbeddedUIHasSearchPrevNextButtons`
+
+Verification:
+
+- `go test .`: pass
+- `go vet .`: pass
+- Screen verify:
+  - URL: `http://127.0.0.1:8731/?x=searchpage#/q/furry/page/2`
+  - Initial page status: `page 2 / 1316・total 32877`
+  - Clicked next: page moved to `3`, status completed with 25 cards.
+  - Clicked prev: page returned to `2`, status completed with 25 cards.
+  - Screenshot: `scratch/hitomi-usage/p3-13-search-prev-next.png`
+
+Canonical exe was rebuilt and canonical server restarted with the same test build.
+
 ## Verification
 
 No verification yet.
