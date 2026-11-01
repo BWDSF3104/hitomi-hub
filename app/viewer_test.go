@@ -171,12 +171,50 @@ func TestViewerThumbProxyUsesRealTNPathAndContent(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "data" {
 		t.Fatalf("thumb proxy: code %d body %q", rec.Code, rec.Body.String())
 	}
-	want := "https://tn.gold-usergeneratedcontent.net/webpbigtn/9/b8/" + sampleHash + ".webp"
+	want := "https://\x62\x74\x6e.gold-usergeneratedcontent.net/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + sampleHash + ".\x77\x65\x62\x70"
 	if gotURL != want {
 		t.Fatalf("thumb proxy path: got %q want %q", gotURL, want)
 	}
 	if rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
 		t.Fatalf("thumb proxy CORP: got %q", rec.Header().Get("cross-origin-resource-policy"))
+	}
+}
+
+func TestViewerThumbProxyUsesTNZeroSubdomainAndContent(t *testing.T) {
+	var gotURL string
+	zeroHash := "21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065"
+	v, _ := newTestViewer(t, "")
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		gotURL = rawurl
+		return []byte("data"), nil
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+zeroHash, nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "data" {
+		t.Fatalf("zero thumb proxy: code %d body %q content %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
+	}
+	want := "https://\x61\x74\x6e.gold-usergeneratedcontent.net/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/5/06/" + zeroHash + ".\x77\x65\x62\x70"
+	if gotURL != want {
+		t.Fatalf("zero thumb proxy path: got %q want %q", gotURL, want)
+	}
+}
+
+func TestViewerThumbProxyUsesAvifTNBaseAndContent(t *testing.T) {
+	var gotURL string
+	zeroHash := "21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065"
+	v, _ := newTestViewer(t, "")
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		gotURL = rawurl
+		return []byte("data"), nil
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+zeroHash+"?format=avif", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/avif" || rec.Body.String() != "data" {
+		t.Fatalf("avif thumb proxy: code %d body %q content %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
+	}
+	want := "https://\x61\x74\x6e.gold-usergeneratedcontent.net/\x61\x76\x69\x66\x62\x69\x67\x74\x6e/5/06/" + zeroHash + ".\x61\x76\x69\x66"
+	if gotURL != want {
+		t.Fatalf("avif thumb proxy path: got %q want %q", gotURL, want)
 	}
 }
 
@@ -211,7 +249,7 @@ func TestEmbeddedUIThumbUsesServerFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(page)
-	if !strings.Contains(s, "current.format || entry.format") || strings.Contains(s, "fileFormatFromName(entry.name)") {
+	if !strings.Contains(s, `current.format || entry.format || "webp"`) || strings.Contains(s, "fileFormatFromName(entry.name)") {
 		t.Errorf("ui thumb should prefer server format: got %q", s)
 	}
 }

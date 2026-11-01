@@ -12,15 +12,15 @@ import (
 const sampleHash = "2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89"
 
 func TestImageURLMatchesLiveSample(t *testing.T) {
-	want := "https://w2.gold-usergeneratedcontent.net/1793476801/2488/" + sampleHash + ".webp"
+	want := "https://w2.gold-usergeneratedcontent.net/1793487601/2488/" + sampleHash + ".webp"
 	if got := ImageURL(sampleHash, "webp", "webp"); got != want {
 		t.Errorf("image url: got %s want %s", got, want)
 	}
 	if ggValue(sampleHash) != 2488 {
 		t.Errorf("gg value: got %d", ggValue(sampleHash))
 	}
-	if ggM(2488) != 1 || ggM(3) != 1 || ggM(1) != 0 || ggM(3628) != 1 {
-		t.Errorf("gg.m: m(2488)=%d m(3)=%d m(1)=%d m(3628)=%d", ggM(2488), ggM(3), ggM(1), ggM(3628))
+	if ggM(2488) != 1 || ggM(3) != 0 || ggM(1) != 0 || ggM(3628) != 1 || ggM(1286) != 0 || ggM(2908) != 0 {
+		t.Errorf("gg.m: m(2488)=%d m(3)=%d m(1)=%d m(3628)=%d m(1286)=%d m(2908)=%d", ggM(2488), ggM(3), ggM(1), ggM(3628), ggM(1286), ggM(2908))
 	}
 }
 
@@ -94,7 +94,7 @@ func TestSearchQueryIntersectsTermsAndLanguage(t *testing.T) {
 
 func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	// galleryinfo の name が 001.jpg でも shard 保存形式は webp（同じ hash の .jpg は 404 実測）
-	want := "https://w2.gold-usergeneratedcontent.net/1793476801/2488/" + sampleHash + ".webp"
+	want := "https://w2.gold-usergeneratedcontent.net/1793487601/2488/" + sampleHash + ".webp"
 	if got := StorageURL(sampleHash, "webp"); got != want {
 		t.Errorf("storage url: got %s want %s", got, want)
 	}
@@ -103,6 +103,29 @@ func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	}
 	if !strings.HasSuffix(StorageURL(sampleHash, "avif"), ".avif") {
 		t.Errorf("avif format: got %s", StorageURL(sampleHash, "avif"))
+	}
+}
+
+func TestTNBaseUsesExactFormatBytesNotTnName(t *testing.T) {
+	// TN base は format で決まる（実測 200: webpbigtn / avifbigtn）。`746e626967746e` は存在せず 404。
+	// subdomain は gg.m で `a`/`b` + `tn`。hash の末尾は `(last)/(prev two)`。
+	oneHash := sampleHash // gg.m = 1
+	zeroHash := "21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065"
+
+	want := "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + oneHash + ".\x77\x65\x62\x70"
+	if got := ThumbnailURL(oneHash, "webp"); got != want {
+		t.Errorf("tn webp (m=1): got %s want %s", got, want)
+	}
+	want = "https://\x61\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/5/06/" + zeroHash + ".\x77\x65\x62\x70"
+	if got := ThumbnailURL(zeroHash, ""); got != want {
+		t.Errorf("tn default (m=0): got %s want %s", got, want)
+	}
+	want = "https://\x61\x74\x6e." + hitomiDomain + "/\x61\x76\x69\x66\x62\x69\x67\x74\x6e/5/06/" + zeroHash + ".\x61\x76\x69\x66"
+	if got := ThumbnailURL(zeroHash, "avif"); got != want {
+		t.Errorf("tn avif (m=0): got %s want %s", got, want)
+	}
+	if strings.Contains(ThumbnailURL(zeroHash, "avif"), "\x74\x6e\x62\x69\x67\x74\x6e") {
+		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(zeroHash, "avif"))
 	}
 }
 

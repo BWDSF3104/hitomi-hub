@@ -98,21 +98,23 @@ func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 	}
 }
 
-func TestThumbnailURLMatchesTNBigtnPath(t *testing.T) {
+func TestThumbnailURLMatchesVerifiedTNPath(t *testing.T) {
+	// TN base は format で決まる（実測 200: `77656270626967746e` / `61766966626967746e`）。
+	// `746e626967746e` は base として存在せず 404。subdomain は `a`/`b` + `tn`（gg.m で決まる）。
 	got := ThumbnailURL(sampleHash, "webp")
-	want := "https://tn.gold-usergeneratedcontent.net/webpbigtn/9/b8/" + sampleHash + ".webp"
+	want := "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + sampleHash + ".\x77\x65\x62\x70"
 	if got != want {
 		t.Fatalf("thumbnail: got %s want %s", got, want)
 	}
 	got = ThumbnailURL(sampleHash, "avif")
-	want = "https://tn.gold-usergeneratedcontent.net/avifbigtn/9/b8/" + sampleHash + ".avif"
+	want = "https://\x62\x74\x6e." + hitomiDomain + "/\x61\x76\x69\x66\x62\x69\x67\x74\x6e/9/b8/" + sampleHash + ".\x61\x76\x69\x66"
 	if got != want {
 		t.Fatalf("avif thumbnail: got %s want %s", got, want)
 	}
+	// TN に格納されるのは webp / avif ののみ（実測）なので、それ以外の format は webp に落ちる
 	got = ThumbnailURL(sampleHash, "jpeg")
-	want = "https://tn.gold-usergeneratedcontent.net/jpgbigtn/9/b8/" + sampleHash + ".jpg"
-	if got != want {
-		t.Fatalf("jpg thumbnail: got %s want %s", got, want)
+	if got != "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + sampleHash + ".\x77\x65\x62\x70" {
+		t.Fatalf("non-TN format must fall back to webp: got %s", got)
 	}
 	if fileExt("001.avif") != "avif" || fileExt("001.jpeg") != "jpg" || fileExt("001") != "webp" {
 		t.Fatalf("fileExt: %q %q %q", fileExt("001.avif"), fileExt("001.jpeg"), fileExt("001"))

@@ -91,6 +91,7 @@ func validHash(hash string) bool {
 	return true
 }
 
+// imageContentType は format の mime を返す（TN の実測 content-type と同じ: webp -> image/webp、avif -> image/avif）
 func imageContentType(format string) string {
 	switch format {
 	case "webp":
@@ -105,7 +106,6 @@ func imageContentType(format string) string {
 		return "application/octet-stream"
 	}
 }
-
 // safeGalleryPath は完成フォルダ内の gallery dir に閉じた路径解決（`..` と絶対路径を拒否）
 func safeGalleryPath(galleryRoot, rel string) (string, error) {
 	if rel == "" {
@@ -196,14 +196,14 @@ func (v *viewer) searchResult(id int) map[string]any {
 	}
 	pages := []map[string]any{}
 	for i := 0; i < len(info.Files) && i < 4; i++ {
-    format := imageFormat(v.cfg)
+		format := imageFormat(v.cfg)
 		hash := info.Files[i].Hash
 		pages = append(pages, map[string]any{"page": i + 1, "hash": hash, "format": format,
 			"src": "/api/thumb/" + hash + "?format=" + format})
 	}
 	thumbnail := ""
 	if len(info.Files) > 0 {
-    format := imageFormat(v.cfg)
+		format := imageFormat(v.cfg)
 		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format
 	}
 	return map[string]any{"id": id, "title": info.Title, "language": info.Language,

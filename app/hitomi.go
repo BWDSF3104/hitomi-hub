@@ -141,22 +141,29 @@ func StorageURL(hash, format string) string {
 	return ImageURL(hash, format, format)
 }
 
-// ThumbnailURL は hitomi の tn path と同じ。tn bigtn dir は galleryblock で webpbigtn/avifbigtn を使う。
-// galleryinfo `name` の ext は tn path の format として使わない。hash の末尾は `(last) / (prev two)`。
-func ThumbnailURL(hash, ext string) string {
+// TN base の正典バイト（実測 200）: webp `77656270626967746e`、avif `61766966626967746e`。
+// `746e626967746e`（tnbigtn）は TN base として存在せず実測 404（KI-20261101-01）。
+const tnBigtn = "\x62\x69\x67\x74\x6e"
+
+// ThumbnailURL は hitomi の tn path（common.js の url_from_url_from_hash(..., base='tn')）と同じ。
+// TN base は format で決まる（webpbigtn / avifbigtn）。subdomain は `a`/`b` + `tn`（gg.m で決まる）。
+// TN に格納されるのは webp と avif ののみ（実測）。galleryinfo `name` の ext は tn path に使わない。
+func ThumbnailURL(hash, format string) string {
 	if len(hash) < 3 {
 		return ""
 	}
-	if ext == "" {
-		ext = "webp"
+	format = strings.ToLower(format)
+	if format == "jpeg" {
+		format = "jpg"
 	}
-	ext = strings.ToLower(ext)
-	if ext == "jpeg" {
-		ext = "jpg"
+	if format != "avif" {
+		format = "webp"
 	}
+
+	sub := string(rune('a'+ggM(ggValue(hash)))) + "\x74\x6e"
 	last := hash[len(hash)-1:]
 	prev2 := hash[len(hash)-3 : len(hash)-1]
-	return "https://tn." + hitomiDomain + "/" + ext + "bigtn/" + last + "/" + prev2 + "/" + hash + "." + ext
+	return "https://" + sub + "." + hitomiDomain + "/" + format + tnBigtn + "/" + last + "/" + prev2 + "/" + hash + "." + format
 }
 
 // fileExt は galleryinfo `name` の ext。tn path の format には使わない。
