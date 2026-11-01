@@ -664,8 +664,48 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 		t.Fatalf("showPage function not found")
 	}
 	showBody := s[showStart:]
-	if !strings.Contains(showBody, `img.src = data.src;`) || !strings.Contains(showBody, `startFullPrefetch();`) {
-		t.Errorf("showPage should start full-image prefetch immediately after current image src: got %q", showBody)
+	if !strings.Contains(showBody, `renderReader();`) || !strings.Contains(showBody, `startFullPrefetch();`) {
+		t.Errorf("showPage should render the current reader view and start full-image prefetch without blocking: got %q", showBody)
+	}
+}
+
+func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="view-mode"`) || !strings.Contains(s, `value="double"`) || !strings.Contains(s, `value="fullscreen"`) {
+		t.Errorf("ui should expose reader view modes: got %q", s)
+	}
+	if !strings.Contains(s, `function displayMode() {`) || !strings.Contains(s, `function readerItems() {`) || !strings.Contains(s, `function parseReaderHash(hash) {`) {
+		t.Errorf("ui should have reader spread display mode and hash parser: got %q", s)
+	}
+	if !strings.Contains(s, `function route(id, page, second) {`) {
+		t.Errorf("ui route should support hitomi-like #2-3 spread hashes: got %q", s)
+	}
+	if !strings.Contains(s, `document.addEventListener("fullscreenchange"`) || !strings.Contains(s, `window.addEventListener("keydown"`) || !strings.Contains(s, `e.key === "f"`) || !strings.Contains(s, `requestFullscreen`) {
+		t.Errorf("ui should support fullscreen view mode, keyboard d/s/f, and requestFullscreen: got %q", s)
+	}
+	if !strings.Contains(s, `window.innerWidth < 720`) {
+		t.Errorf("ui should fall back to single when the normal page size is too narrow: got %q", s)
+	}
+}
+
+func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `function entryPlaceholder(entry) { return thumbURL(entry.hash, formatForEntry(entry), current.id, stripVariant()); }`) {
+		t.Errorf("ui should use hitomi-like strip thumbnail as placeholder for full images: got %q", s)
+	}
+	if !strings.Contains(s, `function loadFullImage(img, entry) {`) || !strings.Contains(s, `full.onload = () =>`) || !strings.Contains(s, `img.src = fullSrc`) {
+		t.Errorf("ui should replace placeholder thumbnail when full image load completes: got %q", s)
+	}
+	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `container.querySelectorAll("img").forEach`) || !strings.Contains(s, `loadFullImage(img, entry)`) {
+		t.Errorf("ui should render reader items then load full images background: got %q", s)
 	}
 }
 

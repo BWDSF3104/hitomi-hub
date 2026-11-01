@@ -31,6 +31,12 @@
   .badge { position: absolute; right: 4px; top: 4px; background: #8ab4f8; color: #14161a; padding: 2px 5px; border-radius: 4px; font-size: .8rem; }
   .current { border: 2px solid #8ab4f8; }
   .pageimg { max-width: 100%; max-height: 78vh; background: #1d2126; object-fit: contain; }
+  .reader { display: grid; gap: .5rem; }
+  .reader.double { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reader.single, .reader.fullscreen { grid-template-columns: 1fr; }
+  .reader img { max-width: 100%; max-height: 78vh; background: #1d2126; object-fit: contain; }
+  body.fullscreen .side { display: none; }
+  body.fullscreen .reader img { max-height: 90vh; }
 </style>
 </head>
 <body>
@@ -68,9 +74,17 @@
     <section>
       <h2>閲覧</h2>
       <div id="gallery" class="meta">検索結果から gallery を選ぶ</div>
+      <div id="reader-controls" class="meta">
+        <select id="view-mode">
+          <option value="double">見開き（通常）</option>
+          <option value="single">単一</option>
+          <option value="fullscreen">フルスクリーン</option>
+        </select>
+        <span class="meta">キーボード: ← / → / d=見開き / s=単一 / f=フルスクリーン</span>
+      </div>
       <div id="note" class="note"></div>
       <div id="prefetch-status" class="status"></div>
-      <img class="pageimg" id="image" alt="">
+      <div id="reader" class="reader double"></div>
       <form id="nav">
         <button id="prev">前</button>
         <input id="pagenum" size="4">
@@ -78,7 +92,7 @@
         <button id="complete">読み完了</button>
         <button id="fav">お気に入り</button>
       </form>
-      <div class="meta">キーボード: ← / → でページ送リ</div>
+      <div class="meta">キーボード: ← / → でページ送リ。通常サイズでは見開き。</div>
       <div class="strip" id="thumbs"></div>
     </section>
   </div>
@@ -97,6 +111,8 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
 });
 
 let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
+let viewMode = "double";
+let currentPairEnd = null;
 let prefetchAbort = null;
 let prefetchDone = 0;
 let prefetchTotal = 0;
@@ -107,11 +123,14 @@ function escapeHTML(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 }
-function route(id, page) {
+function route(id, page, second) {
+  if (second) return "#/g/" + id + "/page/" + page + "-" + second;
   return "#/g/" + id + "/page/" + page;
 }
 function setRoute(id, page) {
-  history.replaceState(null, "", route(id, page));
+  const items = readerItems();
+  const second = displayMode() === "double" && items.length > 1 ? items[1].page : null;
+  history.replaceState(null, "", route(id, page, second));
 }
 function setGalleryMeta(data) {
   const g = data.gallery, s = data.read_state;
@@ -164,6 +183,78 @@ function stripGroupPage(items) {
   return Math.max(1, Math.floor((current.page - 1) / 50) + 1);
 }
 
+function entryForPage(page) {
+  return current.files[page - 1];
+}
+
+function displayMode() {
+  if (viewMode === "fullscreen") return "fullscreen";
+  if (viewMode === "single" || window.innerWidth < 720) return "single";
+  return "double";
+}
+
+function entryPlaceholder(entry) { return thumbURL(entry.hash, formatForEntry(entry), current.id, stripVariant()); }
+
+function readerItems() {
+  const items = stripItems();
+  const firstIdx = items.findIndex((item) => item.page === current.page);
+  const first = firstIdx >= 0 ? items[firstIdx] : { page: current.page, entry: entryForPage(current.page), badge: 0 };
+  const result = [first];
+  if (displayMode() === "double" && first.entry) {
+    let second = null;
+    if (currentPairEnd > current.page) second = { page: currentPairEnd, entry: entryForPage(currentPairEnd), badge: 0 };
+    else if (firstIdx >= 0 && firstIdx + 1 < items.length) second = items[firstIdx + 1];
+    else {
+      const e = entryForPage(first.page + 1);
+      if (e) second = { page: first.page + 1, entry: e, badge: 0 };
+    }
+    if (second && second.entry) result.push(second);
+  }
+  return result;
+}
+
+function movePage(delta) {
+  const items = readerItems();
+  if (delta > 0) {
+    const next = displayMode() === "double" && items.length > 1 ? items[1].page + 1 : current.page + delta;
+    if (next < 1 || next > current.count) return false;
+    current.page = next;
+    currentPairEnd = null;
+    return true;
+  }
+  const distance = displayMode() === "double" && items.length > 1 ? items[1].page - current.page : 0;
+  const prev = current.page - distance - 1;
+  if (prev < 1 || prev > current.count) return false;
+  current.page = prev;
+  currentPairEnd = null;
+  return true;
+}
+
+function applyFullscreen() {
+  document.body.classList.toggle("fullscreen", viewMode === "fullscreen");
+  if (viewMode === "fullscreen" && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else if (document.fullscreenElement && viewMode !== "fullscreen") {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  const select = document.getElementById("view-mode");
+  if (select) select.value = mode;
+  applyFullscreen();
+  renderReader();
+}
+
+function parseReaderHash(hash) {
+  const g = hash.match(/^#\/g\/(\d+)(?:\/(?:page\/)?(\d+)(?:[-\/](\d+))?)?$/);
+  if (g) return { id: Number(g[1]), page: Number(g[2] || 1), end: g[3] ? Number(g[3]) : null };
+  const p = hash.match(/^#(\d+)(?:[-\/](\d+))?$/);
+  if (p && current.id) return { id: current.id, page: Number(p[1]), end: p[2] ? Number(p[2]) : null };
+  return null;
+}
+
 function setPrefetchStatus(text) {
   const el = document.getElementById("prefetch-status");
   if (el) el.textContent = text;
@@ -179,6 +270,46 @@ function entrySource(entry) {
 
 async function prefetchPageImage(entry, signal) {
   await fetch(entrySource(entry), { signal });
+}
+
+function loadFullImage(img, entry) {
+  const targetPage = Number(img.dataset.page);
+  const targetHash = img.dataset.hash;
+  const fullSrc = entrySource(entry);
+  const full = new Image();
+  full.onload = () => {
+    if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      img.src = fullSrc;
+    }
+  };
+  full.onerror = () => {
+    if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      document.getElementById("note").textContent = "image load failed: " + targetPage;
+    }
+  };
+  full.src = fullSrc;
+}
+
+function renderReader() {
+  const container = document.getElementById("reader");
+  if (!container || !current.id) return;
+  const items = readerItems();
+  const mode = displayMode();
+  container.className = "reader " + mode;
+  const parts = [];
+  for (const item of items) {
+    const entry = item.entry;
+    if (!entry) continue;
+    const marker = entry.local ? " title='local'" : "";
+    const alt = item.page + (entry.local ? "・local" : "");
+    parts.push("<img data-page='" + item.page + "' data-hash='" + entry.hash + "' data-full='" + entrySource(entry) + "' src='" + entryPlaceholder(entry) + "'" + marker + " alt='" + alt + "'>");
+  }
+  container.innerHTML = parts.join("");
+  container.querySelectorAll("img").forEach((img) => {
+    const page = Number(img.dataset.page);
+    const entry = entryForPage(page);
+    if (entry) loadFullImage(img, entry);
+  });
 }
 
 function startFullPrefetch() {
@@ -224,9 +355,7 @@ async function showPage() {
     return;
   }
   const data = { page: current.page, src: entrySource(entry), local: !!entry.local, format: formatForEntry(entry) };
-  const img = document.getElementById("image");
-  img.onerror = () => document.getElementById("note").textContent = "image load failed";
-  img.src = data.src;
+  renderReader();
   startFullPrefetch();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
@@ -255,14 +384,16 @@ function renderStrip() {
   document.getElementById("thumbs").innerHTML = parts.join("");
 }
 function highlightStrip() {
+  const pages = readerItems().map((item) => item.page);
   document.querySelectorAll("#thumbs img").forEach((img) => {
-    img.classList.toggle("current", Number(img.dataset.page) === current.page);
+    img.classList.toggle("current", pages.includes(Number(img.dataset.page)));
   });
 }
-async function openGallery(id, page) {
+async function openGallery(id, page, second) {
   const data = await api("/api/gallery/" + id);
   setGalleryMeta(data);
   if (page) current.page = page;
+  currentPairEnd = second || null;
   await showPage();
   renderStrip();
   await showLists();
@@ -337,8 +468,8 @@ document.getElementById("query").addEventListener("submit", async (e) => {
   catch (err) { document.getElementById("note").textContent = err.message; }
 });
 document.getElementById("nav").addEventListener("submit", (e) => { e.preventDefault(); });
-document.getElementById("prev").addEventListener("click", async () => { if (current.page > 1) { current.page--; await showPage(); } });
-document.getElementById("next").addEventListener("click", async () => { if (current.page < current.count) { current.page++; await showPage(); } });
+document.getElementById("prev").addEventListener("click", async () => { if (movePage(-1)) await showPage(); });
+document.getElementById("next").addEventListener("click", async () => { if (movePage(1)) await showPage(); });
 document.getElementById("pagenum").addEventListener("change", async () => {
   const page = Number(document.getElementById("pagenum").value || current.page);
   if (current.id && page >= 1 && page <= current.count) { current.page = page; await showPage(); }
@@ -356,6 +487,16 @@ document.getElementById("complete").addEventListener("click", async () => {
   current.favorite = current.favorite;
   await showLists();
 });
+document.getElementById("view-mode").addEventListener("change", (e) => setViewMode(e.target.value));
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && viewMode === "fullscreen") {
+    viewMode = "single";
+    const select = document.getElementById("view-mode");
+    if (select) select.value = "single";
+    applyFullscreen();
+    renderReader();
+  }
+});
 document.getElementById("results").addEventListener("click", async (e) => {
   const t = e.target.closest("[data-id][data-page]");
   if (!t) return;
@@ -369,13 +510,16 @@ document.getElementById("thumbs").addEventListener("click", async (e) => {
   await openGallery(Number(t.dataset.id), Number(t.dataset.page));
 });
 window.addEventListener("keydown", async (e) => {
-  if (!current.id || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
-  if (e.key === "ArrowLeft" && current.page > 1) { current.page--; await showPage(); }
-  if (e.key === "ArrowRight" && current.page < current.count) { current.page++; await showPage(); }
+  if (!current.id || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowLeft") { if (movePage(-1)) await showPage(); }
+  if (e.key === "ArrowRight") { if (movePage(1)) await showPage(); }
+  if (e.key === "d") setViewMode("double");
+  if (e.key === "s") setViewMode("single");
+  if (e.key === "f") setViewMode("fullscreen");
 });
 window.addEventListener("hashchange", async () => {
-  const g = window.location.hash.match(/^#\/g\/(\d+)(?:\/page\/(\d+))?$/);
-  if (g) { await openGallery(Number(g[1]), Number(g[2] || 1)); return; }
+  const reader = parseReaderHash(window.location.hash);
+  if (reader) { await openGallery(reader.id, reader.page, reader.end); return; }
   const q = window.location.hash.match(/^#\/q\/(.+)$/);
   if (q) {
     const text = decodeURIComponent(q[1]);
@@ -385,11 +529,14 @@ window.addEventListener("hashchange", async () => {
 });
 
 showLists();
-const initial = window.location.hash.match(/^#\/g\/(\d+)(?:\/page\/(\d+))?$/);
-if (initial) openGallery(Number(initial[1]), Number(initial[2] || 1));
-const initialQ = window.location.hash.match(/^#\/q\/(.+)$/);
-if (initialQ) { document.getElementById("query").value = decodeURIComponent(initialQ[1]); runSearch(); }
-else runSearch();
+const initial = parseReaderHash(window.location.hash);
+if (initial) {
+  openGallery(initial.id, initial.page, initial.end);
+} else {
+  const initialQ = window.location.hash.match(/^#\/q\/(.+)$/);
+  if (initialQ) { document.getElementById("query").value = decodeURIComponent(initialQ[1]); runSearch(); }
+  else runSearch();
+}
 </script>
 </body>
 </html>

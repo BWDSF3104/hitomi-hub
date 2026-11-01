@@ -34,6 +34,16 @@
 ### Checkpoint 2: direct background full-image fetch
 
 - UI は `current.files` の `local_formats` と `hasavif` から full image URL を組み、背景 prefetch では `/api/gallery/<id>/page/<n>` JSON を per-page で呼ばない。
+- 閲覧画面は hitomi reader 風に `#2-3` のような pair hash を受け取る。通常ページサイズ（`window.innerWidth >= 720`）では default double reader、full screen mode と keyboard `d/s/f` を追加。`loadFullImage()` は reader items の placeholder thumbnail（strip TN variant）を先に show し、full image load 完了後同じ img element に swap する。
+
+### Checkpoint 3: hitomi-like reader spread/fullscreen placeholder
+
+- `go test -count=1 ./...` → `hitomi-hub/app 30.407s`, passed。Tests added for `id="view-mode"`, `function displayMode()`, `function readerItems()`, `function parseReaderHash(hash)`, `function route(id, page, second)`, fullscreenchange, keyboard `f`, `requestFullscreen`, narrow fallback, placeholder `entryPlaceholder(entry)`, `loadFullImage(img, entry)`, `full.onload`, `img.src = fullSrc`, `renderReader()` nonblocking background load.
+- `go build -trimpath -ldflags "-s -w" -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → passed。
+- 画面確認 `http://127.0.0.1:8731/?x=1#/g/2648601/page/2-3`: reader class `reader double`, reader pages `2,3`, pagenum `2`, full image loads after placeholder, natural `2059`。Screenshot: `scratch\hitomi-usage\reader_double_placeholder.png`。
+- Fullscreen view mode verify: `single` -> `reader single`; `fullscreen` -> `reader fullscreen` and `document.body.classList.contains('fullscreen') == true`。
+- Cost check: placeholder uses existing strip small TN; for current reader page it is one extra small TN request per displayed item. It is cost-effective because full image load can be slow and the placeholder can reuse hitomi TN cache or local marker. It should not be used for all background pages as a separate placeholder, because that would duplicate small TN requests; background prefetch can continue full-only.
+
 - `go vet ./...` → no output, passed。
 - `go test -count=1 ./...` → `hitomi-hub/app 30.059s`, passed。Test updated to require `entrySource(entry)`、`AbortController`、`PREFETCH_CONCURRENCY = 2`、nonblocking `startFullPrefetch()`。
 - `go build -trimpath -ldflags "-s -w" -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → passed。
