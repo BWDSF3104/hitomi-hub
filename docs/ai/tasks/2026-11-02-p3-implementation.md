@@ -152,6 +152,43 @@ Verification:
   - Current build showed `reader double`, `readerImageCount: 2`, objectURL cache, and display pass.
   - Full image display regression cannot currently be confirmed; per current instruction, it is lowest priority and handled only when an obvious full-image display failure is visible.
 
+## Checkpoint #14 fullscreen state separation
+
+Implemented in `app/ui.html`:
+
+- `viewMode` is layout intent only (`single` / `double`).
+- `fullscreenState` is presentation state (`off` / `on` / `fallback`).
+- `lastViewMode` preserves layout mode across fullscreen exit.
+- Fullscreen target prefers `#reader` so UI chrome can be separated.
+- Fallback order is explicit:
+  - `requestFullscreen`
+  - `webkitRequestFullscreen`
+  - CSS-only pseudo fullscreen
+- Added `body.pseudo-fullscreen` reader overlay rules.
+- `fullscreenchange` restores `lastViewMode`.
+- `fullscreenerror` changes state to fallback and re-evaluates display/prefetch.
+- `resize` re-renders reader, position, view state, and starts full prefetch.
+- `f` toggles fullscreen through `setFullscreenFromGesture()` instead of making fullscreen a layout mode.
+
+Tests in `app/viewer_test.go`:
+
+- Extended `TestEmbeddedUIHasReaderSpreadAndFullscreen`
+- `TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode`
+
+Verification:
+
+- `go test -count=1 .`: pass
+- `go vet .`: pass
+- Canonical exe rebuilt after test pass.
+- Screen verify:
+  - URL: `http://127.0.0.1:8736/?x=fullscreen#/g/4295693/page/2-3`
+  - Initial state: `fullscreen off`
+  - `setFullscreenFromGesture()`: `fullscreen on`, `last layout: double`, `body.fullscreen` applied.
+  - Narrow viewport `600x800`: state showed `display: fullscreen` without fullscreen double fallback.
+  - Exit fullscreen: `fullscreen off`, `last layout: double`, `body.fullscreen` removed.
+  - Screenshot: `scratch/hitomi-usage/p3-14-fullscreen-state.png`
+  - Full image display on this entry remained `no_full`; actual display pass was not available. This is not treated as a regression fix unless an obvious full-image display failure is confirmed.
+
 ## Verification
 
 No separate verification beyond checkpoint sections yet.

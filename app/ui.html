@@ -84,6 +84,9 @@
   body.fullscreen .side { display: none; }
   body.fullscreen .reader { --reader-page-height: min(90vh, 700px); }
   body.fullscreen .reader img { height: var(--reader-page-height); }
+  body.pseudo-fullscreen .side { display: none; }
+  body.pseudo-fullscreen #reader { position: fixed; inset: 0; z-index: 10; margin: 0; padding: 12px; background: #111; }
+  body.pseudo-fullscreen .reader img { height: calc(100vh - 24px); }
 </style>
 </head>
 <body>
@@ -178,6 +181,8 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
 const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";
 let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
 let viewMode = "double";
+let lastViewMode = "double";
+let fullscreenState = "off";
 let currentPairEnd = null;
 let stripGroup = null;
 let prefetchAbort = null;
@@ -429,7 +434,7 @@ function isAlreadyDoublePage(entry) {
 }
 
 function displayModeFor(firstEntry) {
-  if (viewMode === "fullscreen") return "fullscreen";
+  if (fullscreenState !== "off") return "fullscreen" + (doubleActive() ? " double" : "");
   if (isAlreadyDoublePage(firstEntry)) return "single landscape";
   if (viewMode === "single" || window.innerWidth < 720) return "single";
   return "double";
@@ -440,7 +445,7 @@ function displayMode() { return displayModeFor(entryForPage(current.page)); }
 function readerClass(firstEntry = null) {
   const entry = firstEntry && firstEntry.entry ? firstEntry.entry : firstEntry || entryForPage(current.page);
   if (isAlreadyDoublePage(entry)) return "reader single landscape";
-  if (viewMode === "fullscreen") return "reader fullscreen" + (doubleActive() ? " double" : "");
+  if (fullscreenState !== "off") return "reader fullscreen" + (doubleActive() ? " double" : "");
   return "reader " + displayModeFor(entry);
 }
 
@@ -481,20 +486,102 @@ function movePage(delta) {
   return true;
 }
 
-function applyFullscreen() {
-  document.body.classList.toggle("fullscreen", viewMode === "fullscreen");
-  if (viewMode === "fullscreen" && document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen().catch(() => {});
-  } else if (document.fullscreenElement && viewMode !== "fullscreen") {
-    document.exitFullscreen().catch(() => {});
+function fullscreenTarget() {
+  return document.getElementById("reader") || document.documentElement;
+}
+
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || document.webkitFullScreenElement || null;
+}
+
+function applyFullscreenPresentation() {
+  document.body.classList.toggle("fullscreen", fullscreenState !== "off");
+  document.body.classList.toggle("pseudo-fullscreen", fullscreenState === "fallback");
+}
+
+function updateAfterFullscreenChange() {
+  applyFullscreenPresentation();
+  renderReader();
+  renderPosition();
+  renderViewState();
+  startFullPrefetch();
+}
+
+function requestFullscreenWithFallback() {
+  const target = fullscreenTarget();
+  const api = target.requestFullscreen || target.webkitRequestFullscreen;
+  if (!api) {
+    fullscreenState = "fallback";
+    updateAfterFullscreenChange();
+    return;
+  }
+  try {
+    const result = api.call(target);
+    if (result && result.catch) {
+      result.catch(() => {
+        fullscreenState = "fallback";
+        updateAfterFullscreenChange();
+      });
+    }
+  } catch (err) {
+    fullscreenState = "fallback";
+    updateAfterFullscreenChange();
+  }
+}
+
+function enterFullscreenFromGesture() {
+  lastViewMode = viewMode || lastViewMode || "double";
+  fullscreenState = "fallback";
+  requestFullscreenWithFallback();
+  if (fullscreenElement()) {
+    fullscreenState = "on";
+    updateAfterFullscreenChange();
+  }
+}
+
+function exitFullscreenFromGesture() {
+  fullscreenState = "off";
+  const target = fullscreenTarget();
+  if (target.exitFullscreen) {
+    try {
+      target.exitFullscreen();
+    } catch (err) {}
+  } else if (target.webkitExitFullscreen) {
+    try {
+      target.webkitExitFullscreen();
+    } catch (err) {}
+  } else if (document.exitFullscreen) {
+    try {
+      document.exitFullscreen();
+    } catch (err) {}
+  } else if (document.webkitExitFullscreen) {
+    try {
+      document.webkitExitFullscreen();
+    } catch (err) {}
+  }
+  updateAfterFullscreenChange();
+}
+
+function setFullscreenFromGesture() {
+  if (fullscreenState !== "off") {
+    exitFullscreenFromGesture();
+  } else {
+    enterFullscreenFromGesture();
   }
 }
 
 function setViewMode(mode) {
-  viewMode = mode;
+  if (mode === "fullscreen") {
+    setFullscreenFromGesture();
+    return;
+  }
+  if (mode === "single" || mode === "double") {
+    viewMode = mode;
+    lastViewMode = mode;
+  }
   const select = document.getElementById("view-mode");
-  if (select) select.value = mode;
-  applyFullscreen();
+  if (select) select.value = fullscreenState !== "off" ? "fullscreen" : viewMode;
+  applyFullscreenPresentation();
   renderReader();
   renderPosition();
   renderViewState();
@@ -536,12 +623,12 @@ function renderViewState() {
   const el = document.getElementById("view-state");
   if (!el) return;
   if (!current.id) {
-    el.textContent = "view: " + viewMode + "・spread " + spreadDirection + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
+    el.textContent = "view: " + viewMode + "・last layout: " + lastViewMode + "・spread " + spreadDirection + "・fullscreen " + fullscreenState;
     return;
   }
   const pair = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
   const pageText = pair ? current.page + "-" + pair : String(current.page);
-  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・spread " + spreadDirection + "・page " + pageText + " / " + (current.count || "-") + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
+  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・last layout: " + lastViewMode + "・spread " + spreadDirection + "・page " + pageText + " / " + (current.count || "-") + "・fullscreen " + fullscreenState;
 }
 
 function loadSpreadDirection() {
@@ -1234,15 +1321,19 @@ document.getElementById("view-mode-buttons").addEventListener("click", (e) => {
   }
 });
 document.addEventListener("fullscreenchange", () => {
-  if (!document.fullscreenElement && viewMode === "fullscreen") {
-    viewMode = "single";
-    const select = document.getElementById("view-mode");
-    if (select) select.value = "single";
-    applyFullscreen();
-    renderReader();
-    renderPosition();
-    renderViewState();
-    startFullPrefetch();
+  if (fullscreenElement()) {
+    fullscreenState = "on";
+  } else {
+    fullscreenState = "off";
+    viewMode = lastViewMode || viewMode;
+  }
+  updateAfterFullscreenChange();
+});
+
+document.addEventListener("fullscreenerror", () => {
+  if (fullscreenState !== "off") {
+    fullscreenState = "fallback";
+    updateAfterFullscreenChange();
   }
 });
 document.getElementById("results").addEventListener("click", async (e) => {
@@ -1271,11 +1362,7 @@ window.addEventListener("keydown", async (e) => {
   if (e.key === "d") setViewMode("double");
   if (e.key === "s") setViewMode("single");
   if (e.key === "f") {
-    if (viewMode === "fullscreen" && document.fullscreenElement) {
-      setViewMode("double");
-    } else {
-      setViewMode("fullscreen");
-    }
+    setFullscreenFromGesture();
   }
   if (e.key === "r") setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");
 });

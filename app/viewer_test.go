@@ -1091,6 +1091,9 @@ func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 	if !strings.Contains(s, `function displayModeFor(firstEntry) {`) || !strings.Contains(s, `function readerClass(firstEntry = null) {`) || !strings.Contains(s, `return "reader single landscape"`) {
 		t.Errorf("ui should render already landscape entries as single landscape: got %q", s)
 	}
+	if !strings.Contains(s, `if (fullscreenState !== "off") return "fullscreen" + (doubleActive() ? " double" : "");`) || !strings.Contains(s, `if (fullscreenState !== "off") return "reader fullscreen" + (doubleActive() ? " double" : "");`) {
+		t.Errorf("fullscreen state should drive fullscreen display without using fullscreen as layout mode: got %q", s)
+	}
 	if !strings.Contains(s, `firstEntry && firstEntry.entry ? firstEntry.entry : firstEntry`) {
 		t.Errorf("readerClass should accept reader items or entries so renderReader can pass the first reader item: got %q", s)
 	}
@@ -1103,8 +1106,8 @@ func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 	if !strings.Contains(s, `function route(id, page, second) {`) {
 		t.Errorf("ui route should support hitomi-like #2-3 spread hashes: got %q", s)
 	}
-	if !strings.Contains(s, `document.addEventListener("fullscreenchange"`) || !strings.Contains(s, `window.addEventListener("keydown"`) || !strings.Contains(s, `e.key === "f"`) || !strings.Contains(s, `requestFullscreen`) {
-		t.Errorf("ui should support fullscreen view mode, keyboard d/s/f, and requestFullscreen: got %q", s)
+	if !strings.Contains(s, `document.addEventListener("fullscreenchange"`) || !strings.Contains(s, `window.addEventListener("keydown"`) || !strings.Contains(s, `e.key === "f"`) || !strings.Contains(s, `setFullscreenFromGesture()`) || !strings.Contains(s, `requestFullscreen`) {
+		t.Errorf("ui should support fullscreen state, keyboard d/s/f, gesture-bound fullscreen, and requestFullscreen: got %q", s)
 	}
 	if !strings.Contains(s, `window.innerWidth < 720`) {
 		t.Errorf("ui should fall back to single when the normal page size is too narrow: got %q", s)
@@ -1398,8 +1401,11 @@ func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 	if !strings.Contains(s, `modeButton.blur();`) || !strings.Contains(s, `e.key === "f"`) {
 		t.Errorf("view mode buttons should preserve keyboard mode by clearing button focus and keep f toggle: got %q", s)
 	}
-	if !strings.Contains(s, `if (viewMode === "fullscreen" && document.fullscreenElement)`) || !strings.Contains(s, `setViewMode("fullscreen");`) {
-		t.Errorf("f should toggle fullscreen when fullscreen state is active: got %q", s)
+	if !strings.Contains(s, `function setFullscreenFromGesture() {`) || !strings.Contains(s, `if (e.key === "f") {`) || !strings.Contains(s, `setFullscreenFromGesture();`) {
+		t.Errorf("f should toggle fullscreen through fullscreenState without losing last layout mode: got %q", s)
+	}
+	if !strings.Contains(s, `last layout: " + lastViewMode`) || !strings.Contains(s, `fullscreen " + fullscreenState`) {
+		t.Errorf("view state should show last layout mode and fullscreenState: got %q", s)
 	}
 
 	setStart := strings.Index(s, "function setViewMode(mode) {")
@@ -1422,6 +1428,41 @@ func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 
 	if !strings.Contains(s, `window.addEventListener("resize"`) || !strings.Contains(s, `renderViewState();`) {
 		t.Errorf("ui should update view state on resize because doubleActive is evaluated at render time: got %q", s)
+	}
+}
+
+func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `let fullscreenState = "off";`) || !strings.Contains(s, `let lastViewMode = "double";`) {
+		t.Errorf("ui should keep fullscreen presentation state and last layout mode separately: got %q", s)
+	}
+	if !strings.Contains(s, `function fullscreenTarget() {`) || !strings.Contains(s, `document.getElementById("reader")`) || !strings.Contains(s, `document.documentElement`) {
+		t.Errorf("fullscreen target should prefer reader element so UI chrome can be separated: got %q", s)
+	}
+	if !strings.Contains(s, `document.body.classList.toggle("fullscreen", fullscreenState !== "off");`) || !strings.Contains(s, `document.body.classList.toggle("pseudo-fullscreen", fullscreenState === "fallback");`) {
+		t.Errorf("fullscreen presentation should apply fullscreen class and explicit CSS fallback class separately: got %q", s)
+	}
+	if !strings.Contains(s, `function requestFullscreenWithFallback() {`) || !strings.Contains(s, `const api = target.requestFullscreen || target.webkitRequestFullscreen;`) {
+		t.Errorf("ui should implement fullscreen fallback order requestFullscreen, webkitRequestFullscreen, CSS fallback: got %q", s)
+	}
+	if !strings.Contains(s, `function setFullscreenFromGesture() {`) || !strings.Contains(s, `function enterFullscreenFromGesture() {`) {
+		t.Errorf("fullscreen should be applied from user gesture without relying on load/restore fullscreen state: got %q", s)
+	}
+	if !strings.Contains(s, `viewMode = lastViewMode || viewMode;`) || !strings.Contains(s, `lastViewMode = viewMode || lastViewMode || "double";`) {
+		t.Errorf("fullscreen exit should restore last layout mode: got %q", s)
+	}
+	if !strings.Contains(s, `document.addEventListener("fullscreenerror", () => {`) || !strings.Contains(s, `window.addEventListener("resize"`) {
+		t.Errorf("ui should re-evaluate reader render/prefetch on fullscreenerror and resize: got %q", s)
+	}
+	if !strings.Contains(s, `body.pseudo-fullscreen .side { display: none; }`) || !strings.Contains(s, `body.pseudo-fullscreen #reader { position: fixed; inset: 0;`) {
+		t.Errorf("ui should expose explicit CSS-only pseudo fullscreen fallback for reader display: got %q", s)
+	}
+	if !strings.Contains(s, `setFullscreenFromGesture();`) || !strings.Contains(s, `fullscreenerror`) {
+		t.Errorf("ui should expose gesture-bound fullscreen toggle and fullscreenerror handling: got %q", s)
 	}
 }
 
