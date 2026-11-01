@@ -1,8 +1,8 @@
 # viewer の hitomi TN variant 準拠表示（work page full-entry）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-01
-**Next Action**: scene_indexes 画面確認完了。記録更新後に commit。push はユーザー承認が必要。
+**Next Action**: 完了（実装・テスト・画面確認・commit 済み。push は任意・ユーザー承認が必要）
 
 ## 意図 / 背景
 
