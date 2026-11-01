@@ -215,6 +215,12 @@ function setRoute(id, page) {
   const second = doubleActive() && items.length > 1 ? items[1].page : null;
   history.replaceState(null, "", route(id, page, second));
 }
+function updateTabTitle(title) {
+  const display = title || current.id;
+  if (!display) return;
+  document.title = String(display) + " - hitomi hub viewer";
+}
+
 function setGalleryMeta(data) {
   const g = data.gallery, s = data.read_state;
   const sceneIndexes = g.scene_indexes || [];
@@ -230,6 +236,7 @@ function setGalleryMeta(data) {
     "<span class='meta'>" + escapeHTML((g.tags || []).join(", ")) + "</span><br>" +
     "<span class='meta'>" + current.count + " files・local " + data.local + "（format " + escapeHTML(data.format) + "）</span>";
   document.getElementById("pagenum").value = current.page;
+  updateTabTitle(g.japanese_title || g.title || current.id);
 }
 function fileFormatFromName(name) {
   const ext = String(name || "").split(".").pop().toLowerCase();
@@ -523,6 +530,7 @@ function renderGalleryLoading(id, page, second) {
   const note = document.getElementById("note");
   if (note) note.textContent = "reader content loading";
   setPrefetchStatus("gallery read load: " + id);
+  updateTabTitle((card && card.japanese_title) || title || id);
 }
 
 function updatePrefetchCounts(status, entry, galleryId = current.id) {
@@ -948,6 +956,7 @@ function showGalleryMetaFromCache(id) {
     "<span class='meta'>" + escapeHTML(((card && card.tags) || []).join(", ")) + "</span><br>" +
     "<span class='meta'>loading</span>";
   setPrefetchStatus("gallery read load: " + id);
+  updateTabTitle((card && card.japanese_title) || title || id);
 }
 function searchCardCoverSource(card) {
   if (card && card.files && card.files[0]) {

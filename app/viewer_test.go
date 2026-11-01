@@ -1328,6 +1328,43 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `function updateTabTitle(title) {`) || !strings.Contains(s, `document.title = String(display) + " - hitomi hub viewer";`) {
+		t.Errorf("ui should update document title from current work title: got %q", s)
+	}
+	setStart := strings.Index(s, "function setGalleryMeta(data) {")
+	if setStart < 0 {
+		t.Fatalf("setGalleryMeta function not found")
+	}
+	setBody := s[setStart:strings.Index(s, "\nfunction fileFormatFromName(name) {")]
+	if !strings.Contains(setBody, `updateTabTitle(g.japanese_title || g.title || current.id);`) {
+		t.Errorf("setGalleryMeta should set tab title from gallery title data: got %q", setBody)
+	}
+
+	cacheStart := strings.Index(s, "function showGalleryMetaFromCache(id) {")
+	if cacheStart < 0 {
+		t.Fatalf("showGalleryMetaFromCache function not found")
+	}
+	cacheBody := s[cacheStart:strings.Index(s, "\nfunction searchCardCoverSource(card) {")]
+	if !strings.Contains(cacheBody, `updateTabTitle((card && card.japanese_title) || title || id);`) {
+		t.Errorf("showGalleryMetaFromCache should set tab title from cached card title: got %q", cacheBody)
+	}
+
+	loadingStart := strings.Index(s, "function renderGalleryLoading(id, page, second) {")
+	if loadingStart < 0 {
+		t.Fatalf("renderGalleryLoading function not found")
+	}
+	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id) {")]
+	if !strings.Contains(loadingBody, `updateTabTitle((card && card.japanese_title) || title || id);`) {
+		t.Errorf("renderGalleryLoading should set tab title from cached card title while loading: got %q", loadingBody)
+	}
+}
+
 func TestViewerIndexServesEmbeddedPage(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	rec := httptest.NewRecorder()
