@@ -1,7 +1,7 @@
 # 画面確認異常: 閲覧画面は空 placeholder のまま（search-card TN 表示は正常）
 
 **Date**: 2026-11-01
-**Status**: 異常（完成系不合格）
+**Status**: resolved for actual full image display; `no_full` remains not an actual image-display pass
 
 ## 現在の画面
 
@@ -50,3 +50,18 @@ CP10 root policy correction verification:
   - Current reader images page 4 and page 5 had `naturalWidth > 0`.
 - TN viewer display exception was not introduced. TN remains search-card/result cover only. `no_full` galleries remain not actual image-display passes unless a full image objectURL/local file is available.
 - Screenshot: `S:\Documents\Kilo_Commons\hitomi-hub\scratch\hitomi-usage\cp10_root_actual_full_pixels.png`
+
+## Resolution
+
+- CP11 fixed live `gg.js` switch polarity, enabling remote full image `200` for the tested cache-less gallery.
+- CP14 added landscape-aspect single display and strip group controls, preserving actual display pass on cache-less runtime root.
+- CP15 stale guard prevented stale async status/strip writes and actual display pass remained true.
+
+Actual screen pass on cache-less runtime root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`:
+- `http://127.0.0.1:8736/?x=cp18-scroll-fixed#/g/4252697/page/1`
+  - `#reader img`: `1/1` actual pixels, `naturalWidth > 0`
+  - `#thumbs img`: `50/50` actual pixels, `naturalWidth > 0`
+  - `#results img`: `25/25` actual pixel display ok
+  - `prefetchStatus`: `full display cache 203/203 | no full 0/203 | TN display fallback disabled`
+
+The `no_full` condition remains an explicit status and is not treated as actual image-display completion.
