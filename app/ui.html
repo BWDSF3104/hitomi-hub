@@ -132,7 +132,17 @@ let tnDone = 0;
 let errorDone = 0;
 let prefetchTotal = 0;
 const PREFETCH_CONCURRENCY = 4;
-let fullObjectUrls = [];
+const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";
+const MAX_FULL_CACHE_ENTRIES = 2000;
+let fullObjectUrls = new Set();
+const fullCache = new Map();
+const prefetchedEntries = new Map();
+const countsByGallery = new Map();
+const galleryFormats = new Map();
+let searchGeneration = 0;
+let openGeneration = 0;
+let showGeneration = 0;
+let renderGeneration = 0;
 
 function escapeHTML(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -156,6 +166,7 @@ function setGalleryMeta(data) {
     id: g.id, page: current.page || s.last_page || 1, count, favorite: s.favorite, files: g.files,
     sceneIndexes, format: data.format || "webp"
   };
+  galleryFormats.set(g.id, data.format || "webp");
   document.getElementById("gallery").innerHTML =
     "<b>" + escapeHTML(g.title || current.id) + "</b> <span class='meta'>" + escapeHTML(g.language) + " / " + escapeHTML(g.type) + "</span><br>" +
     "<span class='meta'>" + escapeHTML((g.artists || []).join(", ")) + "</span><br>" +
@@ -182,6 +193,36 @@ function stripVariant() {
 }
 function formatForEntry(entry) {
   return entry.hasavif ? "avif" : (current.format || "webp");
+}
+function entryFormat(entry, galleryId = current.id) {
+  return entry.hasavif ? "avif" : (galleryFormats.get(galleryId) || current.format || "webp");
+}
+function fullCacheKey(entry, galleryId = current.id) {
+  return galleryId + "|" + entry.hash + "|" + entryFormat(entry, galleryId);
+}
+function cachedFullSrc(entry, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  const cached = fullCache.get(key);
+  if (cached && cached.objectUrl) return cached.objectUrl;
+  const status = prefetchedEntries.get(key);
+  if (status && status !== "error") return entrySource(entry, galleryId);
+  return "";
+}
+function getGalleryCounts(galleryId) {
+  if (!countsByGallery.has(galleryId)) {
+    countsByGallery.set(galleryId, { fullDone: 0, tnDone: 0, errorDone: 0, total: 0 });
+  }
+  return countsByGallery.get(galleryId);
+}
+function renderPrefetchStatus() {
+  const counts = getGalleryCounts(current.id);
+  const total = counts.total || prefetchTotal;
+  let text = "full prefetch " + counts.fullDone + "/" + total + " tn " + counts.tnDone + "/" + total;
+  if (counts.errorDone) text += " error " + counts.errorDone + "/" + total;
+  fullDone = counts.fullDone;
+  tnDone = counts.tnDone;
+  errorDone = counts.errorDone;
+  setPrefetchStatus(text);
 }
 function stripItems() {
   if (current.sceneIndexes && current.sceneIndexes.length) {
@@ -284,27 +325,49 @@ function setPrefetchStatus(text) {
   if (el) el.textContent = text;
 }
 
-function updatePrefetchCounts(status) {
-  if (status === "tn") tnDone++;
-  else if (status === "error") errorDone++;
-  else fullDone++;
-  let text = "full prefetch " + fullDone + "/" + prefetchTotal + " tn " + tnDone + "/" + prefetchTotal;
-  if (errorDone) text += " error " + errorDone + "/" + prefetchTotal;
-  setPrefetchStatus(text);
+function updatePrefetchCounts(status, entry, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  if (prefetchedEntries.has(key)) return;
+  prefetchedEntries.set(key, status);
+  const counts = getGalleryCounts(galleryId);
+  if (status === "tn") counts.tnDone++;
+  else if (status === "error") counts.errorDone++;
+  else counts.fullDone++;
+  renderPrefetchStatus();
 }
 
-function entrySource(entry) {
+function entrySource(entry, galleryId = current.id) {
   const formats = entry.local_formats || [];
   if (formats.length) {
-    return "/files/" + current.id + "/" + entry.hash + "." + formats[0];
+    return "/files/" + galleryId + "/" + entry.hash + "." + formats[0];
   }
-  return "/api/image/" + entry.hash + "?format=" + encodeURIComponent(formatForEntry(entry)) + "&gallery=" + encodeURIComponent(current.id);
+  return "/api/image/" + entry.hash + "?format=" + encodeURIComponent(entryFormat(entry, galleryId)) + "&gallery=" + encodeURIComponent(galleryId);
+}
+function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  if (objectUrl && !fullObjectUrls.has(objectUrl)) fullObjectUrls.add(objectUrl);
+  fullCache.set(key, { status, objectUrl });
+  if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
+    revokeFullObjectUrls();
+  }
 }
 
-async function prefetchPageImage(entry, signal) {
-  const r = await fetch(entrySource(entry), { cache: "no-store", signal });
-  if (!r.ok) return "error";
-  return r.headers.get("x-cache") || "miss";
+async function prefetchPageImage(entry, signal, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  if (fullCache.has(key)) return fullCache.get(key).status;
+  const fullSrc = entrySource(entry, galleryId);
+  const r = await fetch(fullSrc, { cache: "no-store", signal });
+  if (signal.aborted) return "error";
+  if (!r.ok) {
+    storeFullCache(entry, "error", null, galleryId);
+    updatePrefetchCounts("error", entry, galleryId);
+    return "error";
+  }
+  const cache = r.headers.get("x-cache") || "miss";
+  const objectUrl = URL.createObjectURL(await r.blob());
+  storeFullCache(entry, cache, objectUrl, galleryId);
+  updatePrefetchCounts(cache, entry, galleryId);
+  return cache;
 }
 
 function revokeFullObjectUrls() {
@@ -317,39 +380,43 @@ function revokeFullObjectUrls() {
 async function loadFullImage(img, entry, signal) {
   const targetPage = Number(img.dataset.page);
   const targetHash = img.dataset.hash;
-  const fullSrc = entrySource(entry);
+  const targetRender = Number(img.dataset.render);
+  const galleryId = current.id;
+  const fullSrc = entrySource(entry, galleryId);
   try {
     const r = await fetch(fullSrc, { cache: "no-store", signal });
     if (signal.aborted) return;
     if (!r.ok) {
-      updatePrefetchCounts("error");
-      if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      storeFullCache(entry, "error", null, galleryId);
+      updatePrefetchCounts("error", entry, galleryId);
+      if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "image load failed: " + targetPage;
       }
       return;
     }
     const cache = r.headers.get("x-cache") || "miss";
     const blob = await r.blob();
-    updatePrefetchCounts(cache);
-    if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+    const objectUrl = URL.createObjectURL(blob);
+    storeFullCache(entry, cache, objectUrl, galleryId);
+    updatePrefetchCounts(cache, entry, galleryId);
+    if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       img.dataset.fullCache = cache;
-      const objectUrl = URL.createObjectURL(blob);
-      fullObjectUrls.push(objectUrl);
       img.src = objectUrl;
     }
   } catch (err) {
     if (signal.aborted) return;
-    updatePrefetchCounts("error");
-    if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+    storeFullCache(entry, "error", null, galleryId);
+    updatePrefetchCounts("error", entry, galleryId);
+    if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       document.getElementById("note").textContent = "image load failed: " + targetPage;
     }
   }
 }
 
 function renderReader() {
-  revokeFullObjectUrls();
   const container = document.getElementById("reader");
   if (!container || !current.id) return;
+  renderGeneration++;
   const items = readerItems();
   container.className = readerClass();
   const parts = [];
@@ -358,7 +425,8 @@ function renderReader() {
     if (!entry) continue;
     const marker = entry.local ? " title='local'" : "";
     const alt = item.page + (entry.local ? "・local" : "");
-    parts.push("<img data-page='" + item.page + "' data-hash='" + entry.hash + "' data-full='" + entrySource(entry) + "' src='" + entryPlaceholder(entry) + "'" + marker + " alt='" + alt + "'>");
+    const src = cachedFullSrc(entry, current.id) || entryPlaceholder(entry);
+    parts.push("<img data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
   }
   container.innerHTML = parts.join("");
 }
@@ -368,6 +436,7 @@ function startFullPrefetch() {
   if (prefetchAbort) prefetchAbort.abort();
   prefetchAbort = new AbortController();
   const signal = prefetchAbort.signal;
+  const currentId = current.id;
   const displayed = readerItems().filter((item) => item.entry);
   const displayedPages = new Set(displayed.map((item) => item.page));
   const items = stripItems().filter((item) => item.entry);
@@ -377,19 +446,17 @@ function startFullPrefetch() {
     for (let distance = 0; distance <= Math.max(items.length - currentIdx, currentIdx); distance++) {
       const right = currentIdx + distance;
       const left = currentIdx - distance;
-      if (right < items.length && !displayedPages.has(items[right].page)) order.push(items[right]);
-      if (distance > 0 && left >= 0 && !displayedPages.has(items[left].page)) order.push(items[left]);
+      if (right < items.length && !displayedPages.has(items[right].page) && !prefetchedEntries.has(fullCacheKey(items[right].entry, currentId))) order.push(items[right]);
+      if (distance > 0 && left >= 0 && !displayedPages.has(items[left].page) && !prefetchedEntries.has(fullCacheKey(items[left].entry, currentId))) order.push(items[left]);
     }
   } else {
     for (let i = 0; i < items.length; i++) {
-      if (!displayedPages.has(items[i].page)) order.push(items[i]);
+      if (!displayedPages.has(items[i].page) && !prefetchedEntries.has(fullCacheKey(items[i].entry, currentId))) order.push(items[i]);
     }
   }
-  prefetchTotal = displayed.length + order.length;
-  fullDone = 0;
-  tnDone = 0;
-  errorDone = 0;
-  setPrefetchStatus("full prefetch 0/" + prefetchTotal + " tn 0/" + prefetchTotal);
+  const counts = getGalleryCounts(currentId);
+  counts.total = items.length;
+  renderPrefetchStatus();
   const container = document.getElementById("reader");
   for (const item of displayed) {
     const img = container && container.querySelector("img[data-page='" + item.page + "']");
@@ -399,12 +466,12 @@ function startFullPrefetch() {
     while (order.length && !signal.aborted) {
       const item = order.shift();
       try {
-        const cache = await prefetchPageImage(item.entry, signal);
+        const cache = await prefetchPageImage(item.entry, signal, currentId);
         if (signal.aborted) return;
-        updatePrefetchCounts(cache);
+        updatePrefetchCounts(cache, item.entry, currentId);
       } catch (err) {
         if (signal.aborted) return;
-        updatePrefetchCounts("error");
+        updatePrefetchCounts("error", item.entry, currentId);
       }
     }
   }
@@ -418,13 +485,17 @@ async function showPage() {
     document.getElementById("note").textContent = "page out of range";
     return;
   }
-  const data = { page: current.page, src: entrySource(entry), local: !!entry.local, format: formatForEntry(entry) };
+  const data = { page: current.page, src: entrySource(entry, current.id), local: !!entry.local, format: formatForEntry(entry) };
+  const showGen = ++showGeneration;
+  const openGen = openGeneration;
   renderReader();
   startFullPrefetch();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   setRoute(current.id, current.page);
+  if (showGen !== showGeneration || openGen !== openGeneration) return;
   await post("/api/read", { gallery_id: current.id, page: current.page });
+  if (showGen !== showGeneration || openGen !== openGeneration) return;
   await showLists();
   highlightStrip();
 }
@@ -454,11 +525,14 @@ function highlightStrip() {
   });
 }
 async function openGallery(id, page, second) {
+  const gen = ++openGeneration;
   const data = await api("/api/gallery/" + id);
+  if (gen !== openGeneration) return;
   setGalleryMeta(data);
   if (page) current.page = page;
   currentPairEnd = second || null;
   await showPage();
+  if (gen !== openGeneration) return;
   renderStrip();
   await showLists();
 }
@@ -476,49 +550,98 @@ function renderSearchCard(r) {
   return "<li class='card' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
 }
 
-async function loadSearchCards(ids) {
+function parseSearchHash(hash) {
+  const match = hash.match(/^#\/q\/([^/]+)(?:\/page\/(\d+))?$/);
+  if (!match) return null;
+  return { query: decodeURIComponent(match[1]), page: Number(match[2] || 1) };
+}
+function searchRoute(query, page) {
+  return "#/q/" + encodeURIComponent(query) + "/page/" + page;
+}
+function saveSearchState(state) {
+  try {
+    localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {}
+}
+function loadSearchState() {
+  try {
+    return JSON.parse(localStorage.getItem(SEARCH_STORAGE_KEY));
+  } catch (err) {
+    return null;
+  }
+}
+function restoreSearchState() {
+  const state = loadSearchState();
+  if (!state || !state.query) return;
+  const queryInput = document.getElementById("query");
+  const langInput = document.getElementById("lang");
+  const pageInput = document.getElementById("page");
+  const status = document.getElementById("search-status");
+  const results = document.getElementById("results");
+  const count = document.getElementById("count");
+  queryInput.value = state.query;
+  if (langInput && state.lang) langInput.value = state.lang;
+  if (pageInput) pageInput.value = String(state.page || 1);
+  const ids = Array.isArray(state.ids) ? state.ids : [];
+  if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
+  status.textContent = "検索結果復元: " + state.query;
+  results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'>#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+  loadSearchCards(ids, searchGeneration);
+}
+async function loadSearchCards(ids, searchGen = searchGeneration) {
   const status = document.getElementById("search-status");
   const results = document.getElementById("results");
   for (let i = 0; i < ids.length; i++) {
+    if (searchGen !== searchGeneration) return;
     status.textContent = "カード読み込み " + (i + 1) + "/" + ids.length + ": " + ids[i];
     const li = results.querySelector("[data-search-id='" + ids[i] + "']");
     try {
       const card = await api("/api/search-card/" + ids[i]);
+      if (searchGen !== searchGeneration) return;
       if (li) li.outerHTML = renderSearchCard(card);
     } catch (err) {
+      if (searchGen !== searchGeneration) return;
       if (li) li.innerHTML = "<span class='meta'>" + escapeHTML(err.message) + "</span>";
     }
   }
 }
 
 async function runSearch() {
-  const q = document.getElementById("query").value.trim();
+  const query = document.getElementById("query").value.trim();
   const lang = document.getElementById("lang").value.trim() || "all";
   const page = Number(document.getElementById("page").value || "1");
+  const searchGen = ++searchGeneration;
   const status = document.getElementById("search-status");
   const results = document.getElementById("results");
   const submit = document.getElementById("search-submit");
   const originalText = submit.dataset.original || submit.textContent;
   submit.dataset.original = originalText;
-  status.textContent = "検索実行中: " + q;
+  status.textContent = "検索実行中: " + query;
   submit.disabled = true;
   submit.textContent = "実行中…";
   results.innerHTML = "<li class='meta'>検索実行中…</li>";
   try {
-    const data = await api("/api/search?query=" + encodeURIComponent(q) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
+    const data = await api("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
+    if (searchGen !== searchGeneration) return;
     const ids = data.ids || (data.results || []).map((r) => r.id);
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
     status.textContent = "検索完了・カード読み込み " + ids.length + "件";
     results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'>#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
-    await loadSearchCards(ids);
+    saveSearchState({ query, lang, page, ids, total: data.total });
+    history.replaceState(null, "", searchRoute(query, page));
+    await loadSearchCards(ids, searchGen);
+    if (searchGen !== searchGeneration) return;
     await showLists();
     status.textContent = "検索完了・カード表示済み " + ids.length + "件";
   } catch (err) {
+    if (searchGen !== searchGeneration) return;
     status.textContent = "検索エラー: " + err.message;
     document.getElementById("note").textContent = err.message;
   } finally {
-    submit.disabled = false;
-    submit.textContent = originalText;
+    if (searchGen === searchGeneration) {
+      submit.disabled = false;
+      submit.textContent = originalText;
+    }
   }
 }
 
@@ -585,22 +708,29 @@ window.addEventListener("keydown", async (e) => {
 window.addEventListener("hashchange", async () => {
   const reader = parseReaderHash(window.location.hash);
   if (reader) { await openGallery(reader.id, reader.page, reader.end); return; }
-  const q = window.location.hash.match(/^#\/q\/(.+)$/);
-  if (q) {
-    const text = decodeURIComponent(q[1]);
-    document.getElementById("query").value = text;
+  const search = parseSearchHash(window.location.hash);
+  if (search) {
+    document.getElementById("query").value = search.query;
+    document.getElementById("page").value = String(search.page);
     await runSearch();
   }
 });
 
 showLists();
-const initial = parseReaderHash(window.location.hash);
-if (initial) {
-  openGallery(initial.id, initial.page, initial.end);
+const initialSearch = parseSearchHash(window.location.hash);
+if (initialSearch) {
+  restoreSearchState();
+  document.getElementById("query").value = initialSearch.query;
+  document.getElementById("page").value = String(initialSearch.page);
+  runSearch();
 } else {
-  const initialQ = window.location.hash.match(/^#\/q\/(.+)$/);
-  if (initialQ) { document.getElementById("query").value = decodeURIComponent(initialQ[1]); runSearch(); }
-  else runSearch();
+  restoreSearchState();
+  const initial = parseReaderHash(window.location.hash);
+  if (initial) {
+    openGallery(initial.id, initial.page, initial.end);
+  } else {
+    runSearch();
+  }
 }
 </script>
 </body>

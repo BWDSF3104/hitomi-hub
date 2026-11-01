@@ -662,10 +662,10 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 4;`) {
 		t.Errorf("ui should use cancellable bounded prefetch concurrency: got %q", s)
 	}
-	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(entrySource(entry), { cache: \"no-store\", signal })") {
+	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(fullSrc, { cache: \"no-store\", signal })") {
 		t.Errorf("ui should prefetch full images background through abortable no-store entry source fetch: got %q", s)
 	}
-	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status) {`) || !strings.Contains(s, `tnDone`) {
+	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status, entry, galleryId = current.id) {`) || !strings.Contains(s, `tnDone`) {
 		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
 	}
 	if !strings.Contains(s, `displayedPages`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
@@ -674,8 +674,11 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `Math.max(items.length - currentIdx, currentIdx)`) || !strings.Contains(s, `currentIdx + distance`) {
 		t.Errorf("ui should order background prefetch nearest to the current reader page first: got %q", s)
 	}
-	if !strings.Contains(s, `function entrySource(entry) {`) || !strings.Contains(s, `entry.local_formats`) {
+	if !strings.Contains(s, `function entrySource(entry, galleryId = current.id) {`) || !strings.Contains(s, `entry.local_formats`) {
 		t.Errorf("ui should use entry local_formats and remote TN/full format for background prefetch: got %q", s)
+	}
+	if !strings.Contains(s, `prefetchedEntries`) || !strings.Contains(s, `countsByGallery`) {
+		t.Errorf("ui should keep already-prefetched entries and gallery counts instead of resetting them on page movement: got %q", s)
 	}
 	if strings.Contains(s, `await startFullPrefetch`) {
 		t.Errorf("showPage should start background prefetch without blocking current page load: got %q", s)
@@ -687,6 +690,93 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	showBody := s[showStart:]
 	if !strings.Contains(showBody, `renderReader();`) || !strings.Contains(showBody, `startFullPrefetch();`) {
 		t.Errorf("showPage should render the current reader view and start full-image prefetch without blocking: got %q", showBody)
+	}
+}
+
+func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `let openGeneration = 0;`) || !strings.Contains(s, `let showGeneration = 0;`) || !strings.Contains(s, `let renderGeneration = 0;`) {
+		t.Errorf("ui should guard async reader renders with generations: got %q", s)
+	}
+	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
+	if openStart < 0 {
+		t.Fatalf("openGallery function not found")
+	}
+	openBody := s[openStart:strings.Index(s, "\nasync function showLists() {")]
+	if !strings.Contains(openBody, `const gen = ++openGeneration;`) || !strings.Contains(openBody, `if (gen !== openGeneration) return;`) {
+		t.Errorf("openGallery should ignore stale async gallery loads: got %q", openBody)
+	}
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+	if !strings.Contains(showBody, `const showGen = ++showGeneration;`) || !strings.Contains(showBody, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
+		t.Errorf("showPage should ignore stale async reader updates: got %q", showBody)
+	}
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal) {")
+	if loadStart < 0 {
+		t.Fatalf("loadFullImage function not found")
+	}
+	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	if !strings.Contains(loadBody, `const targetRender = Number(img.dataset.render);`) || !strings.Contains(loadBody, `targetRender === renderGeneration && Number(img.dataset.render) === targetRender`) {
+		t.Errorf("loadFullImage should not write stale renders: got %q", loadBody)
+	}
+	renderStart := strings.Index(s, "function renderReader() {")
+	if renderStart < 0 {
+		t.Fatalf("renderReader function not found")
+	}
+	renderBody := s[renderStart:strings.Index(s, "\nfunction startFullPrefetch() {")]
+	if !strings.Contains(renderBody, `renderGeneration++;`) || !strings.Contains(renderBody, `data-render='`) {
+		t.Errorf("renderReader should mark the current render generation: got %q", renderBody)
+	}
+}
+
+func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";`) || !strings.Contains(s, `let searchGeneration = 0;`) {
+		t.Errorf("ui should persist search state and guard async search writes: got %q", s)
+	}
+	if !strings.Contains(s, `function parseSearchHash(hash) {`) || !strings.Contains(s, `function searchRoute(query, page) {`) || !strings.Contains(s, `function saveSearchState(state) {`) || !strings.Contains(s, `function restoreSearchState() {`) {
+		t.Errorf("ui should parse, save, and restore search state: got %q", s)
+	}
+	if !strings.Contains(s, `localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(state))`) || !strings.Contains(s, `localStorage.getItem(SEARCH_STORAGE_KEY)`) {
+		t.Errorf("ui should store search state in localStorage: got %q", s)
+	}
+	runStart := strings.Index(s, "async function runSearch() {")
+	if runStart < 0 {
+		t.Fatalf("runSearch function not found")
+	}
+	runBody := s[runStart:strings.Index(s, "document.getElementById(\"search\")")]
+	if !strings.Contains(runBody, `const searchGen = ++searchGeneration;`) || !strings.Contains(runBody, `if (searchGen !== searchGeneration) return;`) {
+		t.Errorf("runSearch should ignore stale async search results: got %q", runBody)
+	}
+	if !strings.Contains(runBody, `saveSearchState({ query, lang, page, ids, total: data.total });`) || !strings.Contains(runBody, `history.replaceState(null, "", searchRoute(query, page))`) {
+		t.Errorf("runSearch should save search state and route across reload: got %q", runBody)
+	}
+	loadCardStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
+	if loadCardStart < 0 {
+		t.Fatalf("loadSearchCards function not found")
+	}
+	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
+	if !strings.Contains(loadCardBody, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadCardBody, `const li = results.querySelector("[data-search-id='" + ids[i] + "']");`) {
+		t.Errorf("loadSearchCards should guard stale async card writes while keeping lazy card selectors: got %q", loadCardBody)
+	}
+	initStart := strings.Index(s, "showLists();\nconst initialSearch = parseSearchHash(window.location.hash);")
+	if initStart < 0 {
+		t.Fatalf("initial search restore not found")
+	}
+	initBody := s[initStart:]
+	if !strings.Contains(initBody, `restoreSearchState();`) || !strings.Contains(initBody, `runSearch();`) {
+		t.Errorf("page load should restore search state or start search: got %q", initBody)
 	}
 }
 
@@ -748,10 +838,24 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `async function loadFullImage(img, entry, signal) {`) || !strings.Contains(s, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `img.dataset.fullCache = cache`) || !strings.Contains(s, `URL.createObjectURL(blob)`) || !strings.Contains(s, `img.src = objectUrl`) {
 		t.Errorf("ui should replace placeholder thumbnail from a no-store fetched image bytes, while counting TN separately: got %q", s)
 	}
-	if !strings.Contains(s, `let fullObjectUrls = [];`) || !strings.Contains(s, `function revokeFullObjectUrls() {`) || !strings.Contains(s, `revokeFullObjectUrls();`) {
-		t.Errorf("ui should revoke reader object URLs when the reader is re-rendered: got %q", s)
+	if !strings.Contains(s, `let fullObjectUrls = new Set();`) || !strings.Contains(s, `function revokeFullObjectUrls() {`) || !strings.Contains(s, `revokeFullObjectUrls();`) {
+		t.Errorf("ui should keep a bounded object URL cache and revoke stored object URLs when the cache is cleared: got %q", s)
 	}
-	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `entryPlaceholder(entry)`) || !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
+	if !strings.Contains(s, `const fullCache = new Map();`) || !strings.Contains(s, `const prefetchedEntries = new Map();`) || !strings.Contains(s, `function cachedFullSrc(entry, galleryId = current.id) {`) || !strings.Contains(s, `function storeFullCache(entry, status, objectUrl, galleryId = current.id) {`) {
+		t.Errorf("ui should store full-image cache entries instead of revoking every display cache on re-render: got %q", s)
+	}
+	renderStart := strings.Index(s, "function renderReader() {")
+	if renderStart < 0 {
+		t.Fatalf("renderReader function not found")
+	}
+	renderBody := s[renderStart:strings.Index(s, "\nfunction startFullPrefetch() {")]
+	if strings.Contains(renderBody, `revokeFullObjectUrls();`) {
+		t.Errorf("renderReader should not revoke the full cache on every render: got %q", renderBody)
+	}
+	if !strings.Contains(renderBody, `cachedFullSrc(entry, current.id) || entryPlaceholder(entry)`) || !strings.Contains(renderBody, `entryPlaceholder(entry)`) {
+		t.Errorf("renderReader should prefer cached full entries and use placeholders only for uncached entries: got %q", renderBody)
+	}
+	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
 		t.Errorf("ui should render placeholder items and load full images through background prefetch: got %q", s)
 	}
 }
