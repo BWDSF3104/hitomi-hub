@@ -261,14 +261,31 @@ func (v *viewer) searchResult(id int) map[string]any {
 	if err != nil {
 		return map[string]any{"id": id, "error": err.Error(), "tags": []string{}}
 	}
+	baseFormat := imageFormat(v.cfg)
 	thumbnail := ""
 	if len(info.Files) > 0 {
-		format := imageFormat(v.cfg)
-		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format + "&gallery=" + strconv.Itoa(id) + "&variant=bigtn"
+		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + baseFormat + "&gallery=" + strconv.Itoa(id) + "&variant=bigtn"
 	}
-	return map[string]any{"id": id, "title": info.Title, "language": info.Language,
-		"type": info.Type, "url": info.URL, "tags": info.Tags, "artists": info.Artists,
-		"count": len(info.Files), "local": v.localCount(id), "thumbnail": thumbnail}
+	readState, err := readStateRow(v.db, id)
+	if err != nil {
+		readState = map[string]any{"gallery_id": id, "last_page": 0, "fully_read": 0, "favorite": 0}
+	}
+	files := []map[string]any{}
+	for _, entry := range info.Files {
+		eFormat := entryFormat(entry, baseFormat)
+		localFormats := v.entryLocalFormats(id, entry.Hash, baseFormat, eFormat)
+		files = append(files, map[string]any{
+			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
+			"hasavif": entry.HasAVIF, "format": eFormat, "local": len(localFormats) > 0,
+			"local_formats": localFormats,
+		})
+	}
+	return map[string]any{"id": id, "title": info.Title, "japanese_title": info.JapaneseTitle,
+		"language": info.Language, "type": info.Type, "url": info.URL,
+		"tags": info.Tags, "artists": info.Artists, "groups": info.Groups,
+		"characters": info.Characters, "count": len(info.Files), "local": v.localCount(id),
+		"thumbnail": thumbnail, "scene_indexes": info.SceneIndexes, "files": files,
+		"format": baseFormat, "read_state": readState}
 }
 
 func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {

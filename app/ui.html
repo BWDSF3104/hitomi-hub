@@ -31,6 +31,19 @@
   .badge { position: absolute; right: 4px; top: 4px; background: #8ab4f8; color: #14161a; padding: 2px 5px; border-radius: 4px; font-size: .8rem; }
   .current { border: 2px solid #8ab4f8; }
   .pageimg { max-width: 100%; max-height: 78vh; background: #1d2126; object-fit: contain; }
+  .reader .reader-loading {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+    padding: .5rem;
+    background: #1d2126;
+    border: 1px solid #2f343b;
+    min-height: var(--reader-page-height);
+    color: #9aa0a6;
+  }
+  .reader-loading img { max-width: 180px; max-height: 180px; object-fit: contain; background: #14161a; }
+  .reader-loading-text { color: #8ab4f8; font-size: .9rem; }
   .reader {
     --reader-page-width: min(45vw, 500px);
     --reader-page-height: min(78vh, 700px);
@@ -327,6 +340,42 @@ function setPrefetchStatus(text) {
   if (el) el.textContent = text;
 }
 
+function galleryDataFromCard(card) {
+  if (!card || !card.files) return null;
+  const readState = card.read_state || { gallery_id: card.id, last_page: 1, fully_read: 0, favorite: 0 };
+  return {
+    gallery: {
+      id: card.id, title: card.title, japanese_title: card.japanese_title,
+      language: card.language, type: card.type, tags: card.tags || [], artists: card.artists || [],
+      groups: card.groups || [], characters: card.characters || [], url: card.url || "",
+      files: card.files, scene_indexes: card.scene_indexes || []
+    },
+    read_state: readState,
+    local: card.local || 0,
+    format: card.format || "webp"
+  };
+}
+
+function renderGalleryLoading(id, page, second) {
+  const reader = document.getElementById("reader");
+  if (!reader) return;
+  const pageLabel = page || 1;
+  const pairLabel = second ? "-" + second : "";
+  reader.className = readerClass();
+  const card = searchCardCache.get(id);
+  const title = card && card.title ? card.title : id;
+  const cover = card && card.thumbnail ? "<img class='reader-loading-cover' src='" + escapeHTML(card.thumbnail) + "' alt='loading'>" : "";
+  reader.innerHTML = "<div class='reader-loading' data-reader-loading data-id='" + id + "' data-page='" + pageLabel + "' data-render='" + renderGeneration + "'>" +
+    cover +
+    "<div class='reader-loading-text'>読込中: " + escapeHTML(title) + " page " + pageLabel + pairLabel + "</div>" +
+    "</div>";
+  const pagenum = document.getElementById("pagenum");
+  if (pagenum) pagenum.value = pageLabel;
+  const note = document.getElementById("note");
+  if (note) note.textContent = "reader content loading";
+  setPrefetchStatus("gallery read load: " + id);
+}
+
 function updatePrefetchCounts(status, entry, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
   if (prefetchedEntries.has(key)) return;
@@ -530,6 +579,19 @@ async function openGallery(id, page, second) {
   const gen = ++openGeneration;
   if (prefetchAbort) prefetchAbort.abort();
   history.replaceState(null, "", route(id, page, second));
+  const card = searchCardCache.get(id);
+  const fullCardData = galleryDataFromCard(card);
+  if (fullCardData) {
+    galleryCache.set(id, fullCardData);
+    if (page) current.page = page;
+    currentPairEnd = second || null;
+    setGalleryMeta(fullCardData);
+    await showPage();
+    if (gen !== openGeneration) return;
+    renderStrip();
+    await showLists();
+    return;
+  }
   const cached = galleryCache.get(id);
   if (cached) {
     if (page) current.page = page;
@@ -542,6 +604,7 @@ async function openGallery(id, page, second) {
     return;
   }
   showGalleryMetaFromCache(id);
+  renderGalleryLoading(id, page, second);
   const data = await api("/api/gallery/" + id);
   if (gen !== openGeneration) return;
   galleryCache.set(id, data);
@@ -564,10 +627,10 @@ async function showLists() {
 }
 function showGalleryMetaFromCache(id) {
   const card = searchCardCache.get(id);
-  if (!card) return;
+  const title = card && card.title ? card.title : id;
   document.getElementById("gallery").innerHTML =
-    "<b>" + escapeHTML(card.title || id) + "</b> <span class='meta'>" + escapeHTML(card.language || "") + " / " + escapeHTML(card.type || "") + "</span><br>" +
-    "<span class='meta'>" + escapeHTML((card.tags || []).join(", ")) + "</span><br>" +
+    "<b>" + escapeHTML(title) + "</b> <span class='meta'>" + escapeHTML((card && card.language) || "") + " / " + escapeHTML((card && card.type) || "") + "</span><br>" +
+    "<span class='meta'>" + escapeHTML(((card && card.tags) || []).join(", ")) + "</span><br>" +
     "<span class='meta'>loading</span>";
   setPrefetchStatus("gallery read load: " + id);
 }

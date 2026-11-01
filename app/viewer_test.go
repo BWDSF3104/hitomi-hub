@@ -767,6 +767,65 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	}
 }
 
+func TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"scene_indexes":[0,1],"files":[{"hash":"` + sampleHash + `","name":"001.png","hasavif":1}]}`
+	v, _ := newTestViewer(t, galleryJSON)
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	wantFormat := imageFormat(v.cfg)
+	if out["format"] != wantFormat || out["scene_indexes"] == nil || out["files"] == nil || out["read_state"] == nil {
+		t.Errorf("search card should include immediate open gallery data: got %v", out)
+	}
+	if _, ok := out["pages"]; ok {
+		t.Errorf("search card should not include mini page thumbnails: got %v", out)
+	}
+	files := out["files"].([]any)
+	if len(files) != 1 {
+		t.Fatalf("files: got %v", out)
+	}
+	entry := files[0].(map[string]any)
+	if entry["hash"] != sampleHash || entry["hasavif"] != float64(1) || entry["local_formats"] == nil {
+		t.Errorf("search card entry should include immediate open fields: got %v", entry)
+	}
+	readState := out["read_state"].(map[string]any)
+	if readState["gallery_id"] != float64(1) || readState["favorite"] != float64(0) {
+		t.Errorf("search card read_state: got %v", readState)
+	}
+}
+
+func TestEmbeddedUIShowsImmediateReaderLoadingForUncachedGallery(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `function galleryDataFromCard(card) {`) || !strings.Contains(s, `card.files`) {
+		t.Errorf("ui should use full search card data for immediate gallery open: got %q", s)
+	}
+	if !strings.Contains(s, `function renderGalleryLoading(id, page, second) {`) || !strings.Contains(s, `data-reader-loading`) || !strings.Contains(s, `読込中`) {
+		t.Errorf("ui should render immediate reader loading for uncached gallery data: got %q", s)
+	}
+	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
+	if openStart < 0 {
+		t.Fatalf("openGallery function not found")
+	}
+	openBody := s[openStart:strings.Index(s, "\nasync function showLists() {")]
+	if !strings.Contains(openBody, `const card = searchCardCache.get(id);`) || !strings.Contains(openBody, `const fullCardData = galleryDataFromCard(card);`) || !strings.Contains(openBody, `if (fullCardData) {`) {
+		t.Errorf("openGallery should use full cached search card data immediately: got %q", openBody)
+	}
+	metaStart := strings.Index(openBody, `showGalleryMetaFromCache(id);`)
+	loadingStart := strings.Index(openBody, `renderGalleryLoading(id, page, second);`)
+	awaitStart := strings.Index(openBody, `await api("/api/gallery/" + id);`)
+	if metaStart < 0 || loadingStart < 0 || awaitStart < 0 || metaStart > loadingStart || loadingStart > awaitStart {
+		t.Errorf("openGallery should show loading UI before waiting for uncached gallery data: got %q", openBody)
+	}
+}
+
 func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
