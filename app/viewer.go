@@ -192,23 +192,16 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 func (v *viewer) searchResult(id int) map[string]any {
 	info, err := v.info(id)
 	if err != nil {
-		return map[string]any{"id": id, "error": err.Error(), "tags": []string{}, "pages": []map[string]any{}}
-	}
-	pages := []map[string]any{}
-	for i := 0; i < len(info.Files) && i < 4; i++ {
-		format := imageFormat(v.cfg)
-		hash := info.Files[i].Hash
-		pages = append(pages, map[string]any{"page": i + 1, "hash": hash, "format": format,
-			"src": "/api/thumb/" + hash + "?format=" + format})
+		return map[string]any{"id": id, "error": err.Error(), "tags": []string{}}
 	}
 	thumbnail := ""
 	if len(info.Files) > 0 {
 		format := imageFormat(v.cfg)
-		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format
+		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format + "&gallery=" + strconv.Itoa(id)
 	}
 	return map[string]any{"id": id, "title": info.Title, "language": info.Language,
 		"type": info.Type, "url": info.URL, "tags": info.Tags, "artists": info.Artists,
-		"count": len(info.Files), "local": v.localCount(id), "thumbnail": thumbnail, "pages": pages}
+		"count": len(info.Files), "local": v.localCount(id), "thumbnail": thumbnail}
 }
 
 func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
@@ -231,8 +224,19 @@ func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read_state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonOut(w, map[string]any{"gallery": info, "read_state": state,
-		"local": v.localCount(id), "format": imageFormat(v.cfg)})
+	format := imageFormat(v.cfg)
+	files := []map[string]any{}
+	for _, entry := range info.Files {
+		files = append(files, map[string]any{
+			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
+			"local": v.fileLocal(id, entry.Hash, format),
+		})
+	}
+	jsonOut(w, map[string]any{"gallery": map[string]any{
+		"id": info.ID, "title": info.Title, "japanese_title": info.JapaneseTitle,
+		"language": info.Language, "type": info.Type, "tags": info.Tags, "artists": info.Artists,
+		"groups": info.Groups, "characters": info.Characters, "url": info.URL, "files": files,
+	}, "read_state": state, "local": v.localCount(id), "format": format})
 }
 
 func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
@@ -279,14 +283,15 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("format"); q != "" {
 		format = q
 	}
-	body, err := v.client.get(r.Context(), ThumbnailURL(hash, format, v.client.GG()), [2]int64{-1, -1})
-	if err != nil {
-		http.Error(w, "thumb: "+err.Error(), http.StatusBadGateway)
+	if v.serveLocalImage(w, r, hash, format) {
 		return
 	}
-	w.Header().Set("content-type", imageContentType(format))
-	w.Header().Set("cross-origin-resource-policy", "same-origin")
-	w.Header().Set("cache-control", "private, max-age=604800")
+	body, err := v.client.get(r.Context(), ThumbnailURL(hash, format, v.client.GG()), [2]int64{-1, -1})
+	if err != nil {
+		v.imageProxy(w, r)
+		return
+	}
+	setImageHeaders(w, format)
 	w.Write(body)
 }
 
@@ -300,15 +305,52 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("format"); q != "" {
 		format = q
 	}
+	if v.serveLocalImage(w, r, hash, format) {
+		return
+	}
 	body, err := v.client.get(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
 	if err != nil {
 		http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	setImageHeaders(w, format)
+	w.Write(body)
+}
+
+func setImageHeaders(w http.ResponseWriter, format string) {
 	w.Header().Set("content-type", imageContentType(format))
 	w.Header().Set("cross-origin-resource-policy", "same-origin")
 	w.Header().Set("cache-control", "private, max-age=604800")
-	w.Write(body)
+}
+
+func (v *viewer) fileLocal(id int, hash string, format string) bool {
+	full, err := safeGalleryPath(v.galleryRoot, strconv.Itoa(id)+"/"+hash+"."+format)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(full)
+	return err == nil
+}
+
+func (v *viewer) serveLocalImage(w http.ResponseWriter, r *http.Request, hash string, format string) bool {
+	gallery := r.URL.Query().Get("gallery")
+	if gallery == "" {
+		return false
+	}
+	id, err := strconv.Atoi(gallery)
+	if err != nil || id <= 0 {
+		return false
+	}
+	full, err := safeGalleryPath(v.galleryRoot, strconv.Itoa(id)+"/"+hash+"."+format)
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(full); err != nil {
+		return false
+	}
+	setImageHeaders(w, format)
+	http.ServeFile(w, r, full)
+	return true
 }
 
 func (v *viewer) read(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -218,6 +219,87 @@ func TestViewerThumbProxyUsesAvifTNBaseAndContent(t *testing.T) {
 	}
 }
 
+func TestViewerThumbProxyLocalFirstWhenGalleryQuery(t *testing.T) {
+	v, galleryRoot := newTestViewer(t, "")
+	var gotURL string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		gotURL = rawurl
+		return []byte("cdn"), nil
+	}
+	if err := os.MkdirAll(filepath.Join(galleryRoot, "4252697"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(galleryRoot, "4252697", sampleHash+".webp"), []byte("local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "local" {
+		t.Fatalf("local thumb: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
+		t.Fatalf("local thumb headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
+	}
+	if gotURL != "" {
+		t.Errorf("local thumb should not fetch TN: got %q", gotURL)
+	}
+}
+
+func TestViewerGalleryFilesIncludeLocalFlags(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"4252697","title":"Kemo","language":"japanese","type":"doujinshi",` +
+		`"files":[{"hash":"` + sampleHash + `","name":"001.jpg"},` +
+		`{"hash":"58e06942c116cdf2bdd416345856f889b4dcd68d76f361f923c34ab84d432688","name":"002.jpg"}]}`
+	v, galleryRoot := newTestViewer(t, galleryJSON)
+	if err := os.MkdirAll(filepath.Join(galleryRoot, "4252697"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(galleryRoot, "4252697", sampleHash+".webp"), []byte("local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/gallery/4252697", nil))
+	if rec.Code != 200 {
+		t.Fatalf("gallery: %d %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	files := out["gallery"].(map[string]any)["files"].([]any)
+	if len(files) != 2 {
+		t.Fatalf("files: got %v", files)
+	}
+	if files[0].(map[string]any)["local"] != true || files[1].(map[string]any)["local"] != false {
+		t.Errorf("local flags: got %v", files)
+	}
+}
+
+func TestViewerThumbProxyFallsBackToFullImageWhenTNMissing(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if len(urls) == 1 {
+			return nil, errors.New("tn missing")
+		}
+		return []byte("full"), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "full" {
+		t.Fatalf("fallback thumb: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
+		t.Fatalf("fallback thumb headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
+	}
+	if len(urls) != 2 || !strings.Contains(urls[0], "tn.") || strings.Contains(urls[1], "tn.") {
+		t.Fatalf("fallback fetch order: got %v", urls)
+	}
+}
+
 func TestEmbeddedUIUsesLocalThumbProxy(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
@@ -228,18 +310,18 @@ func TestEmbeddedUIUsesLocalThumbProxy(t *testing.T) {
 	}
 }
 
-func TestSearchResultThumbnailFormatUsesImageFormat(t *testing.T) {
-	galleryJSON := `var galleryinfo = {"id":"1","files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
+func TestSearchResultUsesCoverOnlyThumbnail(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"1","files":[{"hash":"` + sampleHash + `","name":"001.png"},` +
+		`{"hash":"58e06942c116cdf2bdd416345856f889b4dcd68d76f361f923c34ab84d432688","name":"002.jpg"}]}`
 	v, _ := newTestViewer(t, galleryJSON)
 	out := v.searchResult(1)
 	wantFormat := imageFormat(v.cfg)
-	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat
+	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat + "&gallery=1"
 	if out["thumbnail"] != wantThumb {
 		t.Errorf("thumbnail: got %v want %s", out["thumbnail"], wantThumb)
 	}
-	pages := out["pages"].([]map[string]any)
-	if len(pages) != 1 || pages[0]["format"] != wantFormat || pages[0]["src"] != wantThumb {
-		t.Errorf("pages: got %v want format %s src %s", pages, wantFormat, wantThumb)
+	if _, ok := out["pages"]; ok {
+		t.Errorf("search result should not include mini page thumbnails")
 	}
 }
 
@@ -251,6 +333,26 @@ func TestEmbeddedUIThumbUsesServerFormat(t *testing.T) {
 	s := string(page)
 	if !strings.Contains(s, `current.format || entry.format || "webp"`) || strings.Contains(s, "fileFormatFromName(entry.name)") {
 		t.Errorf("ui thumb should prefer server format: got %q", s)
+	}
+	if !strings.Contains(s, `thumbURL(entry.hash, current.format || entry.format || "webp", current.id)`) {
+		t.Errorf("ui reader strip should pass current.id for local-first proxy: got %q", s)
+	}
+	if !strings.Contains(s, `if (!entry.local && i !== 0) return;`) {
+		t.Errorf("ui reader strip should render only cover and local files: got %q", s)
+	}
+}
+
+func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if strings.Contains(s, "class='mini'") {
+		t.Errorf("search card should render only cover thumbnail: got %q", s)
+	}
+	if !strings.Contains(s, "<img class='cover'") || !strings.Contains(s, "r.thumbnail") {
+		t.Errorf("search card should use cover thumbnail: got %q", s)
 	}
 }
 

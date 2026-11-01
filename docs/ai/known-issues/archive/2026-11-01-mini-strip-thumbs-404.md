@@ -1,7 +1,7 @@
 # viewer の mini strip は 2 枚目以降の thumbnail を表示できない
 
 **Date**: 2026-11-01
-**Status**: 観察（実装変更なし・修復の判断はユーザー）
+**Status**: 解決（検索 card は cover だけ、reader strip は local-first proxy で表示）
 
 ## 現象
 
@@ -28,5 +28,21 @@ TN は hitomi が thumbnail として実際に表示した image にのみ存在
 
 - mini strip は TN が確定している cover のみ表示、または local file から thumbnail を生成（local-first の image がある gallery は自前で缩略图を出せる）
 - page model を hitomi と揃える（25 image = 1 page）か、UI の表示を「image index」に改める（`read_state.last_page` の意味が変わるため decisions への記録が必要）
+
+## 実装済み（2026-11-01）
+
+- 検索 card の thumbnail は cover だけ。`app/viewer.go` の `searchResult()` は `pages` を返さず、`thumbnail` に cover hash と `gallery=<id>` を渡す。`app/ui.html` の results card から mini strip を削除。
+- reader strip は cover/local だけを描画。`/api/gallery/<id>` は files の local フラグを返す。UI は `if (!entry.local && i !== 0) return;` で、cover（i=0）と local file がある image だけ `<img>` にする。
+- `/api/thumb/` に `gallery=<id>` が付くと local-first。local file があれば `Galleries/<id>/<hash>.<format>` を返す。TN が無い hash は full image proxy へ fallback（decoder 生成 cache はなし）。
+- reader main image は local-first の `/files/...`。local なしで CDN full image が窓に無い場合は upstream 404（既存の時間窓問題）だが、UI は broken 画像を strip に残さない。
+- page model は現行維持（viewer の `page` は file index、hitomi の page model は 25 image per page）。本件では page model を変更しない。
+
+## 画面確認（2026-11-01）
+
+- search results: card に cover だけ表示。mini page thumbnails なし。例 cover proxy `97cb6a05…?format=webp&gallery=4295193` → naturalWidth 460。
+- remote gallery `4295193`（local 0）: reader strip は cover 1 枚だけ。非 local の page thumbnails は描画しない。broken img なし。
+- local gallery `4252697`（local 1）: reader main image `/files/4252697/899dc188…webp` → `200`、strip local entry → display。
+- local なし remote full image `97cb6a05…` の full image proxy はこの窓で 502。これは既知の CDN 時間窓問題。
+- Screenshot: `scratch/hitomi-usage/screen_cover_only_strip_local.png`。
 
 関連: `docs/ai/known-issues/2026-11-01-viewer-cdn-time-window-404.md`（同一 hash の `a`/`b` は同一 content・窓に entry が無いと 404）

@@ -83,8 +83,10 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 
 ### Viewer UI / proxy（2026-11-01）
 
-- `http://127.0.0.1:8731` は 1 page single-page UI。結果一覧、cover thumbnail、mini page thumbnails、note、pagenum、reader controls を表示。
-- Browser ORB を避けるため画像は same-origin proxy を使う: `/api/thumb/<hash>?format=webp`、`/api/image/<hash>?format=webp`。UI の `pageSource` / `searchResult` は local file が優先、CDN は proxy path を返す。
+- `http://127.0.0.1:8731` は 1 page single-page UI。結果一覧は cover thumbnail だけ（mini page thumbnails なし）。reader strip は cover/local entry だけを描画。note、pagenum、reader controls を表示。
+- Browser ORB を避けるため画像は same-origin proxy を使う: `/api/thumb/<hash>?format=webp`、`/api/thumb/<hash>?format=webp&gallery=<id>`、`/api/image/<hash>?format=webp`。UI の `pageSource` / `searchResult` / reader strip は local file が優先、CDN は proxy path を返す。
+- `/api/gallery/<id>` は `files[].local` を返す。UI reader strip は cover（i=0）と local file がある image だけを `<img>` にし、非 local の page thumbnail は broken image にしない。
+- `/api/thumb/` は `gallery` query が付くと local-first（`Galleries/<gallery>/<hash>.<format>`）でファイルを読み、なければ TN。TN が無い場合 full image proxy へ fallback（decoder 生成 cache はなし、browser の img 縮小表示で thumbnail 相当）。検索 card の thumbnail は cover hash の proxy path だけ。
 - `ThumbnailURL` の tn path（実測で確定）: `https://<{a|b}tn>.<domain>/<tn base>/<last hex char>/<prev two hex chars>/<hash>.<format>`。TN base は format で決まる — webp `77656270626967746e`（webpbigtn）・avif `61766966626967746e`（avifbigtn）。`746e626967746e`（tnbigtn）は base として存在せず 404。subdomain は `String.fromCharCode(97 + gg.m(g)) + 'tn'`（common.js）。実測例: `https://btn.gold-usergeneratedcontent.net/77656270626967746e/9/b8/2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89.webp` → 200 `image/webp`。TN に格納されるのは webp・avif ののみ。`fileExt(name)` は tn path に使わない。
 - TN は `referer: https://hitomi.la/` が無いと 404（browser UA でも 404）。client は UA と referer を必ず送る。content-type は format に一致（webp → `image/webp`、avif → `image/avif`）。
 - `validHash` は lowercase hex length `>=3`。Live result hashes は 64 に限らない（48 chars など）。

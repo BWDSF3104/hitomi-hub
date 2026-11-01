@@ -215,6 +215,30 @@ exe は `output/hitomi-hub/hub.exe`（`--data-dir` = リポジトリルート、
 - 画像取得: 検索結果（現行窓）の TN は 200、古い gallery（4252697）の page 1 hash は 19/20 が upstream 404（proxy は 502）。TN が 200 の hash の shard も 404（`w2/1793494802/3190/<hash>.webp`）。同一 hash の `a`/`b` は同一 content、`c` は DNS 解決失敗
 - 記録: `docs/ai/known-issues/2026-11-01-viewer-cdn-time-window-404.md`（実装変更なし）。スクリーンショット `scratch/hitomi-usage/screen_4252697_page1.png`
 
+## checkpoint 12（2026-11-01）: viewer thumbnail の仕様変更（cover だけ）
+
+- 検索 result card は cover thumbnail だけ。`searchResult()` は `pages` を返さず、`thumbnail` に cover proxy path（`gallery=<id>`）を持つ。UI results card の mini strip を削除。
+- reader strip は page image を表示する必要があるため、`/api/thumb/` に `gallery` query を追加し local-first で `Galleries/<id>/<hash>.<format>` を読む。TN が無い hash は full image proxy へ fallback。image generation/cache は追加しない。
+- reader strip の UI は cover/local entry だけを描画。`/api/gallery/<id>` の `files[].local` を基に、非 local の page thumbnail を broken image にしない。`searchResult()` は cover proxy path だけ返す。
+- page model は変更しない（viewer の page は file index。hitomi の page model との差は既知）。
+- テスト: `TestSearchResultUsesCoverOnlyThumbnail`、`TestViewerGalleryFilesIncludeLocalFlags`、`TestViewerThumbProxyLocalFirstWhenGalleryQuery`、`TestViewerThumbProxyFallsBackToFullImageWhenTNMissing`、`TestEmbeddedUISearchCardUsesCoverOnlyThumbnail`。
+
+### Verification（2026-11-01）
+
+- `go vet ./...` → clean
+- `go test -count=1 ./...` → ok
+- `python -m pytest tests/ -q` → 16 passed
+- completion exe rebuild → `output/hitomi-hub/hub.exe`（相対 `app/scratch/dist/hub.exe` mistake を避ける）
+
+### Screen verification（2026-11-01）
+
+- search results: cover only. First card cover proxy `97cb6a05…?format=webp&gallery=4295193` displayed naturalWidth `460`。
+- remote `4295193` local 0: reader strip only cover。Non-local page thumbnails are not rendered, so no broken alt-only images。
+- local `4252697` local 1: main image local `/files/4252697/899dc188…webp` displayed naturalWidth `2880`。reader strip local entry displayed。
+- remote full image proxy for `97cb6a05…` still upstream `502` in current window (known CDN window issue).
+- Screenshot: `scratch/hitomi-usage/screen_cover_only_strip_local.png`
+- known issue は解決して `docs/ai/known-issues/archive/2026-11-01-mini-strip-thumbs-404.md` へ移動
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

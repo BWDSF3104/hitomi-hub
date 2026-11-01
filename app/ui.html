@@ -20,12 +20,10 @@
   .meta { font-size: .9rem; color: #9aa0a6; }
   .note { font-size: .85rem; color: #f0a441; }
   .card { display: flex; gap: .5rem; align-items: flex-start; }
-  .cover, .mini img, .strip img { object-fit: cover; background: #1d2126; }
+  .cover, .strip img { object-fit: cover; background: #1d2126; }
   .cover { width: 130px; height: 130px; }
-  .mini img { width: 58px; height: 58px; }
-  .card .text { flex: 1; min-width: 12rem; }
   .card a { font-weight: 600; }
-  .tags, .mini, .strip { margin-top: .35rem; }
+  .tags, .strip { margin-top: .35rem; }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
   .strip img { width: 90px; height: 90px; }
   .current { border: 2px solid #8ab4f8; }
@@ -122,9 +120,10 @@ function fileFormatFromName(name) {
   return ext || "webp";
 }
 
-function thumbURL(hash, format) {
+function thumbURL(hash, format, gallery) {
   if (!hash) return "";
-  return "/api/thumb/" + hash + "?format=" + encodeURIComponent(format || "webp");
+  const u = "/api/thumb/" + hash + "?format=" + encodeURIComponent(format || "webp");
+  return gallery ? u + "&gallery=" + encodeURIComponent(gallery) : u;
 }
 
 async function showPage() {
@@ -139,11 +138,14 @@ async function showPage() {
   highlightStrip();
 }
 function renderStrip() {
-  document.getElementById("thumbs").innerHTML = current.files.slice(0, 20).map((entry, i) => {
+  const parts = [];
+  current.files.slice(0, 20).forEach((entry, i) => {
+    if (!entry.local && i !== 0) return;
     const page = i + 1;
-    const src = thumbURL(entry.hash, current.format || entry.format || "webp");
-    return "<a href='" + route(current.id, page) + "'><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' loading='lazy' src='" + src + "' alt='" + page + "'></a>";
-  }).join("");
+    const src = thumbURL(entry.hash, current.format || entry.format || "webp", current.id);
+    parts.push("<a href='" + route(current.id, page) + "'><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' loading='lazy' src='" + src + "' alt='" + page + "'></a>");
+  });
+  document.getElementById("thumbs").innerHTML = parts.join("");
 }
 function highlightStrip() {
   document.querySelectorAll("#thumbs img").forEach((img) => {
@@ -175,10 +177,8 @@ async function runSearch() {
     const data = await api("/api/search?query=" + encodeURIComponent(q) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
     document.getElementById("results").innerHTML = data.results.map((r) => {
-      const mini = (r.pages || []).map((p) =>
-        "<a href='" + route(r.id, p.page) + "'><img data-id='" + r.id + "' data-page='" + p.page + "' loading='lazy' src='" + p.src + "' alt='" + p.page + "'></a>"
-      ).join("");
-      return "<li class='card'><a href='" + route(r.id, 1) + "'><img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'></a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.id) + "</a><div class='meta'>" + escapeHTML(r.language) + " / " + escapeHTML(r.type) + "・" + r.count + " files・local " + r.local + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div><div class='mini'>" + mini + "</div></div></li>";
+      const cover = "<img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'>";
+      return "<li class='card'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.id) + "</a><div class='meta'>" + escapeHTML(r.language) + " / " + escapeHTML(r.type) + "・" + r.count + " files・local " + r.local + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
     }).join("") || "<li>0 件</li>";
     await showLists();
   } catch (err) { document.getElementById("note").textContent = err.message; }
