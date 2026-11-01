@@ -701,7 +701,10 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `function entryPlaceholder(entry) { return thumbURL(entry.hash, formatForEntry(entry), current.id, stripVariant()); }`) {
 		t.Errorf("ui should use hitomi-like strip thumbnail as placeholder for full images: got %q", s)
 	}
-	if !strings.Contains(s, `function loadFullImage(img, entry) {`) || !strings.Contains(s, `full.onload = () =>`) || !strings.Contains(s, `img.src = fullSrc`) {
+	if !strings.Contains(s, `gap: 0;`) || !strings.Contains(s, `--reader-page-width: min(45vw, 500px);`) || !strings.Contains(s, `--reader-page-height: min(78vh, 700px);`) || !strings.Contains(s, `width: min(var(--reader-page-width), 100%);`) || !strings.Contains(s, `object-fit: contain;`) {
+		t.Errorf("ui should fix reader display size without gap between pages: got %q", s)
+	}
+	if !strings.Contains(s, `function loadFullImage(img, entry) {`) || !strings.Contains(s, `full.onload = () =>`) || !strings.Contains(s, `img.src = fullSrc`) || !strings.Contains(s, `if (full.complete) replace();`) {
 		t.Errorf("ui should replace placeholder thumbnail when full image load completes: got %q", s)
 	}
 	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `container.querySelectorAll("img").forEach`) || !strings.Contains(s, `loadFullImage(img, entry)`) {
