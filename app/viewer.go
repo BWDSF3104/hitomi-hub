@@ -550,7 +550,7 @@ func (v *viewer) localCount(id int) int {
 }
 
 func imageFormat(cfg Config) string {
-	return orDefault(cfg.Hitomi.ImageFormat, "webp")
+	return orDefault(normalizeFormat(cfg.Hitomi.ImageFormat), "webp")
 }
 
 func entryFormat(entry FileEntry, base string) string {

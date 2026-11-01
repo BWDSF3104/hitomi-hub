@@ -1,6 +1,6 @@
 # Viewer image cache and background full prefetch
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-01
 **Backlog**: P2
 
