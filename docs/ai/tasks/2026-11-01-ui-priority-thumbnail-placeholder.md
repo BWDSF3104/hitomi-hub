@@ -18,6 +18,7 @@
 - CP4: viewer display は TN fallback を表示しない。`/api/image` は local / full cache / remote full だけへ変更。UI の `cachedFullSrc()` は `tn` と `tn-cache` を display source にしない。
 - CP5: TN thumbnails を persistent cache へ保存。`thumbProxy()` は full cache hit → TN variant cache hit → remote TN の順。remote TN 成功時は `cache/images/thumbs/<hash>.<format>.<variant>` へ保存し、cache hit は `x-cache: tn-cache` で返す。
 - CP6: top status は display intent に合わせる。`prefetch-status` を `full display cache X/Y TN display fallback disabled` に変更し、viewer display TN count を出さない。
+- CP7: cache-less actual screen verify revealed that `/api/image` 404/no-full was being counted as `image load failed` error. `imageProxy()` returns `x-cache: no_full` for storage 404, UI counts `no_full` separately, note shows `no full image`, and status shows `full display cache X/Y | no full Z/Y | TN display fallback disabled`.
 
 ## Verification
 
@@ -82,6 +83,18 @@
   - `tnDone = 52`, `fullDone = 0`, `total = 580` produced `full display cache 0/580 TN display fallback disabled`.
   - reader img remained empty placeholder.
 - Screenshot: `scratch\hitomi-usage\cp6_status_display_cache_no_tn.png`
+
+### CP7 cache-less actual viewing screen verify
+- `go vet ./...` pass.
+- `go test .` pass `21.447s` with `imageProxy` `x-cache: no_full` for storage 404, UI `loadFullImage()` `no_full` handling, `!r.ok` error branch, and `no full` status assertions.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+- Active process restarted. Cache-less verify process `bgp_19617f7ed001TCkkqGgQhwks3U` restarted on port `8732` using runtime root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage\cp7_cacheless`.
+- Actual cache-less screen verify `http://127.0.0.1:8732/?x=cp7cachelessactual`:
+  - search results loaded live (`furry`, first id `4296091`), search card TN cover displayed through `/api/thumb` TN cache path.
+  - reader display did not use TN fallback. Reader `src` remained empty.
+  - missing full storage entries returned `x-cache: no_full`, UI note `no full image`, status `full display cache 0/40 | no full 12/40 | TN display fallback disabled`.
+- Before fix, actual cache-less screen showed `image load failed: 18` and `error 93/105`; this is why `no_full` was separated from true network errors.
+- Screenshot: `scratch\hitomi-usage\cp7_cacheless_actual_no_full.png`
 
 ## 完了時 Memory Bank 操作
 

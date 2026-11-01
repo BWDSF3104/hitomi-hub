@@ -290,7 +290,7 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	}
 }
 
-func TestViewerImageProxyDoesNotFetchTNAndDoesNotPersistTN(t *testing.T) {
+func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -298,13 +298,13 @@ func TestViewerImageProxyDoesNotFetchTNAndDoesNotPersistTN(t *testing.T) {
 		if strings.Contains(rawurl, "tn.") {
 			return []byte("tn"), nil
 		}
-		return nil, errors.New("storage missing")
+		return nil, errors.New("status 404 for " + rawurl)
 	}
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("image proxy should fail without TN fallback: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || rec.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("image proxy no_full: code %d body %q header x-cache %q cache-control %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
 	}
 	if len(urls) != 1 || strings.Contains(urls[0], "tn.") {
 		t.Errorf("image proxy should not fetch TN: got %v", urls)
@@ -708,8 +708,11 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status, entry, galleryId = current.id) {`) || !strings.Contains(s, `tnDone`) {
 		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
 	}
-	if !strings.Contains(s, `"full display cache "`) || !strings.Contains(s, `TN display fallback disabled`) {
-		t.Errorf("prefetch status should show display full cache and TN display fallback disabled, not TN display: got %q", s)
+	if !strings.Contains(s, `"full display cache "`) || !strings.Contains(s, `no full`) || !strings.Contains(s, `TN display fallback disabled`) {
+		t.Errorf("prefetch status should show display full cache, no full, and TN display fallback disabled, not TN display: got %q", s)
+	}
+	if !strings.Contains(s, `counts.noFullDone`) {
+		t.Errorf("ui should count no_full separately from network errors: got %q", s)
 	}
 	if !strings.Contains(s, `displayedPages`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
 		t.Errorf("ui should load displayed reader items through startFullPrefetch without double-counting them: got %q", s)
@@ -988,11 +991,17 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `const fullCache = new Map();`) || !strings.Contains(s, `const prefetchedEntries = new Map();`) || !strings.Contains(s, `function cachedFullSrc(entry, galleryId = current.id) {`) || !strings.Contains(s, `function storeFullCache(entry, status, objectUrl, galleryId = current.id) {`) {
 		t.Errorf("ui should store full-image cache entries instead of revoking every display cache on re-render: got %q", s)
 	}
-	if !strings.Contains(s, `status !== "error" && status !== "tn" && status !== "tn-cache"`) {
-		t.Errorf("reader display should not use TN or TN-cache fallback: got %q", s)
+	if !strings.Contains(s, `status !== "error" && status !== "tn" && status !== "tn-cache" && status !== "no_full"`) {
+		t.Errorf("reader display should not use TN, TN-cache, or no_full fallback: got %q", s)
 	}
 	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal) {")
 	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	if !strings.Contains(loadBody, `if (r.status === 404 && cache === "no_full") {`) || !strings.Contains(loadBody, `storeFullCache(entry, "no_full", null, galleryId);`) {
+		t.Errorf("loadFullImage should mark missing full storage as no_full, not error: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `if (!r.ok) {`) || !strings.Contains(loadBody, `updatePrefetchCounts("error", entry, galleryId);`) {
+		t.Errorf("loadFullImage should still count true fetch failures as error, not no_full: got %q", loadBody)
+	}
 	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
 		t.Errorf("loadFullImage should not store TN bytes as full display object URL: got %q", loadBody)
 	}

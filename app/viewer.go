@@ -452,7 +452,18 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.Contains(err.Error(), "status 404") {
+		writeNoFull(w, format)
+		return
+	}
 	http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
+}
+
+func writeNoFull(w http.ResponseWriter, format string) {
+	setImageHeaders(w, format)
+	w.Header().Set("cache-control", "no-store")
+	w.Header().Set("x-cache", "no_full")
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func setImageHeaders(w http.ResponseWriter, format string) {

@@ -245,19 +245,19 @@ function cachedFullSrc(entry, galleryId = current.id) {
   const cached = fullCache.get(key);
   if (cached && cached.objectUrl) return cached.objectUrl;
   const status = prefetchedEntries.get(key);
-  if (status && status !== "error" && status !== "tn" && status !== "tn-cache") return entrySource(entry, galleryId);
+  if (status && status !== "error" && status !== "tn" && status !== "tn-cache" && status !== "no_full") return entrySource(entry, galleryId);
   return "";
 }
 function getGalleryCounts(galleryId) {
   if (!countsByGallery.has(galleryId)) {
-    countsByGallery.set(galleryId, { fullDone: 0, tnDone: 0, errorDone: 0, total: 0 });
+    countsByGallery.set(galleryId, { fullDone: 0, tnDone: 0, noFullDone: 0, errorDone: 0, total: 0 });
   }
   return countsByGallery.get(galleryId);
 }
 function renderPrefetchStatus() {
   const counts = getGalleryCounts(current.id);
   const total = counts.total || prefetchTotal;
-  let text = "full display cache " + counts.fullDone + "/" + total + " TN display fallback disabled";
+  let text = "full display cache " + counts.fullDone + "/" + total + " | no full " + counts.noFullDone + "/" + total + " | TN display fallback disabled";
   if (counts.errorDone) text += " | error " + counts.errorDone + "/" + total;
   fullDone = counts.fullDone;
   tnDone = counts.tnDone;
@@ -407,6 +407,7 @@ function updatePrefetchCounts(status, entry, galleryId = current.id) {
   prefetchedEntries.set(key, status);
   const counts = getGalleryCounts(galleryId);
   if (status === "tn") counts.tnDone++;
+  else if (status === "no_full") counts.noFullDone++;
   else if (status === "error") counts.errorDone++;
   else counts.fullDone++;
   renderPrefetchStatus();
@@ -436,9 +437,10 @@ async function prefetchPageImage(entry, signal, galleryId = current.id) {
   const r = await fetch(fullSrc, { cache: "no-store", signal });
   if (signal.aborted) return "error";
   if (!r.ok) {
-    storeFullCache(entry, "error", null, galleryId);
-    updatePrefetchCounts("error", entry, galleryId);
-    return "error";
+    const cache = r.headers.get("x-cache") || "error";
+    storeFullCache(entry, cache, null, galleryId);
+    updatePrefetchCounts(cache, entry, galleryId);
+    return cache;
   }
   const cache = r.headers.get("x-cache") || "miss";
   const objectUrl = URL.createObjectURL(await r.blob());
@@ -463,6 +465,15 @@ async function loadFullImage(img, entry, signal) {
   try {
     const r = await fetch(fullSrc, { cache: "no-store", signal });
     if (signal.aborted) return;
+    const cache = r.headers.get("x-cache") || "miss";
+    if (r.status === 404 && cache === "no_full") {
+      storeFullCache(entry, "no_full", null, galleryId);
+      updatePrefetchCounts("no_full", entry, galleryId);
+      if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+        document.getElementById("note").textContent = "no full image: " + targetPage;
+      }
+      return;
+    }
     if (!r.ok) {
       storeFullCache(entry, "error", null, galleryId);
       updatePrefetchCounts("error", entry, galleryId);
@@ -471,7 +482,6 @@ async function loadFullImage(img, entry, signal) {
       }
       return;
     }
-    const cache = r.headers.get("x-cache") || "miss";
     if (cache === "tn") {
       storeFullCache(entry, "tn", null, galleryId);
       updatePrefetchCounts("tn", entry, galleryId);
