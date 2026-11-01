@@ -21,8 +21,8 @@
   .note { font-size: .85rem; color: #f0a441; }
   .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
   .card { display: flex; gap: .5rem; align-items: flex-start; }
-  .cover, .strip img { object-fit: cover; background: #1d2126; }
-  .cover { width: 130px; height: 130px; }
+  .cover, .search-card-cover, .strip img { object-fit: cover; background: #1d2126; }
+  .cover, .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
   .tags, .strip { margin-top: .35rem; }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
@@ -226,9 +226,9 @@ function stripThumbSource(entry, galleryId = current.id) {
 }
 function updateThumbCache(key, objectUrl) {
   if (!objectUrl) return;
-  const stripImg = document.querySelector("#thumbs img[data-key='" + key + "']");
+  const stripImg = document.querySelector("#thumbs img[data-key=\"" + key + "\"]");
   if (stripImg) stripImg.src = objectUrl;
-  const cardCover = document.querySelector("#results img[data-key='" + key + "']");
+  const cardCover = document.querySelector("#results img[data-key=\"" + key + "\"]");
   if (cardCover) cardCover.src = objectUrl;
 }
 function formatForEntry(entry) {
@@ -451,7 +451,7 @@ function revokeFullObjectUrls() {
   for (const objectUrl of fullObjectUrls) {
     URL.revokeObjectURL(objectUrl);
   }
-  fullObjectUrls = [];
+  fullObjectUrls.clear();
 }
 
 async function loadFullImage(img, entry, signal) {
@@ -674,10 +674,31 @@ function showGalleryMetaFromCache(id) {
     "<span class='meta'>loading</span>";
   setPrefetchStatus("gallery read load: " + id);
 }
+function searchCardCoverSource(card) {
+  if (card && card.files && card.files[0]) {
+    const key = fullCacheKey(card.files[0], card.id);
+    const cached = fullCache.get(key);
+    if (cached && cached.objectUrl) return cached.objectUrl;
+  }
+  return card && card.thumbnail ? card.thumbnail : "";
+}
+
 function renderSearchCard(r) {
   searchCardCache.set(r.id, r);
-  const cover = r.thumbnail ? "<img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'>" : "";
-  return "<li class='card' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
+  const key = r.files && r.files[0] ? fullCacheKey(r.files[0], r.id) : "";
+  const thumbnail = r.thumbnail || "";
+  const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-key='" + key + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
+  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
+}
+
+async function loadSearchCardCover(r, searchGen = searchGeneration) {
+  if (searchGen !== searchGeneration) return;
+  await currentPriorityDone;
+  if (searchGen !== searchGeneration) return;
+  const img = document.getElementById("results").querySelector("img[data-search-id=\"" + r.id + "\"]");
+  if (!img) return;
+  const src = searchCardCoverSource(r);
+  if (src) img.src = src;
 }
 
 function parseSearchHash(hash) {
@@ -728,7 +749,10 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
     try {
       const card = await api("/api/search-card/" + ids[i]);
       if (searchGen !== searchGeneration) return;
-      if (li) li.outerHTML = renderSearchCard(card);
+      if (li) {
+        li.outerHTML = renderSearchCard(card);
+        await loadSearchCardCover(card, searchGen);
+      }
     } catch (err) {
       if (searchGen !== searchGeneration) return;
       if (li) li.innerHTML = "<span class='meta'>" + escapeHTML(err.message) + "</span>";

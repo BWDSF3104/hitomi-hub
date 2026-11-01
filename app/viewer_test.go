@@ -435,6 +435,22 @@ func TestViewerThumbProxyTNFirstWhenGalleryQueryAndLocalExists(t *testing.T) {
 	}
 }
 
+func TestViewerThumbProxyUsesFullCacheBeforeTN(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, sampleHash+".webp"), []byte("cache bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "cache bytes" || rec.Header().Get("x-cache") != "cache" {
+		t.Errorf("thumbProxy should serve full cache before remote TN: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+}
+
 func TestViewerThumbProxyFallsBackToLocalWhenTNMissingAndLocalExists(t *testing.T) {
 	v, galleryRoot := newTestViewer(t, "")
 	var gotURL string
@@ -976,8 +992,22 @@ func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
 	if strings.Contains(s, "class='mini'") {
 		t.Errorf("search card should render only cover thumbnail: got %q", s)
 	}
-	if !strings.Contains(s, "<img class='cover'") || !strings.Contains(s, "r.thumbnail") {
-		t.Errorf("search card should use cover thumbnail: got %q", s)
+	if !strings.Contains(s, "<img class='search-card-cover'") || !strings.Contains(s, "r.thumbnail") {
+		t.Errorf("search card should use cover thumbnail source: got %q", s)
+	}
+	if !strings.Contains(s, `function searchCardCoverSource(card) {`) || !strings.Contains(s, `function loadSearchCardCover(r, searchGen = searchGeneration) {`) {
+		t.Errorf("search card cover should be loaded lazily after current priority, using full cache if available: got %q", s)
+	}
+	if !strings.Contains(s, `src=''`) || !strings.Contains(s, `await currentPriorityDone;`) {
+		t.Errorf("search card should render metadata-first placeholder before loading low priority TN cover: got %q", s)
+	}
+	loadCardStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
+	if loadCardStart < 0 {
+		t.Fatalf("loadSearchCards function not found")
+	}
+	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
+	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
+		t.Errorf("loadSearchCards should load card covers after current priority: got %q", loadCardBody)
 	}
 }
 

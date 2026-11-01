@@ -388,6 +388,11 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	format := resolveFormat(v.cfg, r.URL.Query().Get("format"))
 	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
 
+	cachePath, cacheErr := safeCachePath(v.cacheRoot, hash, format)
+	if cacheErr == nil && v.serveStoredImage(w, format, cachePath, "cache") {
+		return
+	}
+
 	body, err := v.client.getImage(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
 	if err == nil {
 		writeImage(w, format, body, "tn")

@@ -36,6 +36,21 @@
   - `storeFullCache()` updated strip img src.
 - Screenshot: `scratch\hitomi-usage\cp2_strip_placeholder_priority_pending.png`
 
+### CP3 search card metadata-first, low-priority TN cover after priority
+- `go vet ./...` pass.
+- `go test .` pass `23.337s` after selector syntax fix; final `go test .` pass `23.408s` after `revokeFullObjectUrls()` Set fix.
+- New Go test `TestViewerThumbProxyUsesFullCacheBeforeTN` proves `thumbProxy()` uses existing full cache before remote TN.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+- Active process restarted with rebuilt `hub.exe`.
+- Screen verify `http://127.0.0.1:8731/?x=tnendpoint&v=cp3fix`:
+  - `renderSearchCard()` renders metadata and cover `<img src=''>` before `currentPriorityDone` resolves.
+  - With pending `currentPriorityDone`, `loadSearchCardCover()` did not set cover `src`.
+  - `storeFullCache()` updated the actual cover `<img>` to `object-url-cp3` and `object-url-strip7`.
+  - With no full cache and `currentPriorityDone` resolved, `loadSearchCardCover()` set the low-priority TN URL `/api/thumb/cp3hash?format=webp&gallery=4295779&variant=bigtn`.
+- Fixed issue: `loadSearchCardCover()` had invalid `"]` selector due backslash and matched `<li>` not cover `<img>`; changed to `img[data-search-id="..."]`.
+- Fixed issue: `revokeFullObjectUrls()` assigned `[]` to `fullObjectUrls` instead of clearing the `Set`.
+- Screenshot: `scratch\hitomi-usage\cp3_metadata_first_priority_pending.png`
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
