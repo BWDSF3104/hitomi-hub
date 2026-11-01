@@ -824,6 +824,14 @@ func TestEmbeddedUIShowsImmediateReaderLoadingForUncachedGallery(t *testing.T) {
 	if metaStart < 0 || loadingStart < 0 || awaitStart < 0 || metaStart > loadingStart || loadingStart > awaitStart {
 		t.Errorf("openGallery should show loading UI before waiting for uncached gallery data: got %q", openBody)
 	}
+	if !strings.Contains(openBody, `renderStripLoading(id);`) || !strings.Contains(s, `data-strip-loading`) {
+		t.Errorf("openGallery should immediately replace old strip thumbnails with loading placeholder: got %q", openBody)
+	}
+	stripStart := strings.Index(openBody, `renderGalleryLoading(id, page, second);`)
+	stripLoadingStart := strings.Index(openBody, `renderStripLoading(id);`)
+	if stripStart < 0 || stripLoadingStart < 0 || stripLoadingStart > awaitStart {
+		t.Errorf("openGallery should clear old strip thumbnails before waiting for uncached gallery data: got %q", openBody)
+	}
 }
 
 func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {

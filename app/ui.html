@@ -27,6 +27,17 @@
   .tags, .strip { margin-top: .35rem; }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
   .strip img { width: 90px; height: 90px; }
+  .strip .strip-loading {
+    width: 90px;
+    height: 90px;
+    background: #1d2126;
+    border: 1px solid #2f343b;
+    color: #9aa0a6;
+    font-size: .8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
   .strip a { position: relative; }
   .badge { position: absolute; right: 4px; top: 4px; background: #8ab4f8; color: #14161a; padding: 2px 5px; border-radius: 4px; font-size: .8rem; }
   .current { border: 2px solid #8ab4f8; }
@@ -605,6 +616,7 @@ async function openGallery(id, page, second) {
   }
   showGalleryMetaFromCache(id);
   renderGalleryLoading(id, page, second);
+  renderStripLoading(id);
   const data = await api("/api/gallery/" + id);
   if (gen !== openGeneration) return;
   galleryCache.set(id, data);
@@ -625,6 +637,12 @@ async function showLists() {
   document.getElementById("unread").innerHTML = lists.unread.map((row) =>
     "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
 }
+function renderStripLoading(id) {
+  const thumbs = document.getElementById("thumbs");
+  if (!thumbs) return;
+  thumbs.innerHTML = "<div class='strip-loading' data-strip-loading data-id='" + id + "'>strip loading</div>";
+}
+
 function showGalleryMetaFromCache(id) {
   const card = searchCardCache.get(id);
   const title = card && card.title ? card.title : id;
