@@ -465,3 +465,36 @@ Verification:
   - `prefetchStatus`: `full display cache 203/203 | no full 0/203 | TN display fallback disabled`
 
 Backlog `#10` is completed and removed.
+
+### CP17 query-param new-tab policy
+
+Implementation:
+- Added `const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";`.
+- Added `targetAttr()` and applied it to search-card, saved-search, favorites, unread, and strip links.
+- Same-tab `hashchange` routing remains unchanged; `newtab=1` only sets `target="_blank"` on rendered internal links.
+
+Verification:
+- `go test .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass, `21.345s`.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.cp19.exe .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass.
+- Cache-less ongoing server process: `bgp_197a83dc2001ZSqyKL15EaAVR9`, root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`, URL `http://127.0.0.1:8736`.
+
+Actual screen pass with `newtab=1`:
+- URL before hashchange: `http://127.0.0.1:8736/?newtab=1&x=cp19-newtab-policy#/q/furry/page/1`
+- `newTabMode`: `true`
+- `targetAttr`: ` target='_blank'`
+- `#results a` count: `50`, `targetCount`: `50`, sample target: `_blank`
+- `#results img`: `25/25` actual pixel display ok
+- After same-tab hashchange to `#/g/4252697/page/1-2`, current route became `#/g/4252697/page/1` because the landscape entry is already-double, `readerClass`: `reader single landscape`
+- `#reader img`: `1/1`
+- `#thumbs img`: `50/50`
+- `stripControlsCount`: `4`
+- `prefetchStatus`: `full display cache 203/203 | no full 0/203 | TN display fallback disabled`
+
+Actual screen pass without query param:
+- URL: `http://127.0.0.1:8736/?x=cp19-newtab-normal#/q/furry/page/1`
+- `newTabMode`: `false`
+- `targetAttr`: `""`
+- `#results a` count: `50`, `targetCount`: `0`
+- `#results img`: `25/25` actual pixel display ok
+
+Backlog `#11` is completed and removed.

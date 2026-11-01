@@ -155,6 +155,7 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
   return data;
 });
 
+const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";
 let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
 let viewMode = "double";
 let currentPairEnd = null;
@@ -188,6 +189,9 @@ function escapeHTML(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
+}
+function targetAttr() {
+  return newTabMode ? " target='_blank'" : "";
 }
 function route(id, page, second) {
   if (second) return "#/g/" + id + "/page/" + page + "-" + second;
@@ -722,7 +726,7 @@ function renderStrip() {
     const marker = entry.local ? " title='local'" : "";
     const localMark = entry.local ? "・local" : "";
     const badge = item.badge > 1 ? "<div class='badge'>" + item.badge + "</div>" : "";
-    parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
   highlightStrip();
@@ -782,11 +786,11 @@ async function showLists(showGen, openGen) {
   const lists = await api("/api/lists");
   if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;
   document.getElementById("queries").innerHTML = lists.queries.map((q) =>
-    "<li><a href='#/q/" + encodeURIComponent(q.query) + "'>" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
+    "<li><a href='#/q/" + encodeURIComponent(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
-    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
+    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("unread").innerHTML = lists.unread.map((row) =>
-    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
+    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
 }
 function renderStripLoading(id) {
   const thumbs = document.getElementById("thumbs");
@@ -817,7 +821,7 @@ function renderSearchCard(r) {
   const key = r.files && r.files[0] ? fullCacheKey(r.files[0], r.id) : "";
   const thumbnail = r.thumbnail || "";
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-key='" + key + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
-  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
+  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
 }
 
 async function loadSearchCardCover(r, searchGen = searchGeneration) {
@@ -865,7 +869,7 @@ function restoreSearchState() {
   const ids = Array.isArray(state.ids) ? state.ids : [];
   if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
   status.textContent = "検索結果復元: " + state.query;
-  results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'>#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+    results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
   loadSearchCards(ids, searchGeneration);
 }
 async function loadSearchCards(ids, searchGen = searchGeneration) {
@@ -909,7 +913,7 @@ async function runSearch() {
     const ids = data.ids || (data.results || []).map((r) => r.id);
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
     status.textContent = "検索完了・カード読み込み " + ids.length + "件";
-    results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'>#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+  results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
     saveSearchState({ query, lang, page, ids, total: data.total });
     history.replaceState(null, "", searchRoute(query, page));
     await loadSearchCards(ids, searchGen);

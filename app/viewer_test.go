@@ -709,6 +709,35 @@ func TestEmbeddedUIStripControlsUseSelectableGroup(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";`) || !strings.Contains(s, `function targetAttr() {`) || !strings.Contains(s, `target='_blank'`) {
+		t.Errorf("ui should support a query-param new-tab policy while preserving same-tab hash routes: got %q", s)
+	}
+	renderStart := strings.Index(s, "function renderSearchCard(r) {")
+	renderBody := s[renderStart:strings.Index(s, "\nasync function loadSearchCardCover(r, searchGen = searchGeneration) {")]
+	if !strings.Contains(renderBody, `targetAttr()`) {
+		t.Errorf("search card links should use the new-tab query policy: got %q", renderBody)
+	}
+	listStart := strings.Index(s, "async function showLists(showGen, openGen) {")
+	listBody := s[listStart:strings.Index(s, "\nfunction renderStripLoading(id) {")]
+	if !strings.Contains(listBody, `targetAttr()`) || !strings.Contains(listBody, `targetAttr()`) {
+		t.Errorf("saved search, favorites, and unread links should use the new-tab query policy: got %q", listBody)
+	}
+	stripStart := strings.Index(s, "function renderStrip() {")
+	stripBody := s[stripStart:strings.Index(s, "\nfunction highlightStrip() {")]
+	if !strings.Contains(stripBody, `targetAttr()`) {
+		t.Errorf("strip links should use the new-tab query policy: got %q", stripBody)
+	}
+	if !strings.Contains(s, `window.addEventListener("hashchange"`) {
+		t.Errorf("same-tab hashchange routing must remain available when new-tab mode is not requested: got %q", s)
+	}
+}
+
 func TestEmbeddedUIIndependentScrollPanels(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
