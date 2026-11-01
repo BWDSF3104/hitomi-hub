@@ -25,6 +25,17 @@
 - Screen verify `http://127.0.0.1:8731/?x=tnendpoint&v=cp1`: uncached `openGallery(4295772,3)` before `await api` showed reader `読込中`, strip `strip loading`, status `gallery read load: 4295772`.
 - Screenshot: `scratch\hitomi-usage\cp1_strip_loading_immediate.png`
 
+### CP2 reader empty placeholder, strip full-cache priority, current image priority
+- `go vet ./...` pass.
+- `go test .` pass `23.496s` with new strip/full-cache/priority assertions.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+- Active process restarted with rebuilt `hub.exe`.
+- Screen verify `http://127.0.0.1:8731/?x=tnendpoint&v=cp2verify`:
+  - full card data pathで await前に reader src empty, strip placeholder empty with `data-key='4295774|entryhash|webp'`.
+  - `currentPriorityDone` was pending before background prefetch.
+  - `storeFullCache()` updated strip img src.
+- Screenshot: `scratch\hitomi-usage\cp2_strip_placeholder_priority_pending.png`
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

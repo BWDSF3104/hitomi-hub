@@ -598,23 +598,23 @@ func TestSearchResultUsesCoverOnlyThumbnail(t *testing.T) {
 	}
 }
 
-func TestEmbeddedUIThumbUsesHitomiTNVariants(t *testing.T) {
+func TestEmbeddedUIReaderStripUsesFullCacheOrPlaceholder(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(page)
 	if strings.Contains(s, `if (!entry.local && i !== 0) return;`) {
-		t.Errorf("ui reader strip must not hide non-local hitomi TN entries: got %q", s)
+		t.Errorf("ui reader strip must not hide non-local entries: got %q", s)
 	}
 	if !strings.Contains(s, `function formatForEntry(entry) {`) || !strings.Contains(s, `entry.hasavif ? "avif" : (current.format || "webp")`) {
-		t.Errorf("ui should use hitomi TN format rules: got %q", s)
+		t.Errorf("ui should use hitomi TN format rules for entry source: got %q", s)
 	}
-	if !strings.Contains(s, `return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";`) {
-		t.Errorf("ui reader strip should use hitomi work page TN variants: got %q", s)
+	if !strings.Contains(s, `function stripThumbSource(entry, galleryId = current.id) {`) || !strings.Contains(s, `function updateThumbCache(key, objectUrl) {`) {
+		t.Errorf("ui strip should prefer cached full objectURL and update placeholders from full cache: got %q", s)
 	}
-	if !strings.Contains(s, `thumbURL(entry.hash, formatForEntry(entry), current.id, variant)`) {
-		t.Errorf("ui reader strip should pass TN variant and gallery id: got %q", s)
+	if !strings.Contains(s, `stripThumbSource(entry, current.id)`) || !strings.Contains(s, `data-key='`) || !strings.Contains(s, `data-hash='`) {
+		t.Errorf("ui strip should render placeholders keyed to full cache entries: got %q", s)
 	}
 	if !strings.Contains(s, `const items = stripItems();`) || !strings.Contains(s, `const group = stripGroupPage(items);`) {
 		t.Errorf("ui reader strip should use hitomi work page scene items and group of 50 entries: got %q", s)
@@ -717,6 +717,9 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
 	if !strings.Contains(showBody, `const showGen = ++showGeneration;`) || !strings.Contains(showBody, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
 		t.Errorf("showPage should ignore stale async reader updates: got %q", showBody)
+	}
+	if !strings.Contains(showBody, `renderStrip();`) || !strings.Contains(showBody, `highlightStrip();`) {
+		t.Errorf("showPage should render strip immediately before waiting for async read updates: got %q", showBody)
 	}
 	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal) {")
 	if loadStart < 0 {
@@ -927,14 +930,14 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(page)
-	if !strings.Contains(s, `function entryPlaceholder(entry) { return thumbURL(entry.hash, formatForEntry(entry), current.id, stripVariant()); }`) {
-		t.Errorf("ui should use hitomi-like strip thumbnail as placeholder for full images: got %q", s)
+	if !strings.Contains(s, `function displayPlaceholder(entry) { return ""; }`) {
+		t.Errorf("ui should use empty display placeholders so reader display does not add extra TN requests: got %q", s)
 	}
 	if !strings.Contains(s, `gap: 0;`) || !strings.Contains(s, `--reader-page-width: min(45vw, 500px);`) || !strings.Contains(s, `--reader-page-height: min(78vh, 700px);`) || !strings.Contains(s, `width: min(var(--reader-page-width), 100%);`) || !strings.Contains(s, `object-fit: contain;`) {
 		t.Errorf("ui should fix reader display size without gap between pages: got %q", s)
 	}
 	if !strings.Contains(s, `async function loadFullImage(img, entry, signal) {`) || !strings.Contains(s, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `img.dataset.fullCache = cache`) || !strings.Contains(s, `URL.createObjectURL(blob)`) || !strings.Contains(s, `img.src = objectUrl`) {
-		t.Errorf("ui should replace placeholder thumbnail from a no-store fetched image bytes, while counting TN separately: got %q", s)
+		t.Errorf("ui should replace placeholder display from a no-store fetched image bytes, while counting TN separately: got %q", s)
 	}
 	if !strings.Contains(s, `let fullObjectUrls = new Set();`) || !strings.Contains(s, `function revokeFullObjectUrls() {`) || !strings.Contains(s, `revokeFullObjectUrls();`) {
 		t.Errorf("ui should keep a bounded object URL cache and revoke stored object URLs when the cache is cleared: got %q", s)
@@ -950,11 +953,17 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if strings.Contains(renderBody, `revokeFullObjectUrls();`) {
 		t.Errorf("renderReader should not revoke the full cache on every render: got %q", renderBody)
 	}
-	if !strings.Contains(renderBody, `cachedFullSrc(entry, current.id) || entryPlaceholder(entry)`) || !strings.Contains(renderBody, `entryPlaceholder(entry)`) {
-		t.Errorf("renderReader should prefer cached full entries and use placeholders only for uncached entries: got %q", renderBody)
+	if !strings.Contains(renderBody, `cachedFullSrc(entry, current.id) || displayPlaceholder(entry)`) || !strings.Contains(renderBody, `displayPlaceholder(entry)`) {
+		t.Errorf("renderReader should prefer cached full entries and use display placeholders only for uncached entries: got %q", renderBody)
 	}
 	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
 		t.Errorf("ui should render placeholder items and load full images through background prefetch: got %q", s)
+	}
+	if !strings.Contains(s, `async function runPriority(displayed, signal) {`) || !strings.Contains(s, `await currentPriorityDone;`) {
+		t.Errorf("ui background prefetch should wait for current displayed priority before background requests: got %q", s)
+	}
+	if strings.Contains(s, `await startFullPrefetch`) {
+		t.Errorf("showPage should not block on startFullPrefetch: got %q", s)
 	}
 }
 

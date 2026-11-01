@@ -169,6 +169,7 @@ let searchGeneration = 0;
 let openGeneration = 0;
 let showGeneration = 0;
 let renderGeneration = 0;
+let currentPriorityDone = Promise.resolve();
 
 function escapeHTML(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -216,6 +217,19 @@ function thumbURL(hash, format, gallery, variant) {
 
 function stripVariant() {
   return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";
+}
+function stripThumbSource(entry, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  const cached = fullCache.get(key);
+  if (cached && cached.objectUrl) return cached.objectUrl;
+  return "";
+}
+function updateThumbCache(key, objectUrl) {
+  if (!objectUrl) return;
+  const stripImg = document.querySelector("#thumbs img[data-key='" + key + "']");
+  if (stripImg) stripImg.src = objectUrl;
+  const cardCover = document.querySelector("#results img[data-key='" + key + "']");
+  if (cardCover) cardCover.src = objectUrl;
 }
 function formatForEntry(entry) {
   return entry.hasavif ? "avif" : (current.format || "webp");
@@ -283,7 +297,7 @@ function readerClass() {
   return "reader " + displayMode();
 }
 
-function entryPlaceholder(entry) { return thumbURL(entry.hash, formatForEntry(entry), current.id, stripVariant()); }
+function displayPlaceholder(entry) { return ""; }
 
 function readerItems() {
   const items = stripItems();
@@ -409,6 +423,7 @@ function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
   if (objectUrl && !fullObjectUrls.has(objectUrl)) fullObjectUrls.add(objectUrl);
   fullCache.set(key, { status, objectUrl });
+  if (objectUrl) updateThumbCache(key, objectUrl);
   if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
     revokeFullObjectUrls();
   }
@@ -487,10 +502,19 @@ function renderReader() {
     if (!entry) continue;
     const marker = entry.local ? " title='local'" : "";
     const alt = item.page + (entry.local ? "・local" : "");
-    const src = cachedFullSrc(entry, current.id) || entryPlaceholder(entry);
+    const src = cachedFullSrc(entry, current.id) || displayPlaceholder(entry);
     parts.push("<img data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
   }
   container.innerHTML = parts.join("");
+}
+
+async function runPriority(displayed, signal) {
+  const container = document.getElementById("reader");
+  for (const item of displayed) {
+    if (signal.aborted) return;
+    const img = container && container.querySelector("img[data-page='" + item.page + "']");
+    if (img) await loadFullImage(img, item.entry, signal);
+  }
 }
 
 function startFullPrefetch() {
@@ -519,12 +543,9 @@ function startFullPrefetch() {
   const counts = getGalleryCounts(currentId);
   counts.total = items.length;
   renderPrefetchStatus();
-  const container = document.getElementById("reader");
-  for (const item of displayed) {
-    const img = container && container.querySelector("img[data-page='" + item.page + "']");
-    if (img) loadFullImage(img, item.entry, signal);
-  }
+  currentPriorityDone = runPriority(displayed, signal);
   async function worker() {
+    await currentPriorityDone;
     while (order.length && !signal.aborted) {
       const item = order.shift();
       try {
@@ -552,6 +573,8 @@ async function showPage() {
   const openGen = openGeneration;
   renderReader();
   startFullPrefetch();
+  renderStrip();
+  highlightStrip();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   setRoute(current.id, current.page);
@@ -567,16 +590,15 @@ function renderStrip() {
   const group = stripGroupPage(items);
   const start = (group - 1) * 50;
   const end = Math.min(start + 50, items.length);
-  const variant = stripVariant();
   for (let i = start; i < end; i++) {
     const item = items[i];
     const entry = item.entry;
     const page = item.page;
-    const src = thumbURL(entry.hash, formatForEntry(entry), current.id, variant);
+    const src = stripThumbSource(entry, current.id);
     const marker = entry.local ? " title='local'" : "";
     const localMark = entry.local ? "・local" : "";
     const badge = item.badge > 1 ? "<div class='badge'>" + item.badge + "</div>" : "";
-    parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
 }
