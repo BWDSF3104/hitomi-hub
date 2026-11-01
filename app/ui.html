@@ -135,6 +135,7 @@
           <button type="button" data-mode="single">single</button>
           <button type="button" data-mode="double">double</button>
           <button type="button" data-mode="fullscreen">fullscreen</button>
+          <button type="button" id="spread-direction" data-direction="rtl">rtl</button>
         </div>
         <div id="view-state" class="meta"></div>
       </div>
@@ -203,6 +204,8 @@ const galleryCache = new Map();
 const searchCardCache = new Map();
 const galleryFormats = new Map();
 let currentSearchTotal = 0;
+let spreadDirection = "rtl";
+const SPREAD_DIRECTION_STORAGE_KEY = "hitomi_hub_spread_direction";
 let searchGeneration = 0;
 let openGeneration = 0;
 let showGeneration = 0;
@@ -533,12 +536,32 @@ function renderViewState() {
   const el = document.getElementById("view-state");
   if (!el) return;
   if (!current.id) {
-    el.textContent = "view: " + viewMode + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
+    el.textContent = "view: " + viewMode + "・spread " + spreadDirection + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
     return;
   }
   const pair = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
   const pageText = pair ? current.page + "-" + pair : String(current.page);
-  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・page " + pageText + " / " + (current.count || "-") + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
+  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・spread " + spreadDirection + "・page " + pageText + " / " + (current.count || "-") + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
+}
+
+function loadSpreadDirection() {
+  try {
+    const dir = localStorage.getItem(SPREAD_DIRECTION_STORAGE_KEY);
+    if (dir === "rtl" || dir === "ltr") spreadDirection = dir;
+  } catch (err) {}
+}
+
+function setSpreadDirection(dir) {
+  spreadDirection = dir === "ltr" ? "ltr" : "rtl";
+  try {
+    localStorage.setItem(SPREAD_DIRECTION_STORAGE_KEY, spreadDirection);
+  } catch (err) {}
+  const button = document.getElementById("spread-direction");
+  if (button) button.textContent = spreadDirection;
+  renderReader();
+  renderPosition();
+  renderViewState();
+  startFullPrefetch();
 }
 
 function galleryDataFromCard(card) {
@@ -773,6 +796,7 @@ function renderReader() {
     const alt = item.page + (entry.local ? "・local" : "");
     parts.push("<img data-viewer-display='1' data-gallery='" + current.id + "' data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
   }
+  if (spreadDirection === "rtl" && items.length > 1) parts.reverse();
   container.innerHTML = parts.join("");
   attachDisplayLoadHandlers(container);
 }
@@ -1195,11 +1219,19 @@ document.getElementById("complete").addEventListener("click", async () => {
 });
 document.getElementById("view-mode").addEventListener("change", (e) => setViewMode(e.target.value));
 document.getElementById("view-mode-buttons").addEventListener("click", (e) => {
-  const button = e.target.closest("button[data-mode]");
-  if (!button) return;
-  e.preventDefault();
-  setViewMode(button.dataset.mode);
-  button.blur();
+  const modeButton = e.target.closest("button[data-mode]");
+  if (modeButton) {
+    e.preventDefault();
+    setViewMode(modeButton.dataset.mode);
+    modeButton.blur();
+    return;
+  }
+  const spreadButton = e.target.closest("button[id='spread-direction']");
+  if (spreadButton) {
+    e.preventDefault();
+    setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");
+    spreadButton.blur();
+  }
 });
 document.addEventListener("fullscreenchange", () => {
   if (!document.fullscreenElement && viewMode === "fullscreen") {
@@ -1230,6 +1262,7 @@ window.addEventListener("resize", () => {
   renderReader();
   renderPosition();
   renderViewState();
+  startFullPrefetch();
 });
 window.addEventListener("keydown", async (e) => {
   if (!current.id || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
@@ -1244,6 +1277,7 @@ window.addEventListener("keydown", async (e) => {
       setViewMode("fullscreen");
     }
   }
+  if (e.key === "r") setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");
 });
 document.getElementById("strip-prev-group").addEventListener("click", () => {
   setStripGroup(stripGroupPage(stripItems()) - 1);
@@ -1270,6 +1304,9 @@ window.addEventListener("hashchange", async () => {
   }
 });
 
+loadSpreadDirection();
+const spreadButton = document.getElementById("spread-direction");
+if (spreadButton) spreadButton.textContent = spreadDirection;
 showLists();
 const initialSearch = parseSearchHash(window.location.hash);
 if (initialSearch) {

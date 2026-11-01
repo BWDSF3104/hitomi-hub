@@ -126,9 +126,35 @@ Verification:
 
 Canonical exe was rebuilt and canonical server restarted with the same test build.
 
+## Checkpoint #18 RTL spread toggle
+
+Implemented in `app/ui.html`:
+
+- Added `spreadDirection = "rtl"` default.
+- Added `SPREAD_DIRECTION_STORAGE_KEY`.
+- Added `loadSpreadDirection()` and `setSpreadDirection(dir)`.
+- Added `#spread-direction` button and key `r`.
+- `renderReader()` reverses display order for RTL when multiple items are shown.
+- Logical route/hash remains `page-second`.
+- `setSpreadDirection()` and `resize` call `startFullPrefetch()` after render so full image display is re-evaluated.
+
+Tests in `app/viewer_test.go`:
+
+- `TestEmbeddedUIHasSpreadDirectionToggle`
+
+Verification:
+
+- `go test -count=1 .`: pass
+- `go vet .`: pass
+- Canonical exe rebuilt after test pass.
+- Screen display check:
+  - `http://127.0.0.1:8736/?x=displaycheck-cacheless#/g/4252697/page/2-3`
+  - Current build showed `reader double`, `readerImageCount: 2`, objectURL cache, and display pass.
+  - Full image display regression cannot currently be confirmed; per current instruction, it is lowest priority and handled only when an obvious full-image display failure is visible.
+
 ## Verification
 
-No verification yet.
+No separate verification beyond checkpoint sections yet.
 
 ## 完了時 Memory Bank 操作
 

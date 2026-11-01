@@ -1328,6 +1328,61 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIHasSpreadDirectionToggle(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `let spreadDirection = "rtl";`) || !strings.Contains(s, `const SPREAD_DIRECTION_STORAGE_KEY = "hitomi_hub_spread_direction";`) {
+		t.Errorf("ui should default RTL spread display and persist spread direction: got %q", s)
+	}
+	if !strings.Contains(s, `function setSpreadDirection(dir) {`) || !strings.Contains(s, `function loadSpreadDirection() {`) {
+		t.Errorf("ui should support RTL/LTR spread direction toggle: got %q", s)
+	}
+	dirStart := strings.Index(s, "function setSpreadDirection(dir) {")
+	if dirStart < 0 {
+		t.Fatalf("setSpreadDirection function not found")
+	}
+	dirBody := s[dirStart:strings.Index(s, "\nfunction galleryDataFromCard(card) {")]
+	if !strings.Contains(dirBody, `startFullPrefetch();`) {
+		t.Errorf("setSpreadDirection should preserve full image display by starting background prefetch after render: got %q", dirBody)
+	}
+
+	resizeStart := strings.Index(s, "window.addEventListener(\"resize\", () => {")
+	if resizeStart < 0 {
+		t.Fatalf("resize handler not found")
+	}
+	resizeBody := s[resizeStart:strings.Index(s, "\nwindow.addEventListener(\"keydown\", async (e) => {")]
+	if !strings.Contains(resizeBody, `startFullPrefetch();`) {
+		t.Errorf("resize should preserve full image display by starting background prefetch after render: got %q", resizeBody)
+	}
+	if !strings.Contains(s, `id="spread-direction"`) || !strings.Contains(s, `e.key === "r"`) {
+		t.Errorf("ui should expose spread direction button and key r: got %q", s)
+	}
+
+	renderStart := strings.Index(s, "function renderReader() {")
+	if renderStart < 0 {
+		t.Fatalf("renderReader function not found")
+	}
+	renderBody := s[renderStart:strings.Index(s, "\nasync function runPriority(displayed, signal) {")]
+	if !strings.Contains(renderBody, `if (spreadDirection === "rtl" && items.length > 1) parts.reverse();`) {
+		t.Errorf("renderReader should reverse display order for RTL without changing logical pair order: got %q", renderBody)
+	}
+
+	keyStart := strings.Index(s, "window.addEventListener(\"keydown\", async (e) => {")
+	if keyStart < 0 {
+		t.Fatalf("keydown handler not found")
+	}
+	keyBody := s[keyStart:strings.Index(s, "\ndocument.getElementById(\"strip-prev-group\")")]
+	if !strings.Contains(keyBody, `if (e.key === "r") setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");`) {
+		t.Errorf("keydown should toggle RTL/LTR with r: got %q", keyBody)
+	}
+	if !strings.Contains(s, `function route(id, page, second) {`) || !strings.Contains(s, `function parseReaderHash(hash) {`) || !strings.Contains(s, `"/page/" + page + "-" + second`) || !strings.Contains(s, `page + "-" + second`) {
+		t.Errorf("route/hash logical order must remain #2-3-like page-second: got %q", s)
+	}
+}
+
 func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
@@ -1340,7 +1395,7 @@ func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 	if !strings.Contains(s, `id="view-state"`) || !strings.Contains(s, `function renderViewState() {`) {
 		t.Errorf("ui should expose view state row: got %q", s)
 	}
-	if !strings.Contains(s, `button.blur();`) || !strings.Contains(s, `e.key === "f"`) {
+	if !strings.Contains(s, `modeButton.blur();`) || !strings.Contains(s, `e.key === "f"`) {
 		t.Errorf("view mode buttons should preserve keyboard mode by clearing button focus and keep f toggle: got %q", s)
 	}
 	if !strings.Contains(s, `if (viewMode === "fullscreen" && document.fullscreenElement)`) || !strings.Contains(s, `setViewMode("fullscreen");`) {
