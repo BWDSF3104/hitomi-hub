@@ -54,6 +54,7 @@ type UIConfig struct {
 type Config struct {
 	DB         string        `json:"db"`
 	GalleryDir string        `json:"gallery_dir"`
+	CacheDir   string        `json:"cache_dir"`
 	Yr         string        `json:"yr"`
 	VirusTotal VTConfig      `json:"virustotal"`
 	Hitomi     HitomiConfig  `json:"hitomi"`

@@ -8,3 +8,4 @@ tools/*.exe
 scratch/
 output/
 docs/ai/tmp/
+cache/

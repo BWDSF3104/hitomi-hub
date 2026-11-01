@@ -23,6 +23,7 @@ type viewer struct {
 	client      *Client
 	root        string
 	galleryRoot string
+	cacheRoot   string
 	infoCache   map[int]*GalleryInfo
 }
 
@@ -32,6 +33,7 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		cfg:         cfg,
 		root:        root,
 		galleryRoot: filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries")),
+		cacheRoot:   filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
 		client:      &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
 		infoCache:   map[int]*GalleryInfo{},
 	}
@@ -107,6 +109,57 @@ func imageContentType(format string) string {
 		return "application/octet-stream"
 	}
 }
+
+func normalizeFormat(format string) string {
+	format = strings.ToLower(format)
+	if format == "jpeg" {
+		return "jpg"
+	}
+	format = strings.TrimPrefix(format, ".")
+	if format == "" || len(format) > 12 {
+		return ""
+	}
+	for _, c := range format {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		return ""
+	}
+	return format
+}
+
+func resolveFormat(cfg Config, queryFormat string) string {
+	if q := normalizeFormat(queryFormat); q != "" {
+		return q
+	}
+	return orDefault(normalizeFormat(imageFormat(cfg)), "webp")
+}
+
+func safeCachePath(cacheRoot, hash, format string) (string, error) {
+	if !validHash(hash) {
+		return "", errors.New("invalid hash")
+	}
+	format = normalizeFormat(format)
+	if format == "" {
+		return "", errors.New("invalid format")
+	}
+	return filepath.Join(cacheRoot, hash+"."+format), nil
+}
+
+func writeImage(w http.ResponseWriter, format string, data []byte, cacheState string) {
+	setImageHeaders(w, format)
+	w.Header().Set("x-cache", cacheState)
+	w.Write(data)
+}
+
+func (v *viewer) serveStoredImage(w http.ResponseWriter, format string, path string, cacheState string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	writeImage(w, format, data, cacheState)
+	return true
+}
 // safeGalleryPath は完成フォルダ内の gallery dir に閉じた路径解決（`..` と絶対路径を拒否）
 func safeGalleryPath(galleryRoot, rel string) (string, error) {
 	if rel == "" {
@@ -126,11 +179,13 @@ func (v *viewer) serveFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	if _, err := os.Stat(full); err != nil {
-		http.Error(w, "not downloaded: "+r.PathValue("name"), http.StatusNotFound)
-		return
+	format := normalizeFormat(filepath.Ext(full))
+	if format == "" {
+		format = imageFormat(v.cfg)
 	}
-	http.ServeFile(w, r, full)
+	if !v.serveStoredImage(w, format, full, "local") {
+		http.Error(w, "not downloaded: "+r.PathValue("name"), http.StatusNotFound)
+	}
 }
 
 func (v *viewer) lists(w http.ResponseWriter, r *http.Request) {
@@ -294,16 +349,12 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)
 		return
 	}
-	format := imageFormat(v.cfg)
-	if q := r.URL.Query().Get("format"); q != "" {
-		format = q
-	}
+	format := resolveFormat(v.cfg, r.URL.Query().Get("format"))
 	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
 
 	body, err := v.client.get(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
 	if err == nil {
-		setImageHeaders(w, format)
-		w.Write(body)
+		writeImage(w, format, body, "tn")
 		return
 	}
 	if v.serveLocalImage(w, r, hash, format) {
@@ -318,18 +369,24 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)
 		return
 	}
-	format := imageFormat(v.cfg)
-	if q := r.URL.Query().Get("format"); q != "" {
-		format = q
-	}
+	format := resolveFormat(v.cfg, r.URL.Query().Get("format"))
 	if v.serveLocalImage(w, r, hash, format) {
 		return
 	}
+
+	cachePath, cacheErr := safeCachePath(v.cacheRoot, hash, format)
+	if cacheErr == nil && v.serveStoredImage(w, format, cachePath, "cache") {
+		return
+	}
+
 	gg := v.client.GG()
 	body, err := v.client.get(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
 	if err == nil {
-		setImageHeaders(w, format)
-		w.Write(body)
+		writeImage(w, format, body, "miss")
+		if cacheErr == nil && len(body) > 0 {
+			_ = os.MkdirAll(v.cacheRoot, 0o755)
+			_ = os.WriteFile(cachePath, body, 0o644)
+		}
 		return
 	}
 
@@ -342,8 +399,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		for _, variant := range []string{"bigtn", "smallbigtn", "smalltn", "smallsmalltn"} {
 			body, err = v.client.get(r.Context(), ThumbnailURLVariant(hash, tnFormat, variant, gg), [2]int64{-1, -1})
 			if err == nil {
-				setImageHeaders(w, tnFormat)
-				w.Write(body)
+				writeImage(w, tnFormat, body, "tn")
 				return
 			}
 		}
@@ -379,12 +435,7 @@ func (v *viewer) serveLocalImage(w http.ResponseWriter, r *http.Request, hash st
 	if err != nil {
 		return false
 	}
-	if _, err := os.Stat(full); err != nil {
-		return false
-	}
-	setImageHeaders(w, format)
-	http.ServeFile(w, r, full)
-	return true
+	return v.serveStoredImage(w, format, full, "local")
 }
 
 func (v *viewer) read(w http.ResponseWriter, r *http.Request) {

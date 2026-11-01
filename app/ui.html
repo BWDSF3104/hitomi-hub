@@ -69,6 +69,7 @@
       <h2>閲覧</h2>
       <div id="gallery" class="meta">検索結果から gallery を選ぶ</div>
       <div id="note" class="note"></div>
+      <div id="prefetch-status" class="status"></div>
       <img class="pageimg" id="image" alt="">
       <form id="nav">
         <button id="prev">前</button>
@@ -96,6 +97,10 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
 });
 
 let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
+let prefetchAbort = null;
+let prefetchDone = 0;
+let prefetchTotal = 0;
+const PREFETCH_CONCURRENCY = 2;
 
 function escapeHTML(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -159,12 +164,58 @@ function stripGroupPage(items) {
   return Math.max(1, Math.floor((current.page - 1) / 50) + 1);
 }
 
+function setPrefetchStatus(text) {
+  const el = document.getElementById("prefetch-status");
+  if (el) el.textContent = text;
+}
+
+async function prefetchPageImage(page, signal) {
+  const data = await api("/api/gallery/" + current.id + "/page/" + page);
+  await fetch(data.src, { signal });
+}
+
+function startFullPrefetch() {
+  if (!current.id) return;
+  if (prefetchAbort) prefetchAbort.abort();
+  prefetchAbort = new AbortController();
+  const signal = prefetchAbort.signal;
+  const items = stripItems();
+  const currentIdx = items.findIndex((item) => item.page === current.page);
+  const order = [];
+  for (let i = currentIdx >= 0 ? currentIdx : 0; i < items.length; i++) order.push(items[i]);
+  for (let i = 0; i < currentIdx; i++) order.push(items[i]);
+  prefetchTotal = order.length;
+  prefetchDone = 0;
+  setPrefetchStatus("full prefetch 0/" + prefetchTotal);
+  async function worker() {
+    while (order.length && !signal.aborted) {
+      const item = order.shift();
+      if (item.page === current.page) {
+        prefetchDone++;
+        setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal);
+        continue;
+      }
+      try {
+        await prefetchPageImage(item.page, signal);
+        if (signal.aborted) return;
+        prefetchDone++;
+        setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal);
+      } catch (err) {
+        if (signal.aborted) return;
+        setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal + " error: " + err.message);
+      }
+    }
+  }
+  for (let i = 0; i < PREFETCH_CONCURRENCY; i++) worker();
+}
+
 async function showPage() {
   if (!current.id) return;
   const data = await api("/api/gallery/" + current.id + "/page/" + current.page);
   const img = document.getElementById("image");
   img.onerror = () => document.getElementById("note").textContent = "image load failed";
   img.src = data.src;
+  startFullPrefetch();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   setRoute(current.id, current.page);

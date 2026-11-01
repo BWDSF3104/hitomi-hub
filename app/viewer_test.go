@@ -248,6 +248,77 @@ func TestViewerImageProxyFallsBackToAvifSmalltnVariantForHasavif(t *testing.T) {
 	}
 }
 
+func TestNormalizeFormatAndSafeCachePath(t *testing.T) {
+	if normalizeFormat("JPEG") != "jpg" {
+		t.Errorf("jpeg format: got %q", normalizeFormat("JPEG"))
+	}
+	if normalizeFormat("avif") != "avif" {
+		t.Errorf("avif format: got %q", normalizeFormat("avif"))
+	}
+	for _, bad := range []string{"../bad", "bad/", "bad..", "bad\n", ""} {
+		if normalizeFormat(bad) != "" {
+			t.Errorf("bad format %q should be rejected, got %q", bad, normalizeFormat(bad))
+		}
+	}
+	cacheRoot := filepath.Join("cache", "images")
+	full, err := safeCachePath(cacheRoot, sampleHash, "webp")
+	if err != nil || full != filepath.Join(cacheRoot, sampleHash+".webp") {
+		t.Errorf("cache path: got %q err %v", full, err)
+	}
+	if _, err := safeCachePath(cacheRoot, sampleHash, "../bad"); err == nil {
+		t.Error("unsafe cache format should be rejected")
+	}
+}
+
+func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	calls := 0
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte("RIFF"), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "RIFF" || rec.Header().Get("x-cache") != "miss" {
+		t.Fatalf("image proxy cache miss: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+	cacheFile := filepath.Join(v.cacheRoot, sampleHash+".webp")
+	data, err := os.ReadFile(cacheFile)
+	if err != nil || string(data) != "RIFF" {
+		t.Fatalf("persistent cache file: err %v data %q", err, string(data))
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if calls != 1 {
+		t.Errorf("cache hit should not call network: calls %d", calls)
+	}
+	if rec.Code != http.StatusOK || rec.Body.String() != "RIFF" || rec.Header().Get("x-cache") != "cache" {
+		t.Errorf("image proxy cache hit: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+}
+
+func TestViewerImageProxyDoesNotPersistTNFallback(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if strings.Contains(rawurl, "tn.") {
+			return []byte("tn"), nil
+		}
+		return nil, errors.New("storage missing")
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn" {
+		t.Fatalf("TN fallback: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+	cacheFile := filepath.Join(v.cacheRoot, sampleHash+".webp")
+	if _, err := os.Stat(cacheFile); err == nil {
+		t.Errorf("TN fallback should not persist as full-image cache: %s", cacheFile)
+	}
+}
+
 func TestViewerThumbProxyUsesRealTNPathAndContent(t *testing.T) {
 	var gotURL string
 	v, _ := newTestViewer(t, "")
@@ -564,6 +635,34 @@ func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
 	}
 	if !strings.Contains(s, "const li = results.querySelector(\"[data-search-id='\" + ids[i] + \"']\");") {
 		t.Errorf("ui lazy search card lookup must use a valid selector: got %q", s)
+	}
+}
+
+func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="prefetch-status"`) {
+		t.Errorf("ui should show background prefetch status: got %q", s)
+	}
+	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 2;`) {
+		t.Errorf("ui should use cancellable bounded prefetch concurrency: got %q", s)
+	}
+	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(data.src, { signal })") {
+		t.Errorf("ui should prefetch full images background through abortable fetch: got %q", s)
+	}
+	if strings.Contains(s, `await startFullPrefetch`) {
+		t.Errorf("showPage should start background prefetch without blocking current page load: got %q", s)
+	}
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:]
+	if !strings.Contains(showBody, `img.src = data.src;`) || !strings.Contains(showBody, `startFullPrefetch();`) {
+		t.Errorf("showPage should start full-image prefetch immediately after current image src: got %q", showBody)
 	}
 }
 
