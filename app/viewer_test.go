@@ -95,6 +95,22 @@ func TestViewerPageSourceLocalFirst(t *testing.T) {
 	}
 }
 
+func TestViewerPageSourceUsesHasavifFormatWhenRemote(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"4252697","title":"Kemo","language":"japanese","type":"doujinshi",` +
+		`"files":[{"hash":"19793843306679ce3cab65db3ca0bf219477d0e8df09df23055f13ae957f5696","name":"02.png","hasavif":1}]}`
+	v, _ := newTestViewer(t, galleryJSON)
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/gallery/4252697/page/1", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["local"] != false || out["format"] != "avif" || !strings.HasSuffix(out["src"].(string), "?format=avif") {
+		t.Errorf("hasavif source: got %v", out)
+	}
+}
+
 func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"125","files":[]}`)
 
@@ -180,6 +196,55 @@ func TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing(t *testing.T) {
 	}
 	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
 		t.Fatalf("image TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
+	}
+}
+
+func TestViewerImageProxyFallsBackToSmalltnVariantWhenBigtnTNMissing(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "tn.") {
+			if strings.Contains(rawurl, "/webpsmalltn/") {
+				return []byte("tn-small"), nil
+			}
+			return nil, errors.New("tn missing")
+		}
+		return nil, errors.New("storage missing")
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn-small" {
+		t.Fatalf("image TN variant fallback: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if len(urls) != 4 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "/webpbigtn/") || !strings.Contains(urls[2], "/webpsmallbigtn/") || !strings.Contains(urls[3], "/webpsmalltn/") {
+		t.Fatalf("image TN variant order: got %v", urls)
+	}
+}
+
+func TestViewerImageProxyFallsBackToAvifSmalltnVariantForHasavif(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "tn.") {
+			if strings.Contains(rawurl, "/avifsmalltn/") {
+				return []byte("tn-small"), nil
+			}
+			return nil, errors.New("tn missing")
+		}
+		return nil, errors.New("storage missing")
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=avif", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn-small" {
+		t.Fatalf("image avif TN variant fallback: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if len(urls) != 4 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "/avifbigtn/") || !strings.Contains(urls[2], "/avifsmallbigtn/") || !strings.Contains(urls[3], "/avifsmalltn/") {
+		t.Fatalf("image avif TN variant order: got %v", urls)
+	}
+	if rec.Header().Get("content-type") != "image/avif" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
+		t.Fatalf("image avif TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
 	}
 }
 
@@ -374,6 +439,57 @@ func TestViewerThumbProxyFallsBackToFullImageWhenTNMissing(t *testing.T) {
 	}
 }
 
+func TestViewerSearchHandlerReturnsIdsOnlyForLazyCards(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	key := hashTerm("furry")
+	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 10}}, make([]uint64, btreeOrder+1))
+	data := append([]byte{0, 0, 0, 3}, beIDs([]uint32{10, 20, 30})...)
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		case rng[0] == 1000:
+			return data, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=2", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	ids := out["ids"].([]any)
+	results := out["results"].([]any)
+	if out["total"] != float64(3) || len(ids) != 2 || ids[0] != float64(10) || ids[1] != float64(20) {
+		t.Errorf("search ids: got %v", out)
+	}
+	if len(results) != 0 {
+		t.Errorf("search initial response should not block on card metadata: got %v", out)
+	}
+}
+
+func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
+	v, _ := newTestViewer(t, galleryJSON)
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	wantFormat := imageFormat(v.cfg)
+	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat + "&gallery=1&variant=bigtn"
+	if out["id"] != float64(1) || out["title"] != "Kemo" || out["thumbnail"] != wantThumb {
+		t.Errorf("search card: got %v", out)
+	}
+}
+
 func TestEmbeddedUIUsesLocalThumbProxy(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
@@ -428,6 +544,26 @@ func TestEmbeddedUIThumbUsesHitomiTNVariants(t *testing.T) {
 	}
 	if !strings.Contains(s, "const marker = entry.local ? \" title='local'\" : \"\";") {
 		t.Errorf("ui should keep local as app feature marker, not filter: got %q", s)
+	}
+}
+
+func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="search-status"`) || !strings.Contains(s, `検索実行中`) {
+		t.Errorf("ui should show search executing status: got %q", s)
+	}
+	if !strings.Contains(s, `submit.disabled = true`) || !strings.Contains(s, `loadSearchCards`) {
+		t.Errorf("ui should mark search executing and load cards lazily: got %q", s)
+	}
+	if !strings.Contains(s, `submit.dataset.original`) {
+		t.Errorf("ui should restore search button after concurrent searches: got %q", s)
+	}
+	if !strings.Contains(s, "const li = results.querySelector(\"[data-search-id='\" + ids[i] + \"']\");") {
+		t.Errorf("ui lazy search card lookup must use a valid selector: got %q", s)
 	}
 }
 

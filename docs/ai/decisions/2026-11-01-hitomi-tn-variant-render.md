@@ -25,7 +25,8 @@ https://<{a|b}tn>.gold-usergeneratedcontent.net/<format><variant>/<last hex char
 ## Proxy order
 
 - `/api/thumb/`: TN first. TN failure -> local file -> full image proxy.
-- `/api/image/`: local full file -> remote full image -> TN `bigtn` fallback.
+- `/api/image/`: local full file -> remote full image -> TN variant fallback `bigtn`, `smallbigtn`, `smalltn`, `smallsmalltn`; `hasavif` TN avif優先、webp TN を最終 fallback に残す。
+- `/api/gallery/{id}/page/{page}` は remote source で `hasavif` entry に `avif` format を使う。local file は config format を先に確認する。
 
 This keeps the viewer as an extension of hitomi: remote entries remain visible through hitomi TN, local files remain an app feature.
 

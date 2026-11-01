@@ -42,6 +42,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /", v.index)
 	mux.HandleFunc("GET /api/lists", v.lists)
 	mux.HandleFunc("GET /api/search", v.search)
+	mux.HandleFunc("GET /api/search-card/{id}", v.searchCard)
 	mux.HandleFunc("GET /api/gallery/{id}", v.gallery)
 	mux.HandleFunc("GET /api/gallery/{id}/page/{page}", v.pageSource)
 	mux.HandleFunc("GET /api/thumb/{hash}", v.thumbProxy)
@@ -181,12 +182,18 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
 	}
-	results := []map[string]any{}
-	for _, id := range ids {
-		results = append(results, v.searchResult(id))
-	}
 	jsonOut(w, map[string]any{"query": q, "lang": r.URL.Query().Get("lang"), "page": page,
-		"total": total, "ids": ids, "results": results})
+		"total": total, "ids": ids, "results": []map[string]any{}})
+}
+
+func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
+	jsonOut(w, v.searchResult(id))
 }
 
 func (v *viewer) searchResult(id int) map[string]any {
@@ -260,18 +267,25 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "page out of range", http.StatusBadRequest)
 		return
 	}
-	format := imageFormat(v.cfg)
+	baseFormat := imageFormat(v.cfg)
 	entry := info.Files[page-1]
-	local, err := safeGalleryPath(v.galleryRoot, strconv.Itoa(id)+"/"+entry.Hash+"."+format)
-	if err == nil {
-		if _, err := os.Stat(local); err == nil {
-			jsonOut(w, map[string]any{"page": page, "src": "/files/" + strconv.Itoa(id) + "/" + entry.Hash + "." + format,
-				"local": true, "width": entry.Width, "height": entry.Height})
-			return
+	format := entryFormat(entry, baseFormat)
+	localFormats := []string{baseFormat}
+	if format != baseFormat {
+		localFormats = append(localFormats, format)
+	}
+	for _, localFormat := range localFormats {
+		local, err := safeGalleryPath(v.galleryRoot, strconv.Itoa(id)+"/"+entry.Hash+"."+localFormat)
+		if err == nil {
+			if _, err := os.Stat(local); err == nil {
+				jsonOut(w, map[string]any{"page": page, "src": "/files/" + strconv.Itoa(id) + "/" + entry.Hash + "." + localFormat,
+					"local": true, "format": localFormat, "width": entry.Width, "height": entry.Height})
+				return
+			}
 		}
 	}
 	jsonOut(w, map[string]any{"page": page, "src": "/api/image/" + entry.Hash + "?format=" + format, "local": false,
-		"width": entry.Width, "height": entry.Height})
+		"format": format, "width": entry.Width, "height": entry.Height})
 }
 
 func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
@@ -311,19 +325,30 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	if v.serveLocalImage(w, r, hash, format) {
 		return
 	}
-	body, err := v.client.get(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
+	gg := v.client.GG()
+	body, err := v.client.get(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
 	if err == nil {
 		setImageHeaders(w, format)
 		w.Write(body)
 		return
 	}
-	body, err = v.client.get(r.Context(), ThumbnailURL(hash, format, v.client.GG()), [2]int64{-1, -1})
-	if err != nil {
-		http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
-		return
+
+	tnFormat := TNFormat(format)
+	tnFormats := []string{tnFormat}
+	if tnFormat != "webp" {
+		tnFormats = append(tnFormats, "webp")
 	}
-	setImageHeaders(w, format)
-	w.Write(body)
+	for _, tnFormat := range tnFormats {
+		for _, variant := range []string{"bigtn", "smallbigtn", "smalltn", "smallsmalltn"} {
+			body, err = v.client.get(r.Context(), ThumbnailURLVariant(hash, tnFormat, variant, gg), [2]int64{-1, -1})
+			if err == nil {
+				setImageHeaders(w, tnFormat)
+				w.Write(body)
+				return
+			}
+		}
+	}
+	http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
 }
 
 func setImageHeaders(w http.ResponseWriter, format string) {
@@ -461,6 +486,13 @@ func (v *viewer) localCount(id int) int {
 
 func imageFormat(cfg Config) string {
 	return orDefault(cfg.Hitomi.ImageFormat, "webp")
+}
+
+func entryFormat(entry FileEntry, base string) string {
+	if entry.HasAVIF != 0 {
+		return "avif"
+	}
+	return orDefault(base, "webp")
 }
 
 func jsonOut(w http.ResponseWriter, value any) {

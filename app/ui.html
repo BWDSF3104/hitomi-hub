@@ -19,6 +19,7 @@
   a { color: #8ab4f8; text-decoration: none; }
   .meta { font-size: .9rem; color: #9aa0a6; }
   .note { font-size: .85rem; color: #f0a441; }
+  .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
   .card { display: flex; gap: .5rem; align-items: flex-start; }
   .cover, .strip img { object-fit: cover; background: #1d2126; }
   .cover { width: 130px; height: 130px; }
@@ -42,8 +43,9 @@
         <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
         <input id="lang" value="all" size="8">
         <input id="page" value="1" size="4">
-        <button>検索</button>
+        <button id="search-submit">検索</button>
       </form>
+      <div id="search-status" class="status"></div>
       <div id="count" class="meta"></div>
       <ul id="results"></ul>
     </section>
@@ -211,19 +213,55 @@ async function showLists() {
   document.getElementById("unread").innerHTML = lists.unread.map((row) =>
     "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
 }
+function renderSearchCard(r) {
+  const cover = r.thumbnail ? "<img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'>" : "";
+  return "<li class='card' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
+}
+
+async function loadSearchCards(ids) {
+  const status = document.getElementById("search-status");
+  const results = document.getElementById("results");
+  for (let i = 0; i < ids.length; i++) {
+    status.textContent = "カード読み込み " + (i + 1) + "/" + ids.length + ": " + ids[i];
+    const li = results.querySelector("[data-search-id='" + ids[i] + "']");
+    try {
+      const card = await api("/api/search-card/" + ids[i]);
+      if (li) li.outerHTML = renderSearchCard(card);
+    } catch (err) {
+      if (li) li.innerHTML = "<span class='meta'>" + escapeHTML(err.message) + "</span>";
+    }
+  }
+}
+
 async function runSearch() {
   const q = document.getElementById("query").value.trim();
   const lang = document.getElementById("lang").value.trim() || "all";
   const page = Number(document.getElementById("page").value || "1");
+  const status = document.getElementById("search-status");
+  const results = document.getElementById("results");
+  const submit = document.getElementById("search-submit");
+  const originalText = submit.dataset.original || submit.textContent;
+  submit.dataset.original = originalText;
+  status.textContent = "検索実行中: " + q;
+  submit.disabled = true;
+  submit.textContent = "実行中…";
+  results.innerHTML = "<li class='meta'>検索実行中…</li>";
   try {
     const data = await api("/api/search?query=" + encodeURIComponent(q) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
+    const ids = data.ids || (data.results || []).map((r) => r.id);
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
-    document.getElementById("results").innerHTML = data.results.map((r) => {
-      const cover = "<img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'>";
-      return "<li class='card'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.id) + "</a><div class='meta'>" + escapeHTML(r.language) + " / " + escapeHTML(r.type) + "・" + r.count + " files・local " + r.local + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
-    }).join("") || "<li>0 件</li>";
+    status.textContent = "検索完了・カード読み込み " + ids.length + "件";
+    results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'>#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+    await loadSearchCards(ids);
     await showLists();
-  } catch (err) { document.getElementById("note").textContent = err.message; }
+    status.textContent = "検索完了・カード表示済み " + ids.length + "件";
+  } catch (err) {
+    status.textContent = "検索エラー: " + err.message;
+    document.getElementById("note").textContent = err.message;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = originalText;
+  }
 }
 
 document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
