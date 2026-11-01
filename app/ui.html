@@ -151,6 +151,10 @@ let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
 let viewMode = "double";
 let currentPairEnd = null;
 let prefetchAbort = null;
+let backgroundSignal = null;
+let backgroundGalleryId = null;
+const prefetchQueue = [];
+const prefetchQueueKeys = new Set();
 let fullDone = 0;
 let tnDone = 0;
 let errorDone = 0;
@@ -244,8 +248,6 @@ function cachedFullSrc(entry, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
   const cached = fullCache.get(key);
   if (cached && cached.objectUrl) return cached.objectUrl;
-  const status = prefetchedEntries.get(key);
-  if (status && status !== "error" && status !== "tn" && status !== "tn-cache" && status !== "no_full") return entrySource(entry, galleryId);
   return "";
 }
 function getGalleryCounts(galleryId) {
@@ -456,20 +458,29 @@ function revokeFullObjectUrls() {
   fullObjectUrls.clear();
 }
 
-async function loadFullImage(img, entry, signal) {
+async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {
   const targetPage = Number(img.dataset.page);
   const targetHash = img.dataset.hash;
   const targetRender = Number(img.dataset.render);
-  const galleryId = current.id;
+  if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
+  const key = fullCacheKey(entry, galleryId);
+  const cached = fullCache.get(key);
+  if (cached && cached.objectUrl) {
+    if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
+    img.dataset.fullCache = cached.status;
+    img.src = cached.objectUrl;
+    return;
+  }
   const fullSrc = entrySource(entry, galleryId);
   try {
     const r = await fetch(fullSrc, { cache: "no-store", signal });
     if (signal.aborted) return;
+    if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
     const cache = r.headers.get("x-cache") || "miss";
     if (r.status === 404 && cache === "no_full") {
       storeFullCache(entry, "no_full", null, galleryId);
       updatePrefetchCounts("no_full", entry, galleryId);
-      if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "no full image: " + targetPage;
       }
       return;
@@ -477,32 +488,36 @@ async function loadFullImage(img, entry, signal) {
     if (!r.ok) {
       storeFullCache(entry, "error", null, galleryId);
       updatePrefetchCounts("error", entry, galleryId);
-      if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "image load failed: " + targetPage;
       }
       return;
     }
     if (cache === "tn") {
-      storeFullCache(entry, "tn", null, galleryId);
       updatePrefetchCounts("tn", entry, galleryId);
-      if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "tn display fallback disabled: " + targetPage;
       }
       return;
     }
     const blob = await r.blob();
     const objectUrl = URL.createObjectURL(blob);
+    if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
     storeFullCache(entry, cache, objectUrl, galleryId);
     updatePrefetchCounts(cache, entry, galleryId);
-    if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+    if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       img.dataset.fullCache = cache;
       img.src = objectUrl;
     }
   } catch (err) {
     if (signal.aborted) return;
+    if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
     storeFullCache(entry, "error", null, galleryId);
     updatePrefetchCounts("error", entry, galleryId);
-    if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+    if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       document.getElementById("note").textContent = "image load failed: " + targetPage;
     }
   }
@@ -528,20 +543,26 @@ function renderReader() {
 
 async function runPriority(displayed, signal) {
   const container = document.getElementById("reader");
+  const priorityShowGen = showGeneration;
+  const priorityOpenGen = openGeneration;
+  const priorityRenderGen = renderGeneration;
+  const priorityGalleryId = current.id;
   for (const item of displayed) {
     if (signal.aborted) return;
+    if (priorityShowGen !== showGeneration || priorityOpenGen !== openGeneration || priorityRenderGen !== renderGeneration || priorityGalleryId !== current.id) return;
     const img = container && container.querySelector("img[data-page='" + item.page + "']");
-    if (img) await loadFullImage(img, item.entry, signal);
+    if (img) await loadFullImage(img, item.entry, signal, priorityGalleryId, priorityShowGen, priorityOpenGen, priorityRenderGen);
   }
 }
 
-function startFullPrefetch() {
+function resetBackgroundPrefetch(displayed) {
   if (!current.id) return;
-  if (prefetchAbort) prefetchAbort.abort();
-  prefetchAbort = new AbortController();
-  const signal = prefetchAbort.signal;
+  if (backgroundSignal) backgroundSignal.abort();
+  backgroundSignal = new AbortController();
+  prefetchAbort = backgroundSignal;
+  backgroundGalleryId = current.id;
+  const signal = backgroundSignal.signal;
   const currentId = current.id;
-  const displayed = readerItems().filter((item) => item.entry);
   const displayedPages = new Set(displayed.map((item) => item.page));
   const items = stripItems().filter((item) => item.entry);
   const currentIdx = items.findIndex((item) => item.page === current.page);
@@ -550,33 +571,69 @@ function startFullPrefetch() {
     for (let distance = 0; distance <= Math.max(items.length - currentIdx, currentIdx); distance++) {
       const right = currentIdx + distance;
       const left = currentIdx - distance;
-      if (right < items.length && !displayedPages.has(items[right].page) && !prefetchedEntries.has(fullCacheKey(items[right].entry, currentId))) order.push(items[right]);
-      if (distance > 0 && left >= 0 && !displayedPages.has(items[left].page) && !prefetchedEntries.has(fullCacheKey(items[left].entry, currentId))) order.push(items[left]);
+      if (right < items.length && !displayedPages.has(items[right].page) && !prefetchedEntries.has(fullCacheKey(items[right].entry, currentId))) order.push({ entry: items[right].entry, page: items[right].page, galleryId: currentId });
+      if (distance > 0 && left >= 0 && !displayedPages.has(items[left].page) && !prefetchedEntries.has(fullCacheKey(items[left].entry, currentId))) order.push({ entry: items[left].entry, page: items[left].page, galleryId: currentId });
     }
   } else {
     for (let i = 0; i < items.length; i++) {
-      if (!displayedPages.has(items[i].page) && !prefetchedEntries.has(fullCacheKey(items[i].entry, currentId))) order.push(items[i]);
+      if (!displayedPages.has(items[i].page) && !prefetchedEntries.has(fullCacheKey(items[i].entry, currentId))) order.push({ entry: items[i].entry, page: items[i].page, galleryId: currentId });
     }
   }
   const counts = getGalleryCounts(currentId);
   counts.total = items.length;
   renderPrefetchStatus();
+  prefetchQueue.length = 0;
+  prefetchQueueKeys.clear();
+  for (const item of order) {
+    const key = fullCacheKey(item.entry, item.galleryId);
+    if (prefetchQueueKeys.has(key)) continue;
+    prefetchQueueKeys.add(key);
+    prefetchQueue.push(item);
+  }
   currentPriorityDone = runPriority(displayed, signal);
+  startBackgroundWorkers(signal);
+}
+
+function ensureBackgroundPrefetch(displayed) {
+  if (!current.id) return;
+  if (backgroundGalleryId !== current.id) {
+    resetBackgroundPrefetch(displayed);
+    return;
+  }
+  const signal = backgroundSignal.signal;
+  currentPriorityDone = runPriority(displayed, signal);
+}
+
+function startBackgroundWorkers(signal) {
   async function worker() {
-    await currentPriorityDone;
-    while (order.length && !signal.aborted) {
-      const item = order.shift();
+    while (prefetchQueue.length && !signal.aborted) {
+      await currentPriorityDone;
+      if (signal.aborted) return;
+      const item = prefetchQueue.shift();
       try {
-        const cache = await prefetchPageImage(item.entry, signal, currentId);
+        const cache = await prefetchPageImage(item.entry, signal, item.galleryId);
         if (signal.aborted) return;
-        updatePrefetchCounts(cache, item.entry, currentId);
+        updatePrefetchCounts(cache, item.entry, item.galleryId);
       } catch (err) {
         if (signal.aborted) return;
-        updatePrefetchCounts("error", item.entry, currentId);
+        updatePrefetchCounts("error", item.entry, item.galleryId);
       }
     }
   }
   for (let i = 0; i < PREFETCH_CONCURRENCY; i++) worker();
+}
+
+function runBackgroundReadAndLists(showGen, openGen) {
+  if (showGen !== showGeneration || openGen !== openGeneration) return;
+  post("/api/read", { gallery_id: current.id, page: current.page }).then(() => {
+    if (showGen !== showGeneration || openGen !== openGeneration) return;
+    showLists(showGen, openGen);
+    highlightStrip();
+  }).catch((err) => {
+    if (showGen === showGeneration && openGen === openGeneration) {
+      document.getElementById("note").textContent = err.message;
+    }
+  });
 }
 
 async function showPage() {
@@ -589,18 +646,16 @@ async function showPage() {
   const data = { page: current.page, src: entrySource(entry, current.id), local: !!entry.local, format: formatForEntry(entry) };
   const showGen = ++showGeneration;
   const openGen = openGeneration;
+  const displayed = readerItems().filter((item) => item.entry);
   renderReader();
-  startFullPrefetch();
+  ensureBackgroundPrefetch(displayed);
   renderStrip();
   highlightStrip();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   setRoute(current.id, current.page);
   if (showGen !== showGeneration || openGen !== openGeneration) return;
-  await post("/api/read", { gallery_id: current.id, page: current.page });
-  if (showGen !== showGeneration || openGen !== openGeneration) return;
-  await showLists();
-  highlightStrip();
+  runBackgroundReadAndLists(showGen, openGen);
 }
 function renderStrip() {
   const parts = [];
@@ -629,6 +684,7 @@ function highlightStrip() {
 async function openGallery(id, page, second) {
   const gen = ++openGeneration;
   if (prefetchAbort) prefetchAbort.abort();
+  if (backgroundSignal) backgroundSignal.abort();
   history.replaceState(null, "", route(id, page, second));
   const card = searchCardCache.get(id);
   const fullCardData = galleryDataFromCard(card);
@@ -640,7 +696,7 @@ async function openGallery(id, page, second) {
     await showPage();
     if (gen !== openGeneration) return;
     renderStrip();
-    await showLists();
+    await showLists(showGeneration, gen);
     return;
   }
   const cached = galleryCache.get(id);
@@ -651,7 +707,7 @@ async function openGallery(id, page, second) {
     await showPage();
     if (gen !== openGeneration) return;
     renderStrip();
-    await showLists();
+    await showLists(showGeneration, gen);
     return;
   }
   showGalleryMetaFromCache(id);
@@ -666,10 +722,12 @@ async function openGallery(id, page, second) {
   await showPage();
   if (gen !== openGeneration) return;
   renderStrip();
-  await showLists();
+  await showLists(showGeneration, gen);
 }
-async function showLists() {
+async function showLists(showGen, openGen) {
+  if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;
   const lists = await api("/api/lists");
+  if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;
   document.getElementById("queries").innerHTML = lists.queries.map((q) =>
     "<li><a href='#/q/" + encodeURIComponent(q.query) + "'>" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
