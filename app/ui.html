@@ -38,7 +38,8 @@
     gap: 0;
     grid-template-columns: repeat(2, minmax(0, var(--reader-page-width)));
   }
-  .reader.single, .reader.fullscreen { grid-template-columns: minmax(0, var(--reader-page-width)); }
+  .reader.double { grid-template-columns: repeat(2, minmax(0, var(--reader-page-width))); }
+  .reader:not(.double) { grid-template-columns: minmax(0, var(--reader-page-width)); }
   .reader img {
     display: block;
     width: min(var(--reader-page-width), 100%);
@@ -126,7 +127,9 @@ let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
 let viewMode = "double";
 let currentPairEnd = null;
 let prefetchAbort = null;
-let prefetchDone = 0;
+let fullDone = 0;
+let tnDone = 0;
+let errorDone = 0;
 let prefetchTotal = 0;
 const PREFETCH_CONCURRENCY = 2;
 
@@ -141,7 +144,7 @@ function route(id, page, second) {
 }
 function setRoute(id, page) {
   const items = readerItems();
-  const second = displayMode() === "double" && items.length > 1 ? items[1].page : null;
+  const second = doubleActive() && items.length > 1 ? items[1].page : null;
   history.replaceState(null, "", route(id, page, second));
 }
 function setGalleryMeta(data) {
@@ -199,10 +202,17 @@ function entryForPage(page) {
   return current.files[page - 1];
 }
 
+function doubleActive() { return viewMode !== "single" && window.innerWidth >= 720; }
+
 function displayMode() {
   if (viewMode === "fullscreen") return "fullscreen";
   if (viewMode === "single" || window.innerWidth < 720) return "single";
   return "double";
+}
+
+function readerClass() {
+  if (viewMode === "fullscreen") return "reader fullscreen" + (doubleActive() ? " double" : "");
+  return "reader " + displayMode();
 }
 
 function entryPlaceholder(entry) { return thumbURL(entry.hash, formatForEntry(entry), current.id, stripVariant()); }
@@ -212,7 +222,7 @@ function readerItems() {
   const firstIdx = items.findIndex((item) => item.page === current.page);
   const first = firstIdx >= 0 ? items[firstIdx] : { page: current.page, entry: entryForPage(current.page), badge: 0 };
   const result = [first];
-  if (displayMode() === "double" && first.entry) {
+  if (doubleActive() && first.entry) {
     let second = null;
     if (currentPairEnd > current.page) second = { page: currentPairEnd, entry: entryForPage(currentPairEnd), badge: 0 };
     else if (firstIdx >= 0 && firstIdx + 1 < items.length) second = items[firstIdx + 1];
@@ -228,13 +238,13 @@ function readerItems() {
 function movePage(delta) {
   const items = readerItems();
   if (delta > 0) {
-    const next = displayMode() === "double" && items.length > 1 ? items[1].page + 1 : current.page + delta;
+    const next = doubleActive() && items.length > 1 ? items[1].page + 1 : current.page + delta;
     if (next < 1 || next > current.count) return false;
     current.page = next;
     currentPairEnd = null;
     return true;
   }
-  const distance = displayMode() === "double" && items.length > 1 ? items[1].page - current.page : 0;
+  const distance = doubleActive() && items.length > 1 ? items[1].page - current.page : 0;
   const prev = current.page - distance - 1;
   if (prev < 1 || prev > current.count) return false;
   current.page = prev;
@@ -257,6 +267,7 @@ function setViewMode(mode) {
   if (select) select.value = mode;
   applyFullscreen();
   renderReader();
+  startFullPrefetch();
 }
 
 function parseReaderHash(hash) {
@@ -272,6 +283,15 @@ function setPrefetchStatus(text) {
   if (el) el.textContent = text;
 }
 
+function updatePrefetchCounts(status) {
+  if (status === "tn") tnDone++;
+  else if (status === "error") errorDone++;
+  else fullDone++;
+  let text = "full prefetch " + fullDone + "/" + prefetchTotal + " tn " + tnDone + "/" + prefetchTotal;
+  if (errorDone) text += " error " + errorDone + "/" + prefetchTotal;
+  setPrefetchStatus(text);
+}
+
 function entrySource(entry) {
   const formats = entry.local_formats || [];
   if (formats.length) {
@@ -281,35 +301,36 @@ function entrySource(entry) {
 }
 
 async function prefetchPageImage(entry, signal) {
-  await fetch(entrySource(entry), { signal });
+  const r = await fetch(entrySource(entry), { signal });
+  return r.headers.get("x-cache") || "miss";
 }
 
-function loadFullImage(img, entry) {
+async function loadFullImage(img, entry, signal) {
   const targetPage = Number(img.dataset.page);
   const targetHash = img.dataset.hash;
   const fullSrc = entrySource(entry);
-  const full = new Image();
-  const replace = () => {
-    if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+  try {
+    const r = await fetch(fullSrc, { signal });
+    if (signal.aborted) return;
+    const cache = r.headers.get("x-cache") || "miss";
+    updatePrefetchCounts(cache);
+    if (cache !== "tn" && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       img.src = fullSrc;
     }
-  };
-  full.onload = () => replace();
-  full.onerror = () => {
+  } catch (err) {
+    if (signal.aborted) return;
+    updatePrefetchCounts("error");
     if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       document.getElementById("note").textContent = "image load failed: " + targetPage;
     }
-  };
-  full.src = fullSrc;
-  if (full.complete) replace();
+  }
 }
 
 function renderReader() {
   const container = document.getElementById("reader");
   if (!container || !current.id) return;
   const items = readerItems();
-  const mode = displayMode();
-  container.className = "reader " + mode;
+  container.className = readerClass();
   const parts = [];
   for (const item of items) {
     const entry = item.entry;
@@ -319,11 +340,6 @@ function renderReader() {
     parts.push("<img data-page='" + item.page + "' data-hash='" + entry.hash + "' data-full='" + entrySource(entry) + "' src='" + entryPlaceholder(entry) + "'" + marker + " alt='" + alt + "'>");
   }
   container.innerHTML = parts.join("");
-  container.querySelectorAll("img").forEach((img) => {
-    const page = Number(img.dataset.page);
-    const entry = entryForPage(page);
-    if (entry) loadFullImage(img, entry);
-  });
 }
 
 function startFullPrefetch() {
@@ -331,30 +347,37 @@ function startFullPrefetch() {
   if (prefetchAbort) prefetchAbort.abort();
   prefetchAbort = new AbortController();
   const signal = prefetchAbort.signal;
-  const items = stripItems();
+  const displayed = readerItems().filter((item) => item.entry);
+  const displayedPages = new Set(displayed.map((item) => item.page));
+  const items = stripItems().filter((item) => item.entry);
   const currentIdx = items.findIndex((item) => item.page === current.page);
   const order = [];
-  for (let i = currentIdx >= 0 ? currentIdx : 0; i < items.length; i++) order.push(items[i]);
-  for (let i = 0; i < currentIdx; i++) order.push(items[i]);
-  prefetchTotal = order.length;
-  prefetchDone = 0;
-  setPrefetchStatus("full prefetch 0/" + prefetchTotal);
+  for (let i = currentIdx >= 0 ? currentIdx : 0; i < items.length; i++) {
+    if (!displayedPages.has(items[i].page)) order.push(items[i]);
+  }
+  for (let i = 0; i < currentIdx; i++) {
+    if (!displayedPages.has(items[i].page)) order.push(items[i]);
+  }
+  prefetchTotal = displayed.length + order.length;
+  fullDone = 0;
+  tnDone = 0;
+  errorDone = 0;
+  setPrefetchStatus("full prefetch 0/" + prefetchTotal + " tn 0/" + prefetchTotal);
+  const container = document.getElementById("reader");
+  for (const item of displayed) {
+    const img = container && container.querySelector("img[data-page='" + item.page + "']");
+    if (img) loadFullImage(img, item.entry, signal);
+  }
   async function worker() {
     while (order.length && !signal.aborted) {
       const item = order.shift();
-      if (item.page === current.page) {
-        prefetchDone++;
-        setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal);
-        continue;
-      }
       try {
-        await prefetchPageImage(item.entry, signal);
+        const cache = await prefetchPageImage(item.entry, signal);
         if (signal.aborted) return;
-        prefetchDone++;
-        setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal);
+        updatePrefetchCounts(cache);
       } catch (err) {
         if (signal.aborted) return;
-        setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal + " error: " + err.message);
+        updatePrefetchCounts("error");
       }
     }
   }
@@ -509,6 +532,7 @@ document.addEventListener("fullscreenchange", () => {
     if (select) select.value = "single";
     applyFullscreen();
     renderReader();
+    startFullPrefetch();
   }
 });
 document.getElementById("results").addEventListener("click", async (e) => {

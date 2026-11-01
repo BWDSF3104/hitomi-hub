@@ -653,6 +653,12 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(entrySource(entry), { signal })") {
 		t.Errorf("ui should prefetch full images background through abortable entry source fetch: got %q", s)
 	}
+	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status) {`) || !strings.Contains(s, `tnDone`) {
+		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
+	}
+	if !strings.Contains(s, `displayedPages`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
+		t.Errorf("ui should load displayed reader items through startFullPrefetch without double-counting them: got %q", s)
+	}
 	if !strings.Contains(s, `function entrySource(entry) {`) || !strings.Contains(s, `entry.local_formats`) {
 		t.Errorf("ui should use entry local_formats and remote TN/full format for background prefetch: got %q", s)
 	}
@@ -690,6 +696,26 @@ func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 	if !strings.Contains(s, `window.innerWidth < 720`) {
 		t.Errorf("ui should fall back to single when the normal page size is too narrow: got %q", s)
 	}
+	if !strings.Contains(s, `function doubleActive() { return viewMode !== "single" && window.innerWidth >= 720; }`) {
+		t.Errorf("ui should allow double view outside single mode, including fullscreen: got %q", s)
+	}
+	if !strings.Contains(s, `return "reader fullscreen" + (doubleActive() ? " double" : "")`) {
+		t.Errorf("ui should apply reader fullscreen double class when fullscreen double is active: got %q", s)
+	}
+	if !strings.Contains(s, `if (doubleActive() && first.entry)`) {
+		t.Errorf("ui reader items should include second page when fullscreen double is active: got %q", s)
+	}
+	setStart := strings.Index(s, "function setViewMode(mode) {")
+	if setStart < 0 {
+		t.Fatalf("setViewMode function not found")
+	}
+	setBody := s[setStart:strings.Index(s, "\nfunction parseReaderHash(hash) {")]
+	if !strings.Contains(setBody, `renderReader();`) || !strings.Contains(setBody, `startFullPrefetch();`) {
+		t.Errorf("setViewMode should render the active reader view and start full-image prefetch: got %q", setBody)
+	}
+	if !strings.Contains(s, `renderReader();`) || !strings.Contains(s, `startFullPrefetch();`) {
+		t.Errorf("ui should render reader items then load full images through background prefetch: got %q", s)
+	}
 }
 
 func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
@@ -704,11 +730,11 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `gap: 0;`) || !strings.Contains(s, `--reader-page-width: min(45vw, 500px);`) || !strings.Contains(s, `--reader-page-height: min(78vh, 700px);`) || !strings.Contains(s, `width: min(var(--reader-page-width), 100%);`) || !strings.Contains(s, `object-fit: contain;`) {
 		t.Errorf("ui should fix reader display size without gap between pages: got %q", s)
 	}
-	if !strings.Contains(s, `function loadFullImage(img, entry) {`) || !strings.Contains(s, `full.onload = () =>`) || !strings.Contains(s, `img.src = fullSrc`) || !strings.Contains(s, `if (full.complete) replace();`) {
-		t.Errorf("ui should replace placeholder thumbnail when full image load completes: got %q", s)
+	if !strings.Contains(s, `async function loadFullImage(img, entry, signal) {`) || !strings.Contains(s, `fetch(fullSrc, { signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `if (cache !== "tn"`) || !strings.Contains(s, `img.src = fullSrc`) {
+		t.Errorf("ui should replace placeholder thumbnail only when the image source is not TN fallback: got %q", s)
 	}
-	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `container.querySelectorAll("img").forEach`) || !strings.Contains(s, `loadFullImage(img, entry)`) {
-		t.Errorf("ui should render reader items then load full images background: got %q", s)
+	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `entryPlaceholder(entry)`) || !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
+		t.Errorf("ui should render placeholder items and load full images through background prefetch: got %q", s)
 	}
 }
 
