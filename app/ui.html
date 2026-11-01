@@ -185,6 +185,10 @@ let fullObjectUrls = new Set();
 const fullCache = new Map();
 const prefetchedEntries = new Map();
 const countsByGallery = new Map();
+const displayPassByEntry = new Map();
+const sourceStatusByEntry = new Map();
+const sourceTypeByEntry = new Map();
+const activeObjectUrlKeys = new Set();
 const galleryCache = new Map();
 const searchCardCache = new Map();
 const galleryFormats = new Map();
@@ -245,10 +249,7 @@ function stripVariant() {
   return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";
 }
 function stripThumbSource(entry, galleryId = current.id) {
-  const key = fullCacheKey(entry, galleryId);
-  const cached = fullCache.get(key);
-  if (cached && cached.objectUrl) return cached.objectUrl;
-  return "";
+  return displayViewerSource(entry, galleryId);
 }
 function updateThumbCache(key, objectUrl) {
   if (!objectUrl) return;
@@ -269,8 +270,63 @@ function fullCacheKey(entry, galleryId = current.id) {
 function cachedFullSrc(entry, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
   const cached = fullCache.get(key);
-  if (cached && cached.objectUrl) return cached.objectUrl;
+  if (cached && cached.objectUrl && statusIsViewerDisplaySource(sourceStatusByEntry.get(key))) return cached.objectUrl;
   return "";
+}
+
+function localDirectSrc(entry, galleryId = current.id) {
+  const formats = entry.local_formats || [];
+  if (!formats.length) return "";
+  return "/files/" + galleryId + "/" + entry.hash + "." + formats[0];
+}
+
+function statusIsViewerDisplaySource(status) {
+  return status !== "tn" && status !== "tn-cache" && status !== "no_full" && status !== "error";
+}
+
+function entrySourceType(entry, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  if (activeObjectUrlKeys.has(key)) return "objectURL";
+  if (localDirectSrc(entry, galleryId)) return "local-direct";
+  return "";
+}
+
+function displayViewerSource(entry, galleryId = current.id) {
+  const key = fullCacheKey(entry, galleryId);
+  if (activeObjectUrlKeys.has(key)) return fullCache.get(key).objectUrl || "";
+  return localDirectSrc(entry, galleryId);
+}
+
+function setSourceStatus(entry, status, galleryId = current.id) {
+  sourceStatusByEntry.set(fullCacheKey(entry, galleryId), status);
+}
+
+function setSourceTypeFromKey(key, type) {
+  if (key) sourceTypeByEntry.set(key, type);
+}
+
+function setSourceType(entry, type, galleryId = current.id) {
+  setSourceTypeFromKey(fullCacheKey(entry, galleryId), type);
+}
+
+function recordImageDisplayPassFromImg(img, galleryId = current.id) {
+  if (!img || !img.dataset.key) return;
+  const sourceType = img.dataset.sourceType || sourceTypeByEntry.get(img.dataset.key);
+  if (!sourceType) return;
+  if (img.dataset.gallery && img.dataset.gallery !== String(galleryId)) return;
+  if (img.naturalWidth > 0) {
+    displayPassByEntry.set(img.dataset.key, true);
+    setSourceTypeFromKey(img.dataset.key, sourceType);
+    renderPrefetchStatus();
+  }
+}
+
+function attachDisplayLoadHandlers(container) {
+  if (!container) return;
+  for (const img of container.querySelectorAll("img[data-viewer-display]")) {
+    recordImageDisplayPassFromImg(img);
+    img.addEventListener("load", () => recordImageDisplayPassFromImg(img));
+  }
 }
 function getGalleryCounts(galleryId) {
   if (!countsByGallery.has(galleryId)) {
@@ -280,8 +336,24 @@ function getGalleryCounts(galleryId) {
 }
 function renderPrefetchStatus() {
   const counts = getGalleryCounts(current.id);
-  const total = counts.total || prefetchTotal;
-  let text = "full display cache " + counts.fullDone + "/" + total + " | no full " + counts.noFullDone + "/" + total + " | TN display fallback disabled";
+  const total = counts.total || prefetchTotal || (current.files ? current.files.length : 0);
+  let actualPixels = 0;
+  let localDirect = 0;
+  let objectUrlCache = 0;
+  for (const entry of current.files || []) {
+    const key = fullCacheKey(entry, current.id);
+    const sourceType = sourceTypeByEntry.get(key);
+    const sourceStatus = sourceStatusByEntry.get(key);
+    const pass = displayPassByEntry.get(key);
+    if (pass) actualPixels++;
+    if (pass && sourceType === "local-direct") localDirect++;
+    if (activeObjectUrlKeys.has(key) && statusIsViewerDisplaySource(sourceStatus)) objectUrlCache++;
+  }
+  let text = "actual pixels " + actualPixels + "/" + total +
+    " | local direct " + localDirect + "/" + total +
+    " | objectURL cache " + objectUrlCache + "/" + total +
+    " | no full " + counts.noFullDone + "/" + total +
+    " | TN display fallback disabled";
   if (counts.errorDone) text += " | error " + counts.errorDone + "/" + total;
   fullDone = counts.fullDone;
   tnDone = counts.tnDone;
@@ -456,7 +528,11 @@ function renderGalleryLoading(id, page, second) {
 function updatePrefetchCounts(status, entry, galleryId = current.id) {
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return;
   const key = fullCacheKey(entry, galleryId);
-  if (prefetchedEntries.has(key)) return;
+  setSourceStatus(entry, status, galleryId);
+  if (prefetchedEntries.has(key)) {
+    renderPrefetchStatus();
+    return;
+  }
   prefetchedEntries.set(key, status);
   const counts = getGalleryCounts(galleryId);
   if (status === "tn") counts.tnDone++;
@@ -475,10 +551,17 @@ function entrySource(entry, galleryId = current.id) {
 }
 function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
-  if (objectUrl && !fullObjectUrls.has(objectUrl)) fullObjectUrls.add(objectUrl);
+  if (objectUrl && statusIsViewerDisplaySource(status) && !fullObjectUrls.has(objectUrl)) {
+    fullObjectUrls.add(objectUrl);
+    activeObjectUrlKeys.add(key);
+  }
   fullCache.set(key, { status, objectUrl });
-  if (objectUrl && galleryId === current.id && backgroundGalleryId === galleryId) {
-    updateThumbCache(key, objectUrl);
+  setSourceStatus(entry, status, galleryId);
+  if (objectUrl && statusIsViewerDisplaySource(status)) {
+    setSourceType(entry, "objectURL", galleryId);
+    if (galleryId === current.id && backgroundGalleryId === galleryId) {
+      updateThumbCache(key, objectUrl);
+    }
   }
   if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
     revokeFullObjectUrls();
@@ -488,7 +571,14 @@ function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
 async function prefetchPageImage(entry, signal, galleryId = current.id) {
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return "error";
   const key = fullCacheKey(entry, galleryId);
-  if (fullCache.has(key)) return fullCache.get(key).status;
+  const cached = fullCache.get(key);
+  if (cached && cached.objectUrl && statusIsViewerDisplaySource(cached.status)) return cached.status;
+  if (entry.local_formats && entry.local_formats.length) {
+    setSourceType(entry, "local-direct", galleryId);
+    setSourceStatus(entry, "local", galleryId);
+    updatePrefetchCounts("local", entry, galleryId);
+    return "local";
+  }
   const fullSrc = entrySource(entry, galleryId);
   const r = await fetch(fullSrc, { cache: "no-store", signal });
   if (signal.aborted) return "error";
@@ -501,6 +591,11 @@ async function prefetchPageImage(entry, signal, galleryId = current.id) {
   }
   const cache = r.headers.get("x-cache") || "miss";
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return cache;
+  if (cache === "tn") {
+    storeFullCache(entry, "tn", null, galleryId);
+    updatePrefetchCounts("tn", entry, galleryId);
+    return cache;
+  }
   const blob = await r.blob();
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return cache;
   const objectUrl = URL.createObjectURL(blob);
@@ -514,6 +609,11 @@ function revokeFullObjectUrls() {
     URL.revokeObjectURL(objectUrl);
   }
   fullObjectUrls.clear();
+  activeObjectUrlKeys.clear();
+  for (const cached of fullCache.values()) {
+    if (cached) cached.objectUrl = null;
+  }
+  renderPrefetchStatus();
 }
 
 async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {
@@ -522,11 +622,21 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
   const targetRender = Number(img.dataset.render);
   if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
   const key = fullCacheKey(entry, galleryId);
-  const cached = fullCache.get(key);
-  if (cached && cached.objectUrl) {
-    if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
-    img.dataset.fullCache = cached.status;
-    img.src = cached.objectUrl;
+  if (activeObjectUrlKeys.has(key)) {
+    img.dataset.fullCache = sourceStatusByEntry.get(key) || "cache";
+    img.dataset.sourceType = "objectURL";
+    img.src = fullCache.get(key).objectUrl;
+    recordImageDisplayPassFromImg(img, galleryId);
+    return;
+  }
+  if (entry.local_formats && entry.local_formats.length) {
+    img.dataset.fullCache = "local";
+    img.dataset.sourceType = "local-direct";
+    setSourceStatus(entry, "local", galleryId);
+    setSourceType(entry, "local-direct", galleryId);
+    updatePrefetchCounts("local", entry, galleryId);
+    img.src = localDirectSrc(entry, galleryId);
+    recordImageDisplayPassFromImg(img, galleryId);
     return;
   }
   const fullSrc = entrySource(entry, galleryId);
@@ -552,6 +662,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       return;
     }
     if (cache === "tn") {
+      storeFullCache(entry, "tn", null, galleryId);
       updatePrefetchCounts("tn", entry, galleryId);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "tn display fallback disabled: " + targetPage;
@@ -568,7 +679,9 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     updatePrefetchCounts(cache, entry, galleryId);
     if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       img.dataset.fullCache = cache;
+      img.dataset.sourceType = sourceTypeByEntry.get(key) || entrySourceType(entry, galleryId);
       img.src = objectUrl;
+      recordImageDisplayPassFromImg(img, galleryId);
     }
   } catch (err) {
     if (signal.aborted) return;
@@ -591,12 +704,22 @@ function renderReader() {
   for (const item of items) {
     const entry = item.entry;
     if (!entry) continue;
+    const key = fullCacheKey(entry, current.id);
+    const sourceType = entrySourceType(entry, current.id);
+    const src = displayViewerSource(entry, current.id);
+    if (sourceType === "local-direct") {
+      setSourceType(entry, sourceType, current.id);
+      setSourceStatus(entry, "local", current.id);
+    } else if (sourceType === "objectURL") {
+      setSourceType(entry, sourceType, current.id);
+      setSourceStatus(entry, sourceStatusByEntry.get(key) || fullCache.get(key).status || "cache", current.id);
+    }
     const marker = entry.local ? " title='local'" : "";
     const alt = item.page + (entry.local ? "・local" : "");
-    const src = cachedFullSrc(entry, current.id) || displayPlaceholder(entry);
-    parts.push("<img data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
+    parts.push("<img data-viewer-display='1' data-gallery='" + current.id + "' data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
   }
   container.innerHTML = parts.join("");
+  attachDisplayLoadHandlers(container);
 }
 
 async function runPriority(displayed, signal) {
@@ -731,13 +854,23 @@ function renderStrip() {
     const item = items[i];
     const entry = item.entry;
     const page = item.page;
+    const key = fullCacheKey(entry, current.id);
+    const sourceType = entrySourceType(entry, current.id);
     const src = stripThumbSource(entry, current.id);
+    if (sourceType === "local-direct") {
+      setSourceType(entry, sourceType, current.id);
+      setSourceStatus(entry, "local", current.id);
+    } else if (sourceType === "objectURL") {
+      setSourceType(entry, sourceType, current.id);
+      setSourceStatus(entry, sourceStatusByEntry.get(key) || fullCache.get(key).status || "cache", current.id);
+    }
     const marker = entry.local ? " title='local'" : "";
     const localMark = entry.local ? "・local" : "";
     const badge = item.badge > 1 ? "<div class='badge'>" + item.badge + "</div>" : "";
-    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-viewer-display='1' data-gallery='" + current.id + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
+  attachDisplayLoadHandlers(document.getElementById("thumbs"));
   highlightStrip();
 }
 function highlightStrip() {

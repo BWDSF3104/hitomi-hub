@@ -1,7 +1,7 @@
 # Viewer actual display pass と status の分離、page switch delay 推奨
 
 **Date**: 2026-11-01
-**Status**: 決定（新セッション移行用・未実装）
+**Status**: implemented in CP19 (`app/ui.html`, test `TestEmbeddedUIPageSwitchDisplayStatusSeparation`)
 
 ## Purpose
 
@@ -148,3 +148,11 @@ Conclusion:
 - `no_full` is not actual display pass.
 - Search-card TN cover is search-card display, not viewer display pass.
 - Canonical server should not be stopped except for EXE update.
+
+## CP19 implementation update
+
+- `recordImageDisplayPassFromImg()` uses `sourceTypeByEntry` as well as `img.dataset.sourceType`, so background objectURL updates can record actual display pass when the image loads.
+- `storeFullCache()` does not treat `tn` objectURL as active viewer-display cache.
+- `revokeFullObjectUrls()` clears `activeObjectUrlKeys` and invalidates stale objectURL entries in `fullCache`.
+- Direct local source selection is implemented for `entry.local_formats`; if an active objectURL exists, active objectURL remains preferred.
+- `prefetchStatus` actual pixels, local direct, objectURL cache, and no full counts are derived from maps rather than from status text alone.

@@ -793,8 +793,11 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status, entry, galleryId = current.id) {`) || !strings.Contains(s, `tnDone`) {
 		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
 	}
-	if !strings.Contains(s, `"full display cache "`) || !strings.Contains(s, `no full`) || !strings.Contains(s, `TN display fallback disabled`) {
-		t.Errorf("prefetch status should show display full cache, no full, and TN display fallback disabled, not TN display: got %q", s)
+	if !strings.Contains(s, `displayPassByEntry`) || !strings.Contains(s, `sourceStatusByEntry`) || !strings.Contains(s, `sourceTypeByEntry`) || !strings.Contains(s, `activeObjectUrlKeys`) {
+		t.Errorf("ui should keep actual display pass separate from backend/source status: got %q", s)
+	}
+	if !strings.Contains(s, `actual pixels `) || !strings.Contains(s, `local direct `) || !strings.Contains(s, `objectURL cache `) || !strings.Contains(s, `no full `) || !strings.Contains(s, `TN display fallback disabled`) {
+		t.Errorf("prefetch status should show actual pixels, local direct display, objectURL cache, no full, and TN display fallback disabled, not TN display: got %q", s)
 	}
 	if !strings.Contains(s, `counts.noFullDone`) {
 		t.Errorf("ui should count no_full separately from network errors: got %q", s)
@@ -1157,8 +1160,14 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 		t.Fatalf("cachedFullSrc function not found")
 	}
 	cachedBody := s[cachedStart:strings.Index(s, "\nfunction getGalleryCounts(galleryId) {")]
-	if !strings.Contains(cachedBody, `cached && cached.objectUrl`) || !strings.Contains(cachedBody, `return cached.objectUrl`) || strings.Contains(cachedBody, `tn-cache`) {
+	if !strings.Contains(cachedBody, `statusIsViewerDisplaySource`) || !strings.Contains(cachedBody, `cached && cached.objectUrl`) || !strings.Contains(cachedBody, `return cached.objectUrl`) {
 		t.Errorf("reader display should use full objectURL only, not TN, TN-cache, or no_full fallback: got %q", cachedBody)
+	}
+	if !strings.Contains(s, `localDirectSrc`) || !strings.Contains(s, `displayViewerSource`) || !strings.Contains(s, `entrySourceType`) {
+		t.Errorf("ui should keep direct local viewer source separate from objectURL display source: got %q", s)
+	}
+	if !strings.Contains(s, `attachDisplayLoadHandlers`) || !strings.Contains(s, `recordImageDisplayPassFromImg`) {
+		t.Errorf("ui should record actual pixels from DOM naturalWidth, not from status text: got %q", s)
 	}
 	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
 	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
@@ -1168,11 +1177,14 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(loadBody, `if (!r.ok) {`) || !strings.Contains(loadBody, `updatePrefetchCounts("error", entry, galleryId);`) {
 		t.Errorf("loadFullImage should still count true fetch failures as error, not no_full: got %q", loadBody)
 	}
-	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `tn display fallback disabled`) || strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
+	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
 		t.Errorf("loadFullImage should not store TN bytes as full display object URL: got %q", loadBody)
 	}
-	if !strings.Contains(loadBody, `if (cached && cached.objectUrl)`) || !strings.Contains(loadBody, `img.src = cached.objectUrl`) {
-		t.Errorf("loadFullImage should use existing full objectURL without an extra network fetch: got %q", loadBody)
+	if !strings.Contains(loadBody, `if (activeObjectUrlKeys.has(key))`) || !strings.Contains(loadBody, `img.src = fullCache.get(key).objectUrl`) {
+		t.Errorf("loadFullImage should use existing active full objectURL without an extra network fetch: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `if (entry.local_formats && entry.local_formats.length)`) || !strings.Contains(loadBody, `img.src = localDirectSrc(entry, galleryId)`) {
+		t.Errorf("loadFullImage should display already-downloaded local entries through direct /files src without blob fetch overhead: got %q", loadBody)
 	}
 	renderStart := strings.Index(s, "function renderReader() {")
 	if renderStart < 0 {
@@ -1182,8 +1194,11 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if strings.Contains(renderBody, `revokeFullObjectUrls();`) {
 		t.Errorf("renderReader should not revoke the full cache on every render: got %q", renderBody)
 	}
-	if !strings.Contains(renderBody, `cachedFullSrc(entry, current.id) || displayPlaceholder(entry)`) || !strings.Contains(renderBody, `displayPlaceholder(entry)`) {
-		t.Errorf("renderReader should prefer cached full entries and use display placeholders only for uncached entries: got %q", renderBody)
+	if !strings.Contains(renderBody, `displayViewerSource(entry, current.id)`) || !strings.Contains(renderBody, `data-viewer-display='1'`) || !strings.Contains(renderBody, `data-source-type='`) {
+		t.Errorf("renderReader should prefer active objectURL and direct local sources, mark viewer-display images, and not use TN fallback: got %q", renderBody)
+	}
+	if !strings.Contains(renderBody, `attachDisplayLoadHandlers(container);`) {
+		t.Errorf("renderReader should attach DOM load handlers for actual pixel display pass: got %q", renderBody)
 	}
 	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `function ensureBackgroundPrefetch(displayed) {`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal, priorityGalleryId, priorityShowGen, priorityOpenGen, priorityRenderGen)`) {
 		t.Errorf("ui should render placeholder items and load full images through current priority and background prefetch: got %q", s)
@@ -1250,6 +1265,66 @@ func TestEmbeddedUISearchTagsAreaIsClamped(t *testing.T) {
 	}
 	if !strings.Contains(body, "escapeHTML(tags)") {
 		t.Errorf("search card tags should be escaped before display: got %q", body)
+	}
+}
+
+func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	if !strings.Contains(s, `const displayPassByEntry = new Map();`) || !strings.Contains(s, `const sourceStatusByEntry = new Map();`) || !strings.Contains(s, `const sourceTypeByEntry = new Map();`) || !strings.Contains(s, `const activeObjectUrlKeys = new Set();`) {
+		t.Errorf("ui should separate displayPass, sourceStatus, sourceType, and active objectURL cache: got %q", s)
+	}
+
+	statusStart := strings.Index(s, "function renderPrefetchStatus() {")
+	if statusStart < 0 {
+		t.Fatalf("renderPrefetchStatus function not found")
+	}
+	statusBody := s[statusStart:strings.Index(s, "\nfunction stripItems() {")]
+	if !strings.Contains(statusBody, `actual pixels `) || !strings.Contains(statusBody, `local direct `) || !strings.Contains(statusBody, `objectURL cache `) || !strings.Contains(statusBody, `no full `) || !strings.Contains(statusBody, `TN display fallback disabled`) {
+		t.Errorf("renderPrefetchStatus should report actual pixels, local direct display, objectURL cache, no full, and TN display fallback disabled separately: got %q", statusBody)
+	}
+	if !strings.Contains(statusBody, `displayPassByEntry.get(key)`) || !strings.Contains(statusBody, `sourceTypeByEntry.get(key)`) || !strings.Contains(statusBody, `activeObjectUrlKeys.has(key)`) {
+		t.Errorf("renderPrefetchStatus should count display truth and active objectURL cache, not status text alone: got %q", statusBody)
+	}
+
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen !== openGeneration, loadRender !== renderGeneration) {")
+	if loadStart < 0 {
+		loadStart = strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
+	}
+	if loadStart < 0 {
+		t.Fatalf("loadFullImage function not found")
+	}
+	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	if strings.Index(loadBody, `if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;`) >= strings.Index(loadBody, `setSourceStatus(entry`) {
+		t.Errorf("loadFullImage should guard stale display/status writes before recording display pass or source status: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `recordImageDisplayPassFromImg`) || !strings.Contains(loadBody, `setSourceStatus`) {
+		t.Errorf("loadFullImage should record display pass separately from source status: got %q", loadBody)
+	}
+
+	renderStart := strings.Index(s, "function renderReader() {")
+	renderBody := s[renderStart:strings.Index(s, "\nasync function runPriority(displayed, signal) {")]
+	if !strings.Contains(renderBody, `attachDisplayLoadHandlers(container);`) || !strings.Contains(renderBody, `data-viewer-display='1'`) {
+		t.Errorf("renderReader should mark viewer display images and attach actual pixel load handlers: got %q", renderBody)
+	}
+
+	stripStart := strings.Index(s, "function renderStrip() {")
+	stripBody := s[stripStart:strings.Index(s, "\nfunction highlightStrip() {")]
+	if !strings.Contains(stripBody, `data-viewer-display='1'`) || !strings.Contains(stripBody, `attachDisplayLoadHandlers`) {
+		t.Errorf("renderStrip should mark viewer display images and attach actual pixel load handlers: got %q", stripBody)
+	}
+
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+	if strings.Contains(showBody, `await ensureBackgroundPrefetch`) {
+		t.Errorf("showPage should render and attach display handlers without blocking on background prefetch: got %q", showBody)
 	}
 }
 
