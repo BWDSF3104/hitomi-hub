@@ -205,6 +205,16 @@ checkpoint B commit: `12f71fc`（push 済み）。使い方メモの正典は `d
   - `GET /api/image/2d18a9a8…42b89` → 404。URL は live gg.js の bucket（`1793494802/`）と `m`（`w2`）で組まれていた → 実行時読取は動作しているが、その時点で data が窓に無い
   - `docs/ai/tmp/gg_probe2.py`（同一 hash の 4 組合せ）→ すべて 404。9:35 に 200 だった `w1`+`1793491201` は 10:05 に 404（bucket は 1 時間刻みで前進）
 
+## checkpoint 11（2026-11-01）: 画面での動作確認（viewer・playwright）
+
+exe は `output/hitomi-hub/hub.exe`（`--data-dir` = リポジトリルート、`--root` = `scratch/live`）。live gg.js を読んで起動（stderr に fallback 警告なし）。
+
+- UI 表示: 検索（`furry` → 32834 件・page 1）、保存検索 2 件、既読/お気に入り一覧、reader（title・tags・files・local/cdn マーカー、前/次/読み完了/お気に入り、page strip）
+- local-first: `/files/4252697/899dc188…webp` → `200`、reader の main image 表示（`naturalWidth > 0`）
+- 画面操作 → DB 反映: reader open で `POST /api/read`（`last_page=1`）、`お気に入り` クリックで `POST /api/fav` → `favorite=1`。CLI `list --list favorites` / `unread` で確認
+- 画像取得: 検索結果（現行窓）の TN は 200、古い gallery（4252697）の page 1 hash は 19/20 が upstream 404（proxy は 502）。TN が 200 の hash の shard も 404（`w2/1793494802/3190/<hash>.webp`）。同一 hash の `a`/`b` は同一 content、`c` は DNS 解決失敗
+- 記録: `docs/ai/known-issues/2026-11-01-viewer-cdn-time-window-404.md`（実装変更なし）。スクリーンショット `scratch/hitomi-usage/screen_4252697_page1.png`
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
