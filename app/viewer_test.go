@@ -1224,6 +1224,35 @@ func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUISearchTagsAreaIsClamped(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, "--search-card-height: 130px") {
+		t.Errorf("search card should define --search-card-height: got %q", s)
+	}
+	if !strings.Contains(s, "max-height: var(--search-card-height)") {
+		t.Errorf("search tags area should be limited to thumbnail height: got %q", s)
+	}
+	if !strings.Contains(s, "-webkit-line-clamp: 9") {
+		t.Errorf("search tags area should use line-clamp: got %q", s)
+	}
+
+	renderStart := strings.Index(s, "function renderSearchCard(r) {")
+	if renderStart < 0 {
+		t.Fatalf("renderSearchCard function not found")
+	}
+	body := s[renderStart:strings.Index(s, "async function loadSearchCardCover(")]
+	if !strings.Contains(body, "tagsTitle") || !strings.Contains(body, "<div class='tags meta'\" + tagsTitle") {
+		t.Errorf("search card tags area should expose full tags via title attribute: got %q", body)
+	}
+	if !strings.Contains(body, "escapeHTML(tags)") {
+		t.Errorf("search card tags should be escaped before display: got %q", body)
+	}
+}
+
 func TestViewerIndexServesEmbeddedPage(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	rec := httptest.NewRecorder()

@@ -20,11 +20,20 @@
   .meta { font-size: .9rem; color: #9aa0a6; }
   .note { font-size: .85rem; color: #f0a441; }
   .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
-  .card { display: flex; gap: .5rem; align-items: flex-start; }
+  .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; }
   .cover, .search-card-cover, .strip img { object-fit: cover; background: #1d2126; }
   .cover, .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
   .tags, .strip { margin-top: .35rem; }
+  .tags {
+    font-size: .9rem;
+    line-height: 1.25;
+    max-height: var(--search-card-height);
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 9;
+  }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
   .strip img { width: 90px; height: 90px; }
   .strip .strip-loading {
@@ -820,8 +829,10 @@ function renderSearchCard(r) {
   searchCardCache.set(r.id, r);
   const key = r.files && r.files[0] ? fullCacheKey(r.files[0], r.id) : "";
   const thumbnail = r.thumbnail || "";
+  const tags = (r.tags || []).join(", ");
+  const tagsTitle = tags ? " title='" + escapeHTML(tags) + "'" : "";
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-key='" + key + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
-  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
+  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div></div></li>";
 }
 
 async function loadSearchCardCover(r, searchGen = searchGeneration) {
