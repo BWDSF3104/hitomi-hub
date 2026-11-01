@@ -10,3 +10,5 @@
 
 - #12 Viewer thumbnail strip currently renders only the current 50-item group, not all entries; `stripGroupPage()` selects group by current page.
 
+- #13 Tags display area clamp: search result tags display area should be limited to thumbnail height. Planned implementation: `--search-card-height: 130px`, `.tags` `max-height: var(--search-card-height)`, `-webkit-line-clamp`, `title` full tags. Do not treat status text as actual display pass.
+
