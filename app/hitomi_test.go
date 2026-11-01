@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -303,6 +304,37 @@ func TestImageGateUsesLowerImageIntervalSeparately(t *testing.T) {
 	}
 	if defaultHitomiConfig().ImageMinIntervalMS != 250 {
 		t.Errorf("image gate default: got %d", defaultHitomiConfig().ImageMinIntervalMS)
+	}
+}
+
+func TestDownloadFilesParallelWritesResultsInOriginalOrder(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1000
+	c.cfg.ImageMinIntervalMS = 1
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte("x"), nil
+	}
+
+	target := t.TempDir()
+	entries := []FileEntry{{Hash: "a"}, {Hash: "b"}, {Hash: "c"}}
+	results := downloadFilesParallel(c, target, entries, "webp", 4)
+	if len(results) != 3 {
+		t.Fatalf("results: got %d", len(results))
+	}
+	for i, result := range results {
+		if result.err != "" {
+			t.Fatalf("result %d error: %s", i, result.err)
+		}
+		if result.page != i+1 {
+			t.Errorf("result %d page: got %d", i, result.page)
+		}
+		if filepath.Base(result.path) != entries[i].Hash+".webp" {
+			t.Errorf("result %d path: got %q", i, result.path)
+		}
+		data, err := os.ReadFile(result.path)
+		if err != nil || string(data) != "x" {
+			t.Errorf("result %d file: err %v data %q", i, err, string(data))
+		}
 	}
 }
 

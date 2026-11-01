@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -251,6 +252,66 @@ func verifyMissing(db *sql.DB, root string) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+type downloadEntryResult struct {
+	page  int
+	path  string
+	hash  string
+	err   string
+}
+
+func downloadFilesParallel(client *Client, target string, entries []FileEntry, format string, maxConcurrent int) []downloadEntryResult {
+	if len(entries) == 0 {
+		return []downloadEntryResult{}
+	}
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+
+	results := make([]downloadEntryResult, len(entries))
+	pending := make([]int, len(entries))
+	for i := range entries {
+		pending[i] = i
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	worker := func() {
+		defer wg.Done()
+		for {
+			mu.Lock()
+			if len(pending) == 0 {
+				mu.Unlock()
+				return
+			}
+			idx := pending[0]
+			pending = pending[1:]
+			mu.Unlock()
+
+			entry := entries[idx]
+			path := filepath.Join(target, entry.Hash+"."+format)
+			body, err := client.getImage(context.Background(), StorageURL(entry.Hash, format, client.GG()), [2]int64{-1, -1})
+			if err != nil {
+				results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: err.Error()}
+				continue
+			}
+			if err := os.WriteFile(path, body, 0o644); err != nil {
+				results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: err.Error()}
+				continue
+			}
+			results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: ""}
+		}
+	}
+
+	for i := 0; i < maxConcurrent; i++ {
+		wg.Add(1)
+		go worker()
+	}
+	wg.Wait()
+
+	return results
 }
 
 func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int) string {
@@ -494,30 +555,25 @@ func main() {
 		}
 		state := &RateState{}
 		format := orDefault(cfg.Hitomi.ImageFormat, "webp")
-		attempted := 0
+		limit := len(info.Files)
+		if f.limit > 0 && f.limit < limit {
+			limit = f.limit
+		}
+
+		results := downloadFilesParallel(client, target, info.Files[:limit], format, 4)
 		written := 0
-		for i, entry := range info.Files {
-			if f.limit > 0 && attempted >= f.limit {
-				break
-			}
-			attempted++
-			path := filepath.Join(target, entry.Hash+"."+format)
-			body, err := client.get(context.Background(), StorageURL(entry.Hash, format, client.GG()), [2]int64{-1, -1})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "download: %s\n", err.Error())
-				continue
-			}
-			if err := os.WriteFile(path, body, 0o644); err != nil {
-				fmt.Fprintf(os.Stderr, "write: %s\n", err.Error())
+		for _, result := range results {
+			if result.err != "" {
+				fmt.Fprintf(os.Stderr, "download: %s\n", result.err)
 				continue
 			}
 			written++
-			if err := recordPage(db, info.ID, i+1, entry.Hash); err != nil {
+			if err := recordPage(db, info.ID, result.page, result.hash); err != nil {
 				fmt.Fprintf(os.Stderr, "pageorder: %s\n", err.Error())
 			}
-			processFile(db, cfg, state, root, path, summary)
+			processFile(db, cfg, state, root, result.path, summary)
 		}
-		printJSON(map[string]any{"gallery_id": info.ID, "attempted": attempted, "written": written, "summary": summary})
+		printJSON(map[string]any{"gallery_id": info.ID, "attempted": len(results), "written": written, "summary": summary})
 	case "export":
 		id, err := targetID(f)
 		if err != nil {

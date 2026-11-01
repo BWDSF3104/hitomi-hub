@@ -216,6 +216,7 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 ### download について
 
+- `download` は fetch/write 部分を `downloadFilesParallel()` の worker pool（既定 `4`）で実行し、`recordPage()` と `processFile()` は results の original page order で sequential に呼ぶ。
 - 保存先: `Galleries/<gallery_id>/<hash>.<format>`（完成フォルダ内のみ）
 - shard にあるのは webp / avif ののみ。`files[].name` の ext（例 `001.jpg`）は元の形式なので URL に使わない。実測: 同じ hash の `.jpg` → 404、`.webp` → 200
 - hitomi の `files[].hash` は URL 構築用の内部ハッシュ。DB の `sha256` はローカル計算の SHA256（VT cache はこちらを使う）
