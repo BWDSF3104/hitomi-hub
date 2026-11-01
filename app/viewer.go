@@ -431,20 +431,6 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tnFormat := TNFormat(format)
-	tnFormats := []string{tnFormat}
-	if tnFormat != "webp" {
-		tnFormats = append(tnFormats, "webp")
-	}
-	for _, tnFormat := range tnFormats {
-		for _, variant := range []string{"bigtn", "smallbigtn", "smalltn", "smallsmalltn"} {
-			body, err = v.client.getImage(r.Context(), ThumbnailURLVariant(hash, tnFormat, variant, gg), [2]int64{-1, -1})
-			if err == nil {
-				writeImage(w, tnFormat, body, "tn")
-				return
-			}
-		}
-	}
 	http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
 }
 

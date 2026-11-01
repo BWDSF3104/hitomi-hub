@@ -179,7 +179,7 @@ func TestViewerImageProxyServesSameOriginWebp(t *testing.T) {
 	}
 }
 
-func TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing(t *testing.T) {
+func TestViewerImageProxyDoesNotFallBackToTNWhenStorageMissing(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -191,72 +191,51 @@ func TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn" {
-		t.Fatalf("image TN fallback: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), "tn") {
+		t.Fatalf("image proxy should not TN fallback: code %d body %q", rec.Code, rec.Body.String())
 	}
-	if len(urls) != 2 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "tn.") {
-		t.Fatalf("image fallback fetch order: got %v", urls)
-	}
-	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
-		t.Fatalf("image TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
-	}
-	if rec.Header().Get("cache-control") != "no-store" {
-		t.Fatalf("image TN fallback cache-control: got %q", rec.Header().Get("cache-control"))
+	if len(urls) != 1 || strings.Contains(urls[0], "tn.") {
+		t.Fatalf("image proxy should only try storage URL: got %v", urls)
 	}
 }
 
-func TestViewerImageProxyFallsBackToSmalltnVariantWhenBigtnTNMissing(t *testing.T) {
+func TestViewerImageProxyDoesNotFetchTNVariantForImage(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
 		if strings.Contains(rawurl, "tn.") {
-			if strings.Contains(rawurl, "/webpsmalltn/") {
-				return []byte("tn-small"), nil
-			}
-			return nil, errors.New("tn missing")
+			return []byte("tn-small"), nil
 		}
 		return nil, errors.New("storage missing")
 	}
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn-small" {
-		t.Fatalf("image TN variant fallback: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("image proxy code: got %d body %q", rec.Code, rec.Body.String())
 	}
-	if len(urls) != 4 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "/webpbigtn/") || !strings.Contains(urls[2], "/webpsmallbigtn/") || !strings.Contains(urls[3], "/webpsmalltn/") {
-		t.Fatalf("image TN variant order: got %v", urls)
-	}
-	if rec.Header().Get("cache-control") != "no-store" {
-		t.Fatalf("image TN variant cache-control: got %q", rec.Header().Get("cache-control"))
+	if len(urls) != 1 || strings.Contains(urls[0], "tn.") {
+		t.Fatalf("image proxy should not fetch TN variants: got %v", urls)
 	}
 }
 
-func TestViewerImageProxyFallsBackToAvifSmalltnVariantForHasavif(t *testing.T) {
+func TestViewerImageProxyDoesNotFetchAvifTNVariantForImage(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
 		if strings.Contains(rawurl, "tn.") {
-			if strings.Contains(rawurl, "/avifsmalltn/") {
-				return []byte("tn-small"), nil
-			}
-			return nil, errors.New("tn missing")
+			return []byte("tn-small"), nil
 		}
 		return nil, errors.New("storage missing")
 	}
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=avif", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn-small" {
-		t.Fatalf("image avif TN variant fallback: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("image avif proxy code: got %d body %q", rec.Code, rec.Body.String())
 	}
-	if len(urls) != 4 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "/avifbigtn/") || !strings.Contains(urls[2], "/avifsmallbigtn/") || !strings.Contains(urls[3], "/avifsmalltn/") {
-		t.Fatalf("image avif TN variant order: got %v", urls)
-	}
-	if rec.Header().Get("content-type") != "image/avif" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
-		t.Fatalf("image avif TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
-	}
-	if rec.Header().Get("cache-control") != "no-store" {
-		t.Fatalf("image avif TN fallback cache-control: got %q", rec.Header().Get("cache-control"))
+	if len(urls) != 1 || strings.Contains(urls[0], "tn.") {
+		t.Fatalf("image avif proxy should not fetch TN variants: got %v", urls)
 	}
 }
 
@@ -311,9 +290,11 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	}
 }
 
-func TestViewerImageProxyDoesNotPersistTNFallback(t *testing.T) {
+func TestViewerImageProxyDoesNotFetchTNAndDoesNotPersistTN(t *testing.T) {
 	v, _ := newTestViewer(t, "")
+	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
 		if strings.Contains(rawurl, "tn.") {
 			return []byte("tn"), nil
 		}
@@ -322,12 +303,15 @@ func TestViewerImageProxyDoesNotPersistTNFallback(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn" {
-		t.Fatalf("TN fallback: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("image proxy should fail without TN fallback: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if len(urls) != 1 || strings.Contains(urls[0], "tn.") {
+		t.Errorf("image proxy should not fetch TN: got %v", urls)
 	}
 	cacheFile := filepath.Join(v.cacheRoot, sampleHash+".webp")
 	if _, err := os.Stat(cacheFile); err == nil {
-		t.Errorf("TN fallback should not persist as full-image cache: %s", cacheFile)
+		t.Errorf("image proxy should not persist TN as full-image cache: %s", cacheFile)
 	}
 }
 
@@ -960,6 +944,14 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	}
 	if !strings.Contains(s, `const fullCache = new Map();`) || !strings.Contains(s, `const prefetchedEntries = new Map();`) || !strings.Contains(s, `function cachedFullSrc(entry, galleryId = current.id) {`) || !strings.Contains(s, `function storeFullCache(entry, status, objectUrl, galleryId = current.id) {`) {
 		t.Errorf("ui should store full-image cache entries instead of revoking every display cache on re-render: got %q", s)
+	}
+	if !strings.Contains(s, `status !== "error" && status !== "tn" && status !== "tn-cache"`) {
+		t.Errorf("reader display should not use TN or TN-cache fallback: got %q", s)
+	}
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal) {")
+	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
+		t.Errorf("loadFullImage should not store TN bytes as full display object URL: got %q", loadBody)
 	}
 	renderStart := strings.Index(s, "function renderReader() {")
 	if renderStart < 0 {

@@ -15,6 +15,7 @@
 - CP1: `openGallery()` の uncached pathで `renderStripLoading(id)` を immediate表示。
 - CP2: `startFullPrefetch()` の background worker を current displayed priority promise まで wait。reader placeholder は TN fetchせず empty placeholder。`storeFullCache()` が strip placeholder を objectURL で update。
 - CP3: search card は metadata-first placeholder、cover TN は `currentPriorityDone` の後、full cache objectURLがあればそちら優先。`thumbProxy()` は full cache hitをTN remoteより前へ。
+- CP4: viewer display は TN fallback を表示しない。`/api/image` は local / full cache / remote full だけへ変更。UI の `cachedFullSrc()` は `tn` と `tn-cache` を display source にしない。
 
 ## Verification
 
@@ -50,6 +51,16 @@
 - Fixed issue: `loadSearchCardCover()` had invalid `"]` selector due backslash and matched `<li>` not cover `<img>`; changed to `img[data-search-id="..."]`.
 - Fixed issue: `revokeFullObjectUrls()` assigned `[]` to `fullObjectUrls` instead of clearing the `Set`.
 - Screenshot: `scratch\hitomi-usage\cp3_metadata_first_priority_pending.png`
+
+### CP4 viewer display no TN fallback
+- `go vet ./...` pass.
+- `go test .` pass `21.790s` with image proxy no-TN assertions and UI `cachedFullSrc()` / `loadFullImage()` TN exclusion assertions.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+- Active process restarted with rebuilt `hub.exe`.
+- Screen verify `http://127.0.0.1:8731/?x=tnendpoint&v=cp4noTnDisplay`:
+  - `prefetchedEntries` status `tn` makes `cachedFullSrc()` return empty placeholder.
+  - `loadFullImage()` with mock `x-cache: tn` stores `tn` status but `objectUrl` is null, reader img `src` remains empty, note shows `tn display fallback disabled: 1`.
+- Screenshot: `scratch\hitomi-usage\cp4_no_tn_display_fallback.png`
 
 ## 完了時 Memory Bank 操作
 

@@ -245,7 +245,7 @@ function cachedFullSrc(entry, galleryId = current.id) {
   const cached = fullCache.get(key);
   if (cached && cached.objectUrl) return cached.objectUrl;
   const status = prefetchedEntries.get(key);
-  if (status && status !== "error") return entrySource(entry, galleryId);
+  if (status && status !== "error" && status !== "tn" && status !== "tn-cache") return entrySource(entry, galleryId);
   return "";
 }
 function getGalleryCounts(galleryId) {
@@ -472,6 +472,14 @@ async function loadFullImage(img, entry, signal) {
       return;
     }
     const cache = r.headers.get("x-cache") || "miss";
+    if (cache === "tn") {
+      storeFullCache(entry, "tn", null, galleryId);
+      updatePrefetchCounts("tn", entry, galleryId);
+      if (targetRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+        document.getElementById("note").textContent = "tn display fallback disabled: " + targetPage;
+      }
+      return;
+    }
     const blob = await r.blob();
     const objectUrl = URL.createObjectURL(blob);
     storeFullCache(entry, cache, objectUrl, galleryId);

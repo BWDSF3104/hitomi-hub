@@ -10,3 +10,5 @@ Date: 2026-11-01
 - `loadSearchCardCover()` must target the cover `<img>` via `img[data-search-id="<id>"]`, not the card `<li>` selector used for lazy card replacement.
 - `revokeFullObjectUrls()` must clear the objectURL `Set`, not replace it with an array.
 - `thumbProxy()` checks existing full cache before remote TN so already fetched full images can serve thumbnail placeholders without extra network calls.
+- Viewer display must not use TN fallback. `imageProxy()` uses local file, persistent full cache, or remote full storage only; it does not fetch TN variants.
+- UI `cachedFullSrc()` must exclude `tn` and `tn-cache` from reader display. `loadFullImage()` must not create a full object URL when `x-cache` is `tn`.
