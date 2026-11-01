@@ -314,7 +314,8 @@ async function loadFullImage(img, entry, signal) {
     if (signal.aborted) return;
     const cache = r.headers.get("x-cache") || "miss";
     updatePrefetchCounts(cache);
-    if (cache !== "tn" && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+    if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+      img.dataset.fullCache = cache;
       img.src = fullSrc;
     }
   } catch (err) {
@@ -352,11 +353,17 @@ function startFullPrefetch() {
   const items = stripItems().filter((item) => item.entry);
   const currentIdx = items.findIndex((item) => item.page === current.page);
   const order = [];
-  for (let i = currentIdx >= 0 ? currentIdx : 0; i < items.length; i++) {
-    if (!displayedPages.has(items[i].page)) order.push(items[i]);
-  }
-  for (let i = 0; i < currentIdx; i++) {
-    if (!displayedPages.has(items[i].page)) order.push(items[i]);
+  if (currentIdx >= 0) {
+    for (let distance = 0; distance <= Math.max(items.length - currentIdx, currentIdx); distance++) {
+      const right = currentIdx + distance;
+      const left = currentIdx - distance;
+      if (right < items.length && !displayedPages.has(items[right].page)) order.push(items[right]);
+      if (distance > 0 && left >= 0 && !displayedPages.has(items[left].page)) order.push(items[left]);
+    }
+  } else {
+    for (let i = 0; i < items.length; i++) {
+      if (!displayedPages.has(items[i].page)) order.push(items[i]);
+    }
   }
   prefetchTotal = displayed.length + order.length;
   fullDone = 0;
