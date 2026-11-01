@@ -39,6 +39,7 @@ type Client struct {
 	fetch     func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
 	versions  map[string]string
 	gg        GG
+	metrics   map[string]*FetchMetric
 }
 
 func defaultHitomiConfig() HitomiConfig {
@@ -78,19 +79,35 @@ func (c *Client) getImage(ctx context.Context, rawurl string, rng [2]int64) ([]b
 
 func (c *Client) getWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, last *time.Time) ([]byte, error) {
 	if c.fetch != nil {
+		kind := classifyFetchURL(rawurl)
+		gateStart := time.Now()
 		c.gateForInterval(intervalMS, last)
-		return c.fetch(ctx, rawurl, rng)
+		gateWait := time.Since(gateStart)
+		networkStart := time.Now()
+		body, err := c.fetch(ctx, rawurl, rng)
+		c.recordMetric(kind, gateWait, time.Since(networkStart), 0, 0)
+		return body, err
 	}
 	return c.fetchRemoteWithGate(ctx, rawurl, rng, intervalMS, last)
 }
 
 func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, last *time.Time) ([]byte, error) {
+	kind := classifyFetchURL(rawurl)
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
+		gateStart := time.Now()
 		c.gateForInterval(intervalMS, last)
+		gateWait := time.Since(gateStart)
+
 		req, err := http.NewRequestWithContext(ctx, "GET", rawurl, nil)
 		if err != nil {
-			return nil, err
+			lastErr = err
+			retrySleep := time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
+			c.recordMetric(kind, gateWait, 0, 0, retrySleep)
+			if attempt < c.cfg.MaxRetries {
+				time.Sleep(retrySleep)
+			}
+			continue
 		}
 		req.Header.Set("user-agent", c.cfg.UserAgent)
 		req.Header.Set("referer", "https://hitomi.la/")
@@ -98,29 +115,52 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 		if rng[0] >= 0 {
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rng[0], rng[1]))
 		}
+
+		networkStart := time.Now()
 		resp, err := c.http.Do(req)
+		networkMS := int64(time.Since(networkStart) / time.Millisecond)
 		if err != nil {
 			lastErr = err
-		} else {
-			body, readErr := readAll(resp)
-			resp.Body.Close()
-			if readErr != nil {
-				lastErr = readErr
-			} else if resp.StatusCode == 200 || resp.StatusCode == 206 {
-				return body, nil
+			retrySleep := time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
+			c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, 0, retrySleep)
+			if attempt < c.cfg.MaxRetries {
+				time.Sleep(retrySleep)
 			}
-			lastErr = fmt.Errorf("status %d for %s", resp.StatusCode, rawurl)
-			if resp.StatusCode == 429 {
-				time.Sleep(time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond)
-				continue
-			}
-			if resp.StatusCode >= 500 {
-				time.Sleep(time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond)
-				continue
-			}
-			return nil, lastErr
+			continue
 		}
-		time.Sleep(time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond)
+
+		decodeStart := time.Now()
+		body, readErr := readAll(resp)
+		decodeMS := int64(time.Since(decodeStart) / time.Millisecond)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			retrySleep := time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
+			c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, time.Duration(decodeMS)*time.Millisecond, retrySleep)
+			if attempt < c.cfg.MaxRetries {
+				time.Sleep(retrySleep)
+			}
+			continue
+		}
+
+		if resp.StatusCode == 200 || resp.StatusCode == 206 {
+			c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, time.Duration(decodeMS)*time.Millisecond, 0)
+			return body, nil
+		}
+
+		lastErr = fmt.Errorf("status %d for %s", resp.StatusCode, rawurl)
+		retrySleep := time.Duration(0)
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			retrySleep = time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
+		}
+		c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, time.Duration(decodeMS)*time.Millisecond, retrySleep)
+		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+			if attempt < c.cfg.MaxRetries {
+				time.Sleep(retrySleep)
+			}
+			continue
+		}
+		return nil, lastErr
 	}
 	return nil, lastErr
 }

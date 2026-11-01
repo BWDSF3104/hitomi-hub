@@ -607,6 +607,57 @@ func TestViewerSearchHandlerReturnsIdsOnlyForLazyCards(t *testing.T) {
 	}
 }
 
+func TestSearchHandlerIncludesMeasurementShape(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	key := hashTerm("furry")
+	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 10}}, make([]uint64, btreeOrder+1))
+	data := append([]byte{0, 0, 0, 3}, beIDs([]uint32{10, 20, 30})...)
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		case rng[0] == 1000:
+			return data, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=2", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	timing, ok := out["timing"].(map[string]any)
+	if !ok {
+		t.Fatalf("timing field missing: got %v", out)
+	}
+	for _, key := range []string{"search_ms", "record_ms", "json_ms"} {
+		if _, ok := timing[key]; !ok {
+			t.Errorf("timing field %q missing: got %v", key, timing)
+		}
+	}
+	header := rec.Header().Get("x-search-timing")
+	if !strings.Contains(header, "search=") || !strings.Contains(header, "record=") || !strings.Contains(header, "json=") {
+		t.Errorf("timing header missing phase fields: got %q", header)
+	}
+	metrics, ok := out["metrics"].(map[string]any)
+	if !ok || len(metrics) == 0 {
+		t.Fatalf("metrics field missing: got %v", out)
+	}
+	versionMetric, ok := metrics["version"].(map[string]any)
+	if !ok || versionMetric["calls"].(float64) < 1 {
+		t.Errorf("version metric not recorded: got %v", metrics)
+	}
+	indexMetric, ok := metrics["index"].(map[string]any)
+	if !ok || indexMetric["calls"].(float64) < 1 {
+		t.Errorf("index metric not recorded: got %v", metrics)
+	}
+}
+
 func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
 	v, _ := newTestViewer(t, galleryJSON)
@@ -621,6 +672,15 @@ func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat + "&gallery=1&variant=bigtn"
 	if out["id"] != float64(1) || out["title"] != "Kemo" || out["thumbnail"] != wantThumb {
 		t.Errorf("search card: got %v", out)
+	}
+	if rec.Header().Get("x-cache") != "miss" {
+		t.Errorf("search card first x-cache: got %q", rec.Header().Get("x-cache"))
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	if rec.Header().Get("x-cache") != "cache" {
+		t.Errorf("search card second x-cache should show cache hit: got %q", rec.Header().Get("x-cache"))
 	}
 }
 
@@ -1509,6 +1569,41 @@ func TestEmbeddedUIHasSearchPrevNextButtons(t *testing.T) {
 	restoreBody := s[restoreStart:strings.Index(s, "\nasync function loadSearchCards(ids, searchGen = searchGeneration) {")]
 	if !strings.Contains(restoreBody, `currentSearchTotal = Number(state.total || 0);`) || !strings.Contains(restoreBody, `renderSearchPageStatus();`) {
 		t.Errorf("restoreSearchState should render search page status from saved total: got %q", restoreBody)
+	}
+}
+
+func TestEmbeddedUIHasSearchMeasurementStatus(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="perf-status"`) || !strings.Contains(s, `function renderPerfStatus() {`) || !strings.Contains(s, `function recordPerfCache(value) {`) {
+		t.Errorf("ui should expose search measurement status: got %q", s)
+	}
+	if !strings.Contains(s, `performance.now()`) || !strings.Contains(s, `data._x_cache = r.headers.get("x-cache")`) || !strings.Contains(s, `data._x_search_timing = r.headers.get("x-search-timing")`) {
+		t.Errorf("ui should measure search timing with performance.now and expose cache/timing response headers: got %q", s)
+	}
+
+	runStart := strings.Index(s, "async function runSearch() {")
+	if runStart < 0 {
+		t.Fatalf("runSearch function not found")
+	}
+	runBody := s[runStart:strings.Index(s, "document.getElementById(\"search\")")]
+	if !strings.Contains(runBody, `const searchStart = performance.now();`) || !strings.Contains(runBody, `perfStatus.searchMs = performance.now() - searchStart;`) || !strings.Contains(runBody, `recordPerfCache(data._x_cache);`) || !strings.Contains(runBody, `renderPerfStatus();`) {
+		t.Errorf("runSearch should measure /api/search timing without changing search-status semantics: got %q", runBody)
+	}
+
+	loadStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
+	if loadStart < 0 {
+		t.Fatalf("loadSearchCards function not found")
+	}
+	loadBody := s[loadStart:strings.Index(s, "\nasync function runSearch() {")]
+	if !strings.Contains(loadBody, `const cardStart = performance.now();`) || !strings.Contains(loadBody, `perfStatus.cardTotalMs += performance.now() - cardStart;`) || !strings.Contains(loadBody, `recordPerfCache(card._x_cache);`) || !strings.Contains(loadBody, `renderPerfStatus();`) {
+		t.Errorf("loadSearchCards should measure each /api/search-card timing without changing search-status semantics: got %q", loadBody)
+	}
+	if !strings.Contains(s, `Object.keys(perfStatus.cacheDistribution)`) || !strings.Contains(s, `perfStatus.cardsLoaded`) || !strings.Contains(s, `perfStatus.serverTiming`) {
+		t.Errorf("perf status should show cache distribution, card count, and server timing: got %q", s)
 	}
 }
 

@@ -189,6 +189,47 @@ Verification:
   - Screenshot: `scratch/hitomi-usage/p3-14-fullscreen-state.png`
   - Full image display on this entry remained `no_full`; actual display pass was not available. This is not treated as a regression fix unless an obvious full-image display failure is confirmed.
 
+## Checkpoint #10 search measurement
+
+Implemented in `app/metrics.go`, `app/hitomi.go`, `app/viewer.go`, `app/ui.html`:
+
+- Added `FetchMetric` records per URL kind: `calls`, `gate_wait_ms`, `network_ms`, `decode_ms`, `retry_sleep_ms`.
+- `Client.getWithGate` records mock fetch calls, and `fetchRemoteWithGate` records gate wait, network, decode, and retry sleep separately.
+- `classifyFetchURL` classifies version, index, nozomi, gg, image, gallery, and data URLs.
+- `Viewer.search` adds `x-search-timing` header and JSON `timing` fields:
+  - `search_ms`
+  - `record_ms`
+  - `json_ms`
+  - `metrics`
+- `Viewer.searchCard` sets `x-cache` as `miss` or `cache` based on `infoCache`.
+- UI keeps `search-status` semantics unchanged and adds `#perf-status`.
+- UI measures `/api/search` and each `/api/search-card/{id}` using `performance.now()`.
+- UI displays cache distribution from `x-cache` response headers.
+
+Tests in `app/viewer_test.go` and `app/hitomi_test.go`:
+
+- `TestSearchHandlerIncludesMeasurementShape`
+- `TestClientRecordsFetchMetricsForMockFetch`
+- `TestEmbeddedUIHasSearchMeasurementStatus`
+- Existing `TestViewerSearchCardHandlerReturnsResult` asserts search card `x-cache` cache hit.
+
+Verification:
+
+- `go test -count=1 .`: pass, `23.589s`
+- `go vet .`: pass
+- Canonical exe rebuilt after test pass.
+- Screen cache-less measurement:
+  - URL: `http://127.0.0.1:8736/?x=measurement-cacheless#/q/furry/page/1`
+  - First run:
+    - `perf: /api/search 12008ms・server search=9444;record=2559;json=0・cards 25 24061ms・cache cache=1 miss=24`
+  - Second same query on the same server:
+    - `perf: /api/search 9656ms・server search=7227;record=2425;json=0・cards 50 26659ms・cache cache=26 miss=24`
+    - The second run confirmed `x-cache` cache distribution increased for cache hits.
+- Warm root comparison for the same query:
+  - `http://127.0.0.1:8731/?x=measurement-warm#/q/furry/page/1`
+  - First warm run showed `/api/search 11833ms`, server `search=9478;record=2350`, cards `26496ms` before search-card `x-cache` response headers were added.
+- Screenshot: `scratch/hitomi-usage/p3-10-search-measurement.png`
+
 ## Verification
 
 No separate verification beyond checkpoint sections yet.

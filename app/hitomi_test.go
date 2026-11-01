@@ -406,3 +406,24 @@ func TestReadStateFavoriteAndQuery(t *testing.T) {
 		t.Error("last_run_at not set")
 	}
 }
+
+func TestClientRecordsFetchMetricsForMockFetch(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if classifyFetchURL(rawurl) != "version" {
+			t.Errorf("classifyFetchURL version: got %s", classifyFetchURL(rawurl))
+		}
+		return []byte("x"), nil
+	}}
+	_, err := c.get(context.Background(), "https://gold-usergeneratedcontent.net/common/version", [2]int64{-1, -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := c.metricsSnapshot()
+	metric, ok := metrics["version"].(map[string]int64)
+	if !ok {
+		t.Fatalf("metrics version missing: got %v", metrics)
+	}
+	if metric["calls"] != 1 {
+		t.Errorf("metrics version calls: got %v", metric)
+	}
+}

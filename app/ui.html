@@ -104,6 +104,7 @@
         <button id="search-submit">検索</button>
       </form>
       <div id="search-page-status" class="meta"></div>
+      <div id="perf-status" class="meta"></div>
       <div id="search-status" class="status"></div>
       <div id="count" class="meta"></div>
       <ul id="results"></ul>
@@ -168,6 +169,8 @@
 <script>
 const api = (p) => fetch(p).then(async (r) => {
   const data = await r.json().catch(() => ({}));
+  data._x_cache = r.headers.get("x-cache") || null;
+  data._x_search_timing = r.headers.get("x-search-timing") || null;
   if (!r.ok) throw new Error(data.error || (r.status + " " + p));
   return data;
 });
@@ -209,6 +212,7 @@ const galleryCache = new Map();
 const searchCardCache = new Map();
 const galleryFormats = new Map();
 let currentSearchTotal = 0;
+let perfStatus = { searchMs: 0, serverTiming: "", cardsLoaded: 0, cardTotalMs: 0, cacheDistribution: {} };
 let spreadDirection = "rtl";
 const SPREAD_DIRECTION_STORAGE_KEY = "hitomi_hub_spread_direction";
 let searchGeneration = 0;
@@ -1190,6 +1194,22 @@ function restoreSearchState() {
 function searchTotalPages(total) {
   return Math.max(1, Math.ceil(Number(total || 0) / 25));
 }
+
+function recordPerfCache(value) {
+  if (!value) return;
+  perfStatus.cacheDistribution[value] = (perfStatus.cacheDistribution[value] || 0) + 1;
+}
+
+function renderPerfStatus() {
+  const el = document.getElementById("perf-status");
+  if (!el) return;
+  if (!perfStatus.searchMs && !perfStatus.cardsLoaded) {
+    el.textContent = "";
+    return;
+  }
+  const cacheText = Object.keys(perfStatus.cacheDistribution).length ? "・cache " + Object.keys(perfStatus.cacheDistribution).map((k) => k + "=" + perfStatus.cacheDistribution[k]).join(" ") : "";
+  el.textContent = "perf: /api/search " + Math.round(perfStatus.searchMs) + "ms" + (perfStatus.serverTiming ? "・server " + perfStatus.serverTiming : "") + "・cards " + perfStatus.cardsLoaded + " " + Math.round(perfStatus.cardTotalMs) + "ms" + cacheText;
+}
 function renderSearchPageStatus() {
   const status = document.getElementById("search-page-status");
   if (!status) return;
@@ -1218,15 +1238,23 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
     if (searchGen !== searchGeneration) return;
     status.textContent = "カード読み込み " + (i + 1) + "/" + ids.length + ": " + ids[i];
     const li = results.querySelector("[data-search-id='" + ids[i] + "']");
+    const cardStart = performance.now();
     try {
       const card = await api("/api/search-card/" + ids[i]);
       if (searchGen !== searchGeneration) return;
+      perfStatus.cardsLoaded++;
+      perfStatus.cardTotalMs += performance.now() - cardStart;
+      recordPerfCache(card._x_cache);
+      renderPerfStatus();
       if (li) {
         li.outerHTML = renderSearchCard(card);
         await loadSearchCardCover(card, searchGen);
       }
     } catch (err) {
       if (searchGen !== searchGeneration) return;
+      perfStatus.cardsLoaded++;
+      perfStatus.cardTotalMs += performance.now() - cardStart;
+      renderPerfStatus();
       if (li) li.innerHTML = "<span class='meta'>" + escapeHTML(err.message) + "</span>";
     }
   }
@@ -1246,9 +1274,14 @@ async function runSearch() {
   submit.disabled = true;
   submit.textContent = "実行中…";
   results.innerHTML = "<li class='meta'>検索実行中…</li>";
+  const searchStart = performance.now();
   try {
     const data = await api("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
     if (searchGen !== searchGeneration) return;
+    perfStatus.searchMs = performance.now() - searchStart;
+    perfStatus.serverTiming = data._x_search_timing || "";
+    recordPerfCache(data._x_cache);
+    renderPerfStatus();
     const ids = data.ids || (data.results || []).map((r) => r.id);
     currentSearchTotal = Number(data.total || 0);
     renderSearchPageStatus();

@@ -246,16 +246,30 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "limit must be 0 or positive", http.StatusBadRequest)
 		return
 	}
+	searchStart := time.Now()
 	ids, total, err := v.client.SearchHTML(q, orDefault(r.URL.Query().Get("lang"), "all"), page, limit)
 	if err != nil {
 		http.Error(w, "search: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	searchMS := int64(time.Since(searchStart) / time.Millisecond)
+	recordStart := time.Now()
 	for _, id := range ids {
 		_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
 	}
+	recordMS := int64(time.Since(recordStart) / time.Millisecond)
+	jsonStart := time.Now()
+	jsonMS := int64(time.Since(jsonStart) / time.Millisecond)
+	w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
 	jsonOut(w, map[string]any{"query": q, "lang": r.URL.Query().Get("lang"), "page": page,
-		"total": total, "ids": ids, "results": []map[string]any{}})
+		"total": total, "ids": ids, "results": []map[string]any{},
+		"timing": map[string]any{
+			"search_ms":  searchMS,
+			"record_ms":  recordMS,
+			"json_ms":    jsonMS,
+			"metrics":    v.client.metricsSnapshot(),
+		},
+		"metrics": v.client.metricsSnapshot()})
 }
 
 func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +278,11 @@ func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
 		return
 	}
+	cacheState := "miss"
+	if _, ok := v.infoCache[id]; ok {
+		cacheState = "cache"
+	}
+	w.Header().Set("x-cache", cacheState)
 	_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
 	jsonOut(w, v.searchResult(id))
 }
