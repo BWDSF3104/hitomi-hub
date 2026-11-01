@@ -708,6 +708,9 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status, entry, galleryId = current.id) {`) || !strings.Contains(s, `tnDone`) {
 		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
 	}
+	if !strings.Contains(s, `"full display cache "`) || !strings.Contains(s, `TN display fallback disabled`) {
+		t.Errorf("prefetch status should show display full cache and TN display fallback disabled, not TN display: got %q", s)
+	}
 	if !strings.Contains(s, `displayedPages`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
 		t.Errorf("ui should load displayed reader items through startFullPrefetch without double-counting them: got %q", s)
 	}

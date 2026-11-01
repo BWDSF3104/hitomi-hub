@@ -257,8 +257,8 @@ function getGalleryCounts(galleryId) {
 function renderPrefetchStatus() {
   const counts = getGalleryCounts(current.id);
   const total = counts.total || prefetchTotal;
-  let text = "full prefetch " + counts.fullDone + "/" + total + " tn " + counts.tnDone + "/" + total;
-  if (counts.errorDone) text += " error " + counts.errorDone + "/" + total;
+  let text = "full display cache " + counts.fullDone + "/" + total + " TN display fallback disabled";
+  if (counts.errorDone) text += " | error " + counts.errorDone + "/" + total;
   fullDone = counts.fullDone;
   tnDone = counts.tnDone;
   errorDone = counts.errorDone;

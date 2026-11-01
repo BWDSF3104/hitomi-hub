@@ -13,3 +13,4 @@ Date: 2026-11-01
 - TN thumbnails are persistent server-side cache entries under `cache/images/thumbs/<hash>.<format>.<variant>`. `thumbProxy()` order is full cache hit, TN variant cache hit, remote TN. A remote TN success writes the TN variant cache; a persisted TN hit returns `x-cache: tn-cache`.
 - Viewer display must not use TN fallback. `imageProxy()` uses local file, persistent full cache, or remote full storage only; it does not fetch TN variants.
 - UI `cachedFullSrc()` must exclude `tn` and `tn-cache` from reader display. `loadFullImage()` must not create a full object URL when `x-cache` is `tn`.
+- `prefetch-status` shows display intent, not TN display fallback: `full display cache X/Y TN display fallback disabled`. TN counts may remain internal, but the top status must not present TN as viewer display progress.
