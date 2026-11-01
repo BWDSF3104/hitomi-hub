@@ -268,7 +268,7 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 		_ = recordFile(db, rel, galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries")), sha, fileSize(path), ext, magic, status, "structural")
 		return status
 	}
-	if status != "hit" && ext != "" && scanTargets[ext] && cfg.Yr != "" {
+	if YaraGate(ext, cfg) {
 		for _, rule := range RunYara(path, rulesFile(root), cfg.Yr, cfg.Limits) {
 			findings = append(findings, rule)
 			_ = addFinding(db, rel, sha, "yara", rule)
@@ -417,6 +417,7 @@ func main() {
 		printJSON(summary)
 	case "search":
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		warnGG(loadGG(client))
 		mode := "html"
 		var shown []int
 		var total int
@@ -456,6 +457,7 @@ func main() {
 			os.Exit(2)
 		}
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		warnGG(loadGG(client))
 		info, err := client.Gallery(id)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
@@ -472,6 +474,7 @@ func main() {
 			os.Exit(2)
 		}
 		client := &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi}
+		warnGG(loadGG(client))
 		info, err := client.Gallery(id)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
@@ -495,7 +498,7 @@ func main() {
 			}
 			attempted++
 			path := filepath.Join(target, entry.Hash+"."+format)
-			body, err := client.get(context.Background(), StorageURL(entry.Hash, format), [2]int64{-1, -1})
+			body, err := client.get(context.Background(), StorageURL(entry.Hash, format, client.GG()), [2]int64{-1, -1})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "download: %s\n", err.Error())
 				continue
@@ -564,6 +567,7 @@ func main() {
 		printJSON(map[string]any{"gallery_id": id, "favorite": boolToInt(!f.unfav)})
 	case "check":
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		warnGG(loadGG(client))
 		results, err := runSavedQueries(db, client, root, f.lang, f.limit)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "check: "+err.Error())
@@ -582,6 +586,7 @@ func main() {
 			cfg.Viewer.Port = f.port
 		}
 		v := newViewer(db, cfg, root)
+		warnGG(loadGG(v.client))
 		if err := v.serve(); err != nil {
 			fmt.Fprintln(os.Stderr, "viewer: "+err.Error())
 			os.Exit(1)
@@ -643,6 +648,17 @@ func printJSON(value any) {
 		return
 	}
 	fmt.Println(string(out))
+}
+
+// loadGG は 1 実行で 1 回だけ正典 gg.js を読む（rate gate 内）。live が取れなければ snapshot に戻る
+func loadGG(client *Client) string {
+	return client.LoadGG(context.Background())
+}
+
+func warnGG(source string) {
+	if source == "snapshot" {
+		fmt.Fprintln(os.Stderr, "gg: snapshot fallback (live gg.js unavailable)")
+	}
 }
 
 func orDefault(value, def string) string {

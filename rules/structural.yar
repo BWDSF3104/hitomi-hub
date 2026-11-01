@@ -80,3 +80,60 @@ rule Zip_Decompression_Ratio
             and entry.uncompressed_size > 100 * entry.compressed_size
         )
 }
+
+rule Zip_Reference_Entry
+{
+    meta:
+        description = "Reference entry that can resolve outside the extraction target. scan.py does not cover these extensions"
+        category = "zip"
+
+    condition:
+        zip.is_zip and for any entry in zip.entries : (
+            entry.file_path endswith ".url"
+            or entry.file_path endswith ".ini"
+            or entry.file_path endswith ".desktop"
+        )
+}
+
+rule PDF_OpenAction_Launch
+{
+    meta:
+        description = "OpenAction paired with Launch. Single-key presence stays in scan.py"
+        category = "pdf"
+
+    strings:
+        $openaction = "/OpenAction"
+        $launch = "/Launch"
+
+    condition:
+        uint32be(0) == 0x25504446 and all of them
+}
+
+rule PDF_AA_Script
+{
+    meta:
+        description = "Additional-actions dictionary paired with script. Single-key presence stays in scan.py"
+        category = "pdf"
+
+    strings:
+        $aa = "/AA"
+        $js = "/JS"
+        $javascript = "/JavaScript"
+
+    condition:
+        uint32be(0) == 0x25504446 and $aa and ($js or $javascript)
+}
+
+rule PDF_XFA_Embedded
+{
+    meta:
+        description = "XFA form paired with embedded file. Single-key presence stays in scan.py"
+        category = "pdf"
+
+    strings:
+        $xfa = "/XFA"
+        $embedded = "/EmbeddedFile"
+
+    condition:
+        uint32be(0) == 0x25504446 and all of them
+}

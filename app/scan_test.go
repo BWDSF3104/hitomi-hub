@@ -169,3 +169,28 @@ func TestParseYaraOutput(t *testing.T) {
 		t.Errorf("parse: got %v", rules)
 	}
 }
+
+func TestYaraGateRunsForAllScanTargets(t *testing.T) {
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	if !YaraGate("cbz", c) || !YaraGate("zip", c) || !YaraGate("pdf", c) {
+		t.Errorf("scan targets must run yara even after a structural hit")
+	}
+	if YaraGate("webp", c) {
+		t.Errorf("non-target ext must not run yara: %s", "webp")
+	}
+	c.Yr = ""
+	if YaraGate("cbz", c) {
+		t.Errorf("no yr configured must not run yara")
+	}
+}
+
+func TestReferenceEntryIsYaraOnlyFinding(t *testing.T) {
+	// 参照 entry（.url）は構造検査の exec ext に無い → YARA 側の検知（役割分担）
+	dir := t.TempDir()
+	cbz := makeZip(t, dir, map[string]string{"startup.url": "[InternetShortcut]\nURL=https://example.com\n"})
+	_, _, findings, status := ScanFile(cbz, cfg())
+	if status != "pass" || len(findings) != 0 {
+		t.Errorf("structural must not flag reference entry: status %s findings %v", status, findings)
+	}
+}

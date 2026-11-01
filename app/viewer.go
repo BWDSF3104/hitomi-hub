@@ -279,7 +279,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("format"); q != "" {
 		format = q
 	}
-	body, err := v.client.get(r.Context(), ThumbnailURL(hash, format), [2]int64{-1, -1})
+	body, err := v.client.get(r.Context(), ThumbnailURL(hash, format, v.client.GG()), [2]int64{-1, -1})
 	if err != nil {
 		http.Error(w, "thumb: "+err.Error(), http.StatusBadGateway)
 		return
@@ -300,7 +300,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("format"); q != "" {
 		format = q
 	}
-	body, err := v.client.get(r.Context(), StorageURL(hash, format), [2]int64{-1, -1})
+	body, err := v.client.get(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
 	if err != nil {
 		http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
 		return

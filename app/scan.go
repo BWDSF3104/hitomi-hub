@@ -38,6 +38,12 @@ var pdfKeys = []string{"/Launch", "/OpenAction", "/AA", "/JS", "/JavaScript", "/
 
 var drivePrefix = regexp.MustCompile(`^[A-Za-z]:`)
 
+// YaraGate は Python 参照実装の yara_gate と同じ。scan target の全ファイルで YARA を走らせる
+// （構造検査が既に hit を捕えたファイルでも YARA 固有規則が hit できる）
+func YaraGate(ext string, cfg Config) bool {
+	return cfg.Yr != "" && ext != "" && scanTargets[ext]
+}
+
 func DetectMagic(head []byte) string {
 	switch {
 	case len(head) >= 4 && (string(head[:4]) == "PK\x03\x04" || string(head[:4]) == "PK\x05\x06" || string(head[:4]) == "PK\x07\x08"):

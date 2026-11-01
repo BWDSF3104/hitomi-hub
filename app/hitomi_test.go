@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,16 +12,78 @@ import (
 // 2026-11-01 に ltn 実測で確認した値（HTTP 200・210784 bytes）
 const sampleHash = "2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89"
 
-func TestImageURLMatchesLiveSample(t *testing.T) {
-	want := "https://w2.gold-usergeneratedcontent.net/1793487601/2488/" + sampleHash + ".webp"
-	if got := ImageURL(sampleHash, "webp", "webp"); got != want {
-		t.Errorf("image url: got %s want %s", got, want)
+func TestCanonicalGGRuleComposition(t *testing.T) {
+	// bucket と switch values は回転する（正典: `tools/gen_ggset.py`）。検証するのは規則:
+	// switch cases 内の値は m=0（subdomain `w1` / `atn`）、それ以外 m=1（`w2` / `btn`）
+	fixture := "var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 2488:\n o = 0;\n break;\n}\nreturn o;\n}};"
+	gg, err := parseGG(fixture)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ggValue(sampleHash) != 2488 {
-		t.Errorf("gg value: got %d", ggValue(sampleHash))
+	if gg.Source != "live" || gg.Bucket != "1793494802/" || len(gg.ZeroSet) != 1 {
+		t.Errorf("parsed gg: got %+v", gg)
 	}
-	if ggM(2488) != 1 || ggM(3) != 0 || ggM(1) != 0 || ggM(3628) != 1 || ggM(1286) != 0 || ggM(2908) != 0 {
-		t.Errorf("gg.m: m(2488)=%d m(3)=%d m(1)=%d m(3628)=%d m(1286)=%d m(2908)=%d", ggM(2488), ggM(3), ggM(1), ggM(3628), ggM(1286), ggM(2908))
+
+	inSet := sampleHash // value 2488 → fixture の case
+	outSet := "21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065" // value 1286 → case 外
+	if gg.Value(inSet) != 2488 || gg.Value(outSet) != 1286 {
+		t.Errorf("gg value: %d %d", gg.Value(inSet), gg.Value(outSet))
+	}
+
+	want := "https://w1.gold-usergeneratedcontent.net/1793494802/2488/" + inSet + ".webp"
+	if got := ImageURL(inSet, "webp", "webp", gg); got != want {
+		t.Errorf("image url (m=0): got %s want %s", got, want)
+	}
+	want = "https://w2.gold-usergeneratedcontent.net/1793494802/1286/" + outSet + ".webp"
+	if got := ImageURL(outSet, "webp", "webp", gg); got != want {
+		t.Errorf("image url (m=1): got %s want %s", got, want)
+	}
+
+	want = "https://\x61\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + inSet + ".\x77\x65\x62\x70"
+	if got := ThumbnailURL(inSet, "webp", gg); got != want {
+		t.Errorf("tn (m=0): got %s want %s", got, want)
+	}
+	want = "https://\x62\x74\x6e." + hitomiDomain + "/\x61\x76\x69\x66\x62\x69\x67\x74\x6e/5/06/" + outSet + ".\x61\x76\x69\x66"
+	if got := ThumbnailURL(outSet, "avif", gg); got != want {
+		t.Errorf("tn avif (m=1): got %s want %s", got, want)
+	}
+	if strings.Contains(ThumbnailURL(outSet, "avif", gg), "\x74\x6e\x62\x69\x67\x74\x6e") {
+		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(outSet, "avif", gg))
+	}
+}
+
+func TestSnapshotGGIsPopulatedAndUsedAsFallback(t *testing.T) {
+	gg := snapshotGG()
+	if gg.Bucket == "" || len(gg.ZeroSet) == 0 {
+		t.Fatalf("snapshot gg is empty: %+v", gg)
+	}
+
+	offline := &Client{cfg: defaultHitomiConfig()}
+	offline.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return nil, errors.New("offline")
+	}
+	if source := offline.LoadGG(context.Background()); source != "snapshot" {
+		t.Errorf("offline source: got %s", source)
+	}
+	if offline.GG().Bucket != gg.Bucket {
+		t.Errorf("fallback bucket: got %s", offline.GG().Bucket)
+	}
+
+	live := &Client{cfg: defaultHitomiConfig()}
+	live.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if !strings.Contains(rawurl, "/gg.js") {
+			t.Errorf("expected gg.js fetch, got %s", rawurl)
+		}
+		return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+	}
+	if source := live.LoadGG(context.Background()); source != "live" {
+		t.Errorf("live source: got %s", source)
+	}
+
+	off := &Client{cfg: defaultHitomiConfig()}
+	off.cfg.UseLiveGG = false
+	if source := off.LoadGG(context.Background()); source != "snapshot" {
+		t.Errorf("config off: got %s", source)
 	}
 }
 
@@ -94,38 +157,46 @@ func TestSearchQueryIntersectsTermsAndLanguage(t *testing.T) {
 
 func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	// galleryinfo の name が 001.jpg でも shard 保存形式は webp（同じ hash の .jpg は 404 実測）
-	want := "https://w2.gold-usergeneratedcontent.net/1793487601/2488/" + sampleHash + ".webp"
-	if got := StorageURL(sampleHash, "webp"); got != want {
+	// fixture の switch に sampleHash の値（2488）が無い → m=1（`w2`）
+	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://w2.gold-usergeneratedcontent.net/1793494802/2488/" + sampleHash + ".webp"
+	if got := StorageURL(sampleHash, "webp", gg); got != want {
 		t.Errorf("storage url: got %s want %s", got, want)
 	}
-	if got := StorageURL(sampleHash, ""); got != want {
+	if got := StorageURL(sampleHash, "", gg); got != want {
 		t.Errorf("default format: got %s", got)
 	}
-	if !strings.HasSuffix(StorageURL(sampleHash, "avif"), ".avif") {
-		t.Errorf("avif format: got %s", StorageURL(sampleHash, "avif"))
+	if !strings.HasSuffix(StorageURL(sampleHash, "avif", gg), ".avif") {
+		t.Errorf("avif format: got %s", StorageURL(sampleHash, "avif", gg))
 	}
 }
 
 func TestTNBaseUsesExactFormatBytesNotTnName(t *testing.T) {
 	// TN base は format で決まる（実測 200: webpbigtn / avifbigtn）。`746e626967746e` は存在せず 404。
 	// subdomain は gg.m で `a`/`b` + `tn`。hash の末尾は `(last)/(prev two)`。
-	oneHash := sampleHash // gg.m = 1
-	zeroHash := "21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065"
+	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};") // sampleHash（2488）は case 外 → m=1（`btn`）
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sampleHash // 末尾 9/b8
 
-	want := "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + oneHash + ".\x77\x65\x62\x70"
-	if got := ThumbnailURL(oneHash, "webp"); got != want {
-		t.Errorf("tn webp (m=1): got %s want %s", got, want)
+	want := "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + hash + ".\x77\x65\x62\x70"
+	if got := ThumbnailURL(hash, "webp", gg); got != want {
+		t.Errorf("tn webp: got %s want %s", got, want)
 	}
-	want = "https://\x61\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/5/06/" + zeroHash + ".\x77\x65\x62\x70"
-	if got := ThumbnailURL(zeroHash, ""); got != want {
-		t.Errorf("tn default (m=0): got %s want %s", got, want)
+	want = "https://\x62\x74\x6e." + hitomiDomain + "/\x61\x76\x69\x66\x62\x69\x67\x74\x6e/9/b8/" + hash + ".\x61\x76\x69\x66"
+	if got := ThumbnailURL(hash, "avif", gg); got != want {
+		t.Errorf("tn avif: got %s want %s", got, want)
 	}
-	want = "https://\x61\x74\x6e." + hitomiDomain + "/\x61\x76\x69\x66\x62\x69\x67\x74\x6e/5/06/" + zeroHash + ".\x61\x76\x69\x66"
-	if got := ThumbnailURL(zeroHash, "avif"); got != want {
-		t.Errorf("tn avif (m=0): got %s want %s", got, want)
+	if strings.Contains(ThumbnailURL(hash, "avif", gg), "\x74\x6e\x62\x69\x67\x74\x6e") {
+		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(hash, "avif", gg))
 	}
-	if strings.Contains(ThumbnailURL(zeroHash, "avif"), "\x74\x6e\x62\x69\x67\x74\x6e") {
-		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(zeroHash, "avif"))
+	// TN に格納されるのは webp / avif ののみ（実測）なので、それ以外の format は webp に落ちる
+	if got := ThumbnailURL(hash, "jpeg", gg); got != "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70\x62\x69\x67\x74\x6e/9/b8/" + hash + ".\x77\x65\x62\x70" {
+		t.Errorf("non-TN format must fall back to webp: got %s", got)
 	}
 }
 

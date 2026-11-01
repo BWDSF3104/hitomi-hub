@@ -16,7 +16,8 @@
     "max_retries": 3,
     "retry_backoff_ms": 2000,
     "user_agent": "hitomi-hub/0.1 (local hub client)",
-    "image_format": "webp"
+    "image_format": "webp",
+    "use_live_gg": true
   },
   "viewer": {
     "port": 8731,

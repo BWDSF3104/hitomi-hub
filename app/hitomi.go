@@ -25,6 +25,7 @@ type HitomiConfig struct {
 	RetryBackoffMS int   `json:"retry_backoff_ms"`
 	UserAgent     string `json:"user_agent"`
 	ImageFormat   string `json:"image_format"`
+	UseLiveGG     bool   `json:"use_live_gg"`
 }
 
 type Client struct {
@@ -33,11 +34,12 @@ type Client struct {
 	last   time.Time
 	fetch  func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
 	versions map[string]string
+	gg       GG
 }
 
 func defaultHitomiConfig() HitomiConfig {
 	return HitomiConfig{MinIntervalMS: 1000, MaxRetries: 3, RetryBackoffMS: 2000,
-		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp"}
+		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true}
 }
 
 func (c *Client) gate() {
@@ -103,18 +105,6 @@ func readAll(resp *http.Response) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// ggValue は gg.s(hash) と同じ（末尾 3 hex を反転して 10 進）
-func ggValue(hash string) int {
-	if len(hash) < 3 {
-		return 0
-	}
-	v, err := strconv.ParseInt(string(hash[len(hash)-1])+hash[len(hash)-3:len(hash)-1], 16, 64)
-	if err != nil {
-		return 0
-	}
-	return int(v)
-}
-
 func dirLetter(dir string) string {
 	if dir == "avif" {
 		return "a"
@@ -122,23 +112,24 @@ func dirLetter(dir string) string {
 	return "w"
 }
 
-// ImageURL は gg.js の url_from_hash + subdomain_from_url（base なし・webp）と同じ
-func ImageURL(hash, dir, ext string) string {
-	g := ggValue(hash)
+// ImageURL は gg.js の url_from_hash + subdomain_from_url（base なし・webp）と同じ。
+// bucket と switch values は正典 gg.js（`GG`）。snapshot での呼出は `snapshotGG()`。
+func ImageURL(hash, dir, ext string, gg GG) string {
+	g := gg.Value(hash)
 	if ext == "" {
 		ext = dir
 	}
-	sub := dirLetter(dir) + strconv.Itoa(1+ggM(g))
-	return "https://" + sub + "." + hitomiDomain + "/" + ggBucket + strconv.Itoa(g) + "/" + hash + "." + ext
+	sub := dirLetter(dir) + strconv.Itoa(1+gg.M(g))
+	return "https://" + sub + "." + hitomiDomain + "/" + gg.Bucket + strconv.Itoa(g) + "/" + hash + "." + ext
 }
 
 // StorageURL は shard 上の保存形式で URL を組む。shard には webp / avif ののみ格納（実測:
 // 実測で webp 200・同じ hash の jpg 404）。galleryinfo の `name` の ext は元の形式なので URL に使わない。
-func StorageURL(hash, format string) string {
+func StorageURL(hash, format string, gg GG) string {
 	if format == "" {
 		format = "webp"
 	}
-	return ImageURL(hash, format, format)
+	return ImageURL(hash, format, format, gg)
 }
 
 // TN base の正典バイト（実測 200）: webp `77656270626967746e`、avif `61766966626967746e`。
@@ -148,7 +139,7 @@ const tnBigtn = "\x62\x69\x67\x74\x6e"
 // ThumbnailURL は hitomi の tn path（common.js の url_from_url_from_hash(..., base='tn')）と同じ。
 // TN base は format で決まる（webpbigtn / avifbigtn）。subdomain は `a`/`b` + `tn`（gg.m で決まる）。
 // TN に格納されるのは webp と avif ののみ（実測）。galleryinfo `name` の ext は tn path に使わない。
-func ThumbnailURL(hash, format string) string {
+func ThumbnailURL(hash, format string, gg GG) string {
 	if len(hash) < 3 {
 		return ""
 	}
@@ -160,7 +151,7 @@ func ThumbnailURL(hash, format string) string {
 		format = "webp"
 	}
 
-	sub := string(rune('a'+ggM(ggValue(hash)))) + "\x74\x6e"
+	sub := string(rune('a'+gg.M(gg.Value(hash)))) + "\x74\x6e"
 	last := hash[len(hash)-1:]
 	prev2 := hash[len(hash)-3 : len(hash)-1]
 	return "https://" + sub + "." + hitomiDomain + "/" + format + tnBigtn + "/" + last + "/" + prev2 + "/" + hash + "." + format

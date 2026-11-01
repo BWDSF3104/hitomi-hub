@@ -162,6 +162,62 @@ def test_run_yara_rules_on_fixture(tmp_path):
     assert scan.run_yara(pdf, DATA_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["PDF_Structural_Risk"]
 
 
+def test_yara_gate_runs_for_all_scan_targets():
+    # 構造検査が hit を捕えたファイルでも YARA 固有規則が hit できる（no-op 回避）
+    cfg = dict(CFG)
+    cfg["yr"] = "tools/yr.exe"
+    assert scan.yara_gate("cbz", cfg) is True
+    assert scan.yara_gate("pdf", cfg) is True
+    assert scan.yara_gate("webp", cfg) is False
+    cfg["yr"] = None
+    assert scan.yara_gate("cbz", cfg) is False
+
+
+def test_yara_only_rules_fire_on_fixture(tmp_path):
+    yr = Path(__file__).resolve().parents[1] / "tools" / "yr.exe"
+    if not yr.exists():
+        pytest.skip("tools/yr.exe not present")
+    rules_path = DATA_DIR / "rules" / "structural.yar"
+
+    # 参照 entry（構造検査の exec ext に無い）→ YARA 側だけの検知
+    cbz = make_zip(tmp_path / "100.cbz", {"startup.url": "[InternetShortcut]\nURL=https://example.com\n"})
+    assert scan.run_yara(cbz, rules_path, str(yr), CFG["limits"]) == ["Zip_Reference_Entry"]
+
+    # 単独 key の hit（構造検査と重複）は YARA の単独規則だけ
+    single = tmp_path / "single.pdf"
+    single.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /OpenAction << /S /JavaScript /JS (x) >> >>\n")
+    assert scan.run_yara(single, rules_path, str(yr), CFG["limits"]) == ["PDF_Structural_Risk"]
+
+    # 複合条件（構造検査は key の有無しか見ない）→ YARA 固有規則が上書きしない
+    combo = tmp_path / "combo.pdf"
+    combo.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /OpenAction << /S /Launch >> >>\n")
+    assert "PDF_OpenAction_Launch" in scan.run_yara(combo, rules_path, str(yr), CFG["limits"])
+    combo2 = tmp_path / "combo2.pdf"
+    combo2.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /AA << /OS << /JS (x) >> >> >>\n")
+    assert "PDF_AA_Script" in scan.run_yara(combo2, rules_path, str(yr), CFG["limits"])
+
+
+
+def test_yara_findings_recorded_for_already_hit_file(tmp_path, monkeypatch):
+    # main ループは hit 判定後も YARA findings を engine 'yara' で記録する
+    cfg = dict(CFG)
+    cfg["yr"] = "tools/yr.exe"
+    conn = make_db(tmp_path)
+    cbz = make_zip(tmp_path / "Galleries" / "5" / "5.cbz", {"../evil.exe": b"MZ\x90\x00", "startup.url": "x"})
+    monkeypatch.setattr(scan, "run_yara", lambda path, rules_path, yr, limits: ["Zip_Reference_Entry"])
+    sha = scan.sha256_file(cbz)
+    ext, magic, findings, status = scan.scan_file(cbz, cfg)
+    assert status == "hit"
+    scan.add_finding(conn, "Galleries/5/5.cbz", sha, "structural", findings[0])
+    if scan.yara_gate(ext, cfg):
+        for rule in scan.run_yara(cbz, DATA_DIR / "rules" / "structural.yar", cfg["yr"], cfg["limits"]):
+            scan.add_finding(conn, "Galleries/5/5.cbz", sha, "yara", rule)
+    rows = conn.execute("SELECT rule, detail FROM findings ORDER BY rule").fetchall()
+    assert ("structural", findings[0]) in rows
+    assert ("yara", "Zip_Reference_Entry") in rows
+    conn.close()
+
+
 def test_status_constraint_and_verify_missing(tmp_path):
     conn = make_db(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):

@@ -270,6 +270,12 @@ def parse_yara_output(text: str) -> list:
     return rules
 
 
+def yara_gate(ext: str, cfg: dict) -> bool:
+    # YARA は scan target の全ファイルで走らせる。構造検査が既に hit を捕えたファイルでも
+    # YARA 固有規則（参照 entry・PDF の複合条件）が hit できる。二重走査は YARA 固有規則の対価。
+    return bool(cfg.get("yr")) and ext in SCAN_TARGETS
+
+
 def run_yara(path: Path, rules_path: Path, yr: str, limits: dict) -> list:
     cmd = [yr, "scan", str(rules_path), str(path), "--output-format", "ndjson",
            "--timeout", str(limits.get("yr_timeout_sec", 10)),
@@ -360,7 +366,7 @@ def main(argv=None) -> int:
             summary["scan_error"] += 1
             record_file(conn, rel, sha, path.stat().st_size, ext, magic, status, "structural")
             continue
-        if status != "hit" and ext in SCAN_TARGETS and yr:
+        if yara_gate(ext, cfg):
             for rule in run_yara(path, rules_path, yr, cfg["limits"]):
                 findings.append(rule)
                 add_finding(conn, rel, sha, "yara", rule)
