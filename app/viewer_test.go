@@ -736,6 +736,37 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `const galleryCache = new Map();`) || !strings.Contains(s, `const searchCardCache = new Map();`) {
+		t.Errorf("ui should cache opened gallery data and search card metadata for immediate navigation: got %q", s)
+	}
+	if !strings.Contains(s, `function renderSearchCard(r) {`) || !strings.Contains(s, `searchCardCache.set(r.id, r);`) || !strings.Contains(s, `function showGalleryMetaFromCache(id) {`) {
+		t.Errorf("renderSearchCard should cache card metadata and showGalleryMetaFromCache should use it: got %q", s)
+	}
+	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
+	if openStart < 0 {
+		t.Fatalf("openGallery function not found")
+	}
+	openBody := s[openStart:strings.Index(s, "\nasync function showLists() {")]
+	if !strings.Contains(openBody, `if (prefetchAbort) prefetchAbort.abort();`) {
+		t.Errorf("openGallery should abort old prefetch immediately before the gallery API await: got %q", openBody)
+	}
+	if !strings.Contains(openBody, `history.replaceState(null, "", route(id, page, second));`) {
+		t.Errorf("openGallery should update the gallery route immediately before waiting for gallery data: got %q", openBody)
+	}
+	if !strings.Contains(openBody, `showGalleryMetaFromCache(id);`) || !strings.Contains(openBody, `const cached = galleryCache.get(id);`) || !strings.Contains(openBody, `if (cached) {`) || !strings.Contains(openBody, `galleryCache.set(id, data);`) {
+		t.Errorf("openGallery should use cached search card metadata and cached gallery data for immediate page movement: got %q", openBody)
+	}
+	if !strings.Contains(s, `function showGalleryMetaFromCache(id) {`) || !strings.Contains(s, `<span class='meta'>loading</span>`) || !strings.Contains(s, `setPrefetchStatus("gallery read load: " + id);`) {
+		t.Errorf("showGalleryMetaFromCache should show loading status before async gallery data arrives: got %q", s)
+	}
+}
+
 func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

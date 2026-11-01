@@ -138,6 +138,8 @@ let fullObjectUrls = new Set();
 const fullCache = new Map();
 const prefetchedEntries = new Map();
 const countsByGallery = new Map();
+const galleryCache = new Map();
+const searchCardCache = new Map();
 const galleryFormats = new Map();
 let searchGeneration = 0;
 let openGeneration = 0;
@@ -526,8 +528,23 @@ function highlightStrip() {
 }
 async function openGallery(id, page, second) {
   const gen = ++openGeneration;
+  if (prefetchAbort) prefetchAbort.abort();
+  history.replaceState(null, "", route(id, page, second));
+  const cached = galleryCache.get(id);
+  if (cached) {
+    if (page) current.page = page;
+    currentPairEnd = second || null;
+    setGalleryMeta(cached);
+    await showPage();
+    if (gen !== openGeneration) return;
+    renderStrip();
+    await showLists();
+    return;
+  }
+  showGalleryMetaFromCache(id);
   const data = await api("/api/gallery/" + id);
   if (gen !== openGeneration) return;
+  galleryCache.set(id, data);
   setGalleryMeta(data);
   if (page) current.page = page;
   currentPairEnd = second || null;
@@ -545,7 +562,17 @@ async function showLists() {
   document.getElementById("unread").innerHTML = lists.unread.map((row) =>
     "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'>" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
 }
+function showGalleryMetaFromCache(id) {
+  const card = searchCardCache.get(id);
+  if (!card) return;
+  document.getElementById("gallery").innerHTML =
+    "<b>" + escapeHTML(card.title || id) + "</b> <span class='meta'>" + escapeHTML(card.language || "") + " / " + escapeHTML(card.type || "") + "</span><br>" +
+    "<span class='meta'>" + escapeHTML((card.tags || []).join(", ")) + "</span><br>" +
+    "<span class='meta'>loading</span>";
+  setPrefetchStatus("gallery read load: " + id);
+}
 function renderSearchCard(r) {
+  searchCardCache.set(r.id, r);
   const cover = r.thumbnail ? "<img class='cover' loading='lazy' src='" + r.thumbnail + "' alt='cover'>" : "";
   return "<li class='card' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'>" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'>" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'>" + escapeHTML((r.tags || []).join(", ")) + "</div></div></li>";
 }
