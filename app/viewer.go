@@ -371,7 +371,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	format := resolveFormat(v.cfg, r.URL.Query().Get("format"))
 	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
 
-	body, err := v.client.get(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
+	body, err := v.client.getImage(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
 	if err == nil {
 		writeImage(w, format, body, "tn")
 		return
@@ -399,7 +399,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gg := v.client.GG()
-	body, err := v.client.get(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
+	body, err := v.client.getImage(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
 	if err == nil {
 		writeImage(w, format, body, "miss")
 		if cacheErr == nil && len(body) > 0 {
@@ -416,7 +416,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, tnFormat := range tnFormats {
 		for _, variant := range []string{"bigtn", "smallbigtn", "smalltn", "smallsmalltn"} {
-			body, err = v.client.get(r.Context(), ThumbnailURLVariant(hash, tnFormat, variant, gg), [2]int64{-1, -1})
+			body, err = v.client.getImage(r.Context(), ThumbnailURLVariant(hash, tnFormat, variant, gg), [2]int64{-1, -1})
 			if err == nil {
 				writeImage(w, tnFormat, body, "tn")
 				return

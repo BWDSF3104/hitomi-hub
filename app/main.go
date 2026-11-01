@@ -119,6 +119,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Hitomi.MinIntervalMS == 0 {
 		cfg.Hitomi = defaultHitomiConfig()
 	}
+	if cfg.Hitomi.ImageMinIntervalMS == 0 {
+		cfg.Hitomi.ImageMinIntervalMS = 250
+	}
 	if cfg.Viewer.Port == 0 {
 		cfg.Viewer.Port = 8731
 	}

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,7 @@ const galleriesPerPage = 25
 
 type HitomiConfig struct {
 	MinIntervalMS int    `json:"min_interval_ms"`
+	ImageMinIntervalMS int `json:"image_min_interval_ms"`
 	MaxRetries    int    `json:"max_retries"`
 	RetryBackoffMS int   `json:"retry_backoff_ms"`
 	UserAgent     string `json:"user_agent"`
@@ -29,41 +31,63 @@ type HitomiConfig struct {
 }
 
 type Client struct {
-	http   *http.Client
-	cfg    HitomiConfig
-	last   time.Time
-	fetch  func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
-	versions map[string]string
-	gg       GG
+	http      *http.Client
+	cfg       HitomiConfig
+	last      time.Time
+	imageLast time.Time
+	mu        sync.Mutex
+	fetch     func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
+	versions  map[string]string
+	gg        GG
 }
 
 func defaultHitomiConfig() HitomiConfig {
-	return HitomiConfig{MinIntervalMS: 1000, MaxRetries: 3, RetryBackoffMS: 2000,
+	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true}
 }
 
 func (c *Client) gate() {
-	if c.cfg.MinIntervalMS <= 0 {
+	c.gateForInterval(c.cfg.MinIntervalMS, &c.last)
+}
+
+func (c *Client) gateForInterval(intervalMS int, last *time.Time) {
+	if last == nil || intervalMS <= 0 {
 		return
 	}
-	if wait := time.Duration(c.cfg.MinIntervalMS) * time.Millisecond; time.Since(c.last) < wait {
-		time.Sleep(wait - time.Since(c.last))
+	c.mu.Lock()
+	now := time.Now()
+	wait := time.Duration(intervalMS) * time.Millisecond
+	if now.Before(last.Add(wait)) {
+		next := last.Add(wait)
+		*last = next
+		c.mu.Unlock()
+		time.Sleep(next.Sub(now))
+		return
 	}
-	c.last = time.Now()
+	*last = now
+	c.mu.Unlock()
 }
 
 func (c *Client) get(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
-	if c.fetch != nil {
-		c.gate()
-		return c.fetch(ctx, rawurl, rng)
-	}
-	return c.fetchRemote(ctx, rawurl, rng)
+	return c.getWithGate(ctx, rawurl, rng, c.cfg.MinIntervalMS, &c.last)
 }
 
-func (c *Client) fetchRemote(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+func (c *Client) getImage(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	return c.getWithGate(ctx, rawurl, rng, c.cfg.ImageMinIntervalMS, &c.imageLast)
+}
+
+func (c *Client) getWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, last *time.Time) ([]byte, error) {
+	if c.fetch != nil {
+		c.gateForInterval(intervalMS, last)
+		return c.fetch(ctx, rawurl, rng)
+	}
+	return c.fetchRemoteWithGate(ctx, rawurl, rng, intervalMS, last)
+}
+
+func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, last *time.Time) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
-		c.gate()
+		c.gateForInterval(intervalMS, last)
 		req, err := http.NewRequestWithContext(ctx, "GET", rawurl, nil)
 		if err != nil {
 			return nil, err

@@ -13,6 +13,7 @@
   },
   "hitomi": {
     "min_interval_ms": 1000,
+    "image_min_interval_ms": 250,
     "max_retries": 3,
     "retry_backoff_ms": 2000,
     "user_agent": "hitomi-hub/0.1 (local hub client)",

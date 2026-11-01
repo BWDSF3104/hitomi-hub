@@ -659,7 +659,7 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `id="prefetch-status"`) {
 		t.Errorf("ui should show background prefetch status: got %q", s)
 	}
-	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 2;`) {
+	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 4;`) {
 		t.Errorf("ui should use cancellable bounded prefetch concurrency: got %q", s)
 	}
 	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(entrySource(entry), { cache: \"no-store\", signal })") {

@@ -280,6 +280,32 @@ func TestRateGatePerRequest(t *testing.T) {
 	}
 }
 
+func TestImageGateUsesLowerImageIntervalSeparately(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1000
+	c.cfg.ImageMinIntervalMS = 1
+	calls := 0
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte{}, nil
+	}
+	if _, err := c.getImage(context.Background(), "https://btn."+hitomiDomain+"/x", [2]int64{0, 3}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("image calls: got %d", calls)
+	}
+	if c.imageLast.IsZero() {
+		t.Error("image gate did not record image request time")
+	}
+	if !c.last.IsZero() {
+		t.Error("image gate should not use normal gate last time")
+	}
+	if defaultHitomiConfig().ImageMinIntervalMS != 250 {
+		t.Errorf("image gate default: got %d", defaultHitomiConfig().ImageMinIntervalMS)
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dataDir = dataRoot()
