@@ -34,6 +34,16 @@ func TestSafeGalleryPathStaysInsideGalleryDir(t *testing.T) {
 	}
 }
 
+func viewerFixtureGG() GG {
+	// live `gg.js` の switch values は回転する。Viewer tests は snapshot の実値ではなく
+	// fixture で規則を検証する。sampleHash の value（2488）を case に含め、zeroHash（1184）を case 外にする。
+	return GG{
+		Bucket:   "1793494802/",
+		CaseSet:  map[int]bool{2488: true},
+		Source:   "live",
+	}
+}
+
 func newTestViewer(t *testing.T, galleryJSON string) (*viewer, string) {
 	t.Helper()
 	db := openTestDB(t)
@@ -43,6 +53,7 @@ func newTestViewer(t *testing.T, galleryJSON string) (*viewer, string) {
 		t.Fatal(err)
 	}
 	v := newViewer(db, defaultConfigForTest(), root)
+	v.client.gg = viewerFixtureGG()
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		return []byte(galleryJSON), nil
 	}

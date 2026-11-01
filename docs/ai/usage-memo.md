@@ -126,7 +126,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - 開発 runtime・scratch・DB（`scratch/`、`*.db`、`scratch/gopath`、`scratch/gocache`）は git にコミットしない。repo が追跡するのは source・tests・docs・`tools/VERSIONS.md` など。
 - 完成 exe の build（pure-Go・CGO なし）:
   - `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o output\hitomi-hub\hub.exe .`
-- 完成品起動: `hub.exe` を単体静的バイナリとして運用する。view mode は `hub.exe --root <runtime-root> view --port 8731`。`--root` を省略すると cwd または nearest `.git` parent を root とみなす。単体コピペフォルダで使うなら runtime root を完成品フォルダ内（または明示指定した runtime フォルダ）に限定する。
+- 完成品起動: `hub.exe` を単体静的バイナリとして運用する。view mode は `hub.exe --root <runtime-root> view --port 8731`。`--root` を省略すると cwd を root とみなす。単体コピペフォルダで使うなら runtime root を完成品フォルダ内（または明示指定した runtime フォルダ）に限定する。
 - 現在の dev viewer は `output\hitomi-hub\hub.exe` から、runtime root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage` を明示して起動している。
 
 ### 検索の分区規則（hitomi と同じ）
@@ -145,7 +145,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - 実測: `kemo` → 100726 件（data 402908 bytes）。`--title "kemo nee-san 10"` → 共通部分 22 件（`4252697` を含む）。`nee-san` は 1 key ではなく `nee`・`san` に切れる
 - `--page`（1 origin・25件）と `--limit` は**共通部分の後**に適用。DB に記録するのは表示分だけ
 
-`--root` を省略すると cwd（または `.git` のある祖先）を使う。`--data-dir` を省略すると exe と同じフォルダの `schema.sql`・`rules/`・`config.example.json` を使う。
+`--root` を省略すると cwd を使う。`--data-dir` を省略すると exe と同じフォルダの `schema.sql`・`rules/`・`config.example.json` を使う。
 
 ## config.json（JSON のみ。TOML は非対応）
 

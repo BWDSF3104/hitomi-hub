@@ -15,9 +15,11 @@ Date: 2026-11-01
 
 ## Verification procedure
 
-1. Use the actual running server, not mocked tests:
-   - Canonical server: `http://127.0.0.1:8731`
+1. Use the actual running server, not mocked tests. Future screen verification must be performed from a cache-less runtime root:
+   - Canonical server remains running for user operation: `http://127.0.0.1:8731`
    - Server EXE remains running except for EXE updates.
+   - For screen verification, use a cache-less root with no `cache/images` entries. A cache-backed pass is not treated as a cache-less screen pass.
+   - Cache-less actual pixels may pass only from a local full file or remote full fetch. TN display fallback remains forbidden for `#reader` and `#thumbs`.
 2. Perform actual UI operation: search, open a gallery, observe the viewer.
 3. Inspect actual rendered image state with DOM checks:
    - `#results img`

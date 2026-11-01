@@ -144,13 +144,6 @@ func resolveRoot(explicit string) string {
 	if err != nil {
 		return "."
 	}
-	probe := cwd
-	for probe != filepath.Dir(probe) {
-		if _, err := os.Stat(filepath.Join(probe, ".git")); err == nil {
-			return probe
-		}
-		probe = filepath.Dir(probe)
-	}
 	return cwd
 }
 
@@ -402,7 +395,7 @@ func main() {
 
 	fsFlags := flag.NewFlagSet(cmd, flag.ExitOnError)
 	f := &flags{}
-	fsFlags.StringVar(&f.root, "root", "", "workspace root (default: cwd, or nearest .git parent)")
+	fsFlags.StringVar(&f.root, "root", "", "workspace root (default: cwd)")
 	fsFlags.StringVar(&f.gallery, "gallery-dir", "", "gallery dir under root (default: Galleries)")
 	fsFlags.StringVar(&dataDir, "data-dir", "", "data files (schema.sql, rules/, config.example.json)")
 	fsFlags.BoolVar(&f.noVT, "no-vt", false, "skip VirusTotal lookup")

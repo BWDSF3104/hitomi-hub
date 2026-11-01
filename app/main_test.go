@@ -1,6 +1,41 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestResolveRootUsesCwdWithoutGitParent(t *testing.T) {
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cwd := filepath.Join(root, "copied-project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+
+	got, err := filepath.Abs(resolveRoot(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != cwd {
+		t.Errorf("resolveRoot: got %q want %q", got, cwd)
+	}
+
+	explicit := filepath.Join(root, "scratch/live")
+	got, err = filepath.Abs(resolveRoot(explicit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != explicit {
+		t.Errorf("explicit resolveRoot: got %q want %q", got, explicit)
+	}
+}
 
 func TestFindCommandKeepsFlagValues(t *testing.T) {
 	cmd, rest := findCommand([]string{"--root", "C:\\data", "--no-vt"})

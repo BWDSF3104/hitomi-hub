@@ -4,7 +4,8 @@
 使い方（hitomi-hub ルートで）:
     python tools/gen_ggset.py [--root <repo root>]
 
-`gg.m(g)` は switch にある value で 0、それ以外で 1（`var o = 1; switch (g) { ... o = 0; break; }`）。
+`gg.m(g)` は 2026-11-01 実測の live 構造（`var o = 0; switch (g) { ... o = 1; break; }`）で、
+switch cases にある value を 1、それ以外を 0 を返す。
 switch values と bucket は回転するため、生成後は live で URL を 1 件検証すること
 （`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`）。
 """
@@ -39,10 +40,11 @@ def main(argv=None) -> int:
         "package main",
         "",
         "// ggset.go は hitomi `common.js` が読み込む `gg.js` の switch values から生成（正典: `tools/gen_ggset.py`）。",
-        "// gg.m(g) は switch にある value で 0、それ以外で 1。switch values と bucket は回転する。",
+        "// gg.m(g) は live 構造（`var o = 0; switch (g) { ... o = 1; break; }`）で cases 内の value を 1、それ以外を 0。",
+        "// switch values と bucket は回転する。",
         f"var ggBucket = \"{bucket}\"",
         "",
-        "var ggZeroSet = map[int]bool{",
+        "var ggCaseSet = map[int]bool{",
     ]
     for n in cases:
         lines.append(f"\t{n}: true,")
@@ -50,10 +52,10 @@ def main(argv=None) -> int:
         "}",
         "",
         "func ggM(g int) int {",
-        "\tif ggZeroSet[g] {",
-        "\t\treturn 0",
+        "\tif ggCaseSet[g] {",
+        "\t\treturn 1",
         "\t}",
-        "\treturn 1",
+        "\treturn 0",
         "}",
         "",
     ])

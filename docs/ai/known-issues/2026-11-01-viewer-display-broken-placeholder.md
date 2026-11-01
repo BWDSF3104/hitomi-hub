@@ -36,3 +36,17 @@ CP8 lightweight non-blocking viewer verification:
 - Background queue was not recomputed for same-gallery next-page movement; `prefetchQueueKeys` remained stable.
 
 Screenshot: `scratch\hitomi-usage\cp8_lightweight_actual_full_pixels.png`
+
+CP10 root policy correction verification:
+- Root policy changed: `--root` explicit > cwd only. `nearest .git parent` was removed as unnecessary for copied-project usage.
+- Canonical server was restarted with runtime root `scratch/live`.
+- Actual screen `http://127.0.0.1:8731/?x=cp10root#/g/4252697/page/1-2` showed actual full image pixels:
+  - `#reader img`: `naturalWidth` `2880` and `1813`.
+  - `#thumbs img` for displayed cached full entries: `naturalWidth > 0`.
+  - Search-card `#results img` TN covers had `naturalWidth > 0`, but they remain search-card covers only.
+- Actual stale navigation confirmed current-target-only behavior:
+  - A stale page-1 load did not pollute route/status/note after page movement to page 4.
+  - Current route/status/note corresponded to the latest target.
+  - Current reader images page 4 and page 5 had `naturalWidth > 0`.
+- TN viewer display exception was not introduced. TN remains search-card/result cover only. `no_full` galleries remain not actual image-display passes unless a full image objectURL/local file is available.
+- Screenshot: `S:\Documents\Kilo_Commons\hitomi-hub\scratch\hitomi-usage\cp10_root_actual_full_pixels.png`

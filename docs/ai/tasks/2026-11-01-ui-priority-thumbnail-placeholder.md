@@ -26,7 +26,7 @@
 
 - Server EXE must remain running for user operation verification. Do not stop it unless the server EXE is being updated. Stop/rebuild/restart is allowed only for EXE updates.
 - Canonical decision entry: `docs/ai/decisions/2026-11-01-server-exe-keep-running.md`.
-- Current runtime policy as of 2026-11-01: keep `hub.exe view` on `http://127.0.0.1:8731`. Current process ID `bgp_1959f6bef001P6cmdcPdsA5W3y`. If replaced after an EXE update, record the new process ID, URL, command, and lifetime here.
+- Current runtime policy as of 2026-11-01: keep `hub.exe view` on `http://127.0.0.1:8731`. Current process ID `bgp_196b07014001jT62QJx8infSQG`. If replaced after an EXE update, record the new process ID, URL, command, and lifetime here.
 - Screen verification must check actual rendered image pixels, not only status text or generation guards. A reader/strip `<img>` with `src=''` or `naturalWidth=0` is not considered displayed.
 
 ## 調査結果 / 変更内容
@@ -66,6 +66,62 @@ Plan:
    - `no_full` remains separate from true `error`,
    - stale writes after page/gallery/search navigation are ignored.
 10. Actual screen verification must confirm route/title/reader/strip/status/cover correspond only to latest target, and full actual pixels are shown only when full image exists.
+
+## CP10 root policy correction plan
+
+Status: active implementation plan.
+
+Decision entry: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`.
+
+Plan:
+
+1. Remove the `nearest .git parent` ancestor search from `resolveRoot()`.
+2. Default root is cwd. `--root` remains explicit override.
+3. Keep copied-project usage as the assumption. The project folder is usable as root without requiring `.git` discovery.
+4. Add a Go test proving `resolveRoot()` returns cwd even when a `.git` directory exists in a parent path.
+5. Keep TN images limited to search-card/result covers. TN must not be used as `#reader` or `#thumbs` viewer display source.
+6. Do not add TN viewer display exception, because TN viewer fallback increases rate-limit pressure and conflicts with the user-required actual full image pixels criterion.
+7. Viewer display pass remains valid only when actual full image pixels are visible from local full file, persistent full cache, or remote full fetch. `no_full` is not an image-display pass.
+8. Rebuild canonical EXE, restart canonical server, and perform actual screen DOM verification for `img.src` present and `naturalWidth > 0` for actual full image display.
+
+### CP10 verification
+
+- `go vet ./...` pass.
+- `go test .` pass `21.876s`.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+- Code change:
+  - `resolveRoot()` now uses explicit `--root` > cwd only.
+  - `.git` parent ancestor search was removed.
+  - CLI help was updated from `workspace root (default: cwd, or nearest .git parent)` to `workspace root (default: cwd)`.
+- Active persistent process after restart:
+  - ID: `bgp_196838ff3001dgM7X0U7rMv3jI`
+  - URL: `http://127.0.0.1:8731`
+  - Command: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root scratch/live`
+  - Root: `scratch/live`
+- Actual screen URL: `http://127.0.0.1:8731/?x=cp10root#/g/4252697/page/1-2`
+- Search-card `#results img` actual TN covers:
+  - `img src` present and `naturalWidth > 0`.
+  - These remain search-card cover behavior, not viewer display.
+- Actual full image display pass:
+  - `#reader img`:
+    - `src` is objectURL.
+    - `naturalWidth` values: `2880`, `1813`.
+  - `#thumbs img` for displayed cached full entries:
+    - `src` is objectURL.
+    - `naturalWidth > 0` for the actual displayed cached entries.
+- Status at actual screen:
+  - `full display cache 21/203 | no full 0/203 | TN display fallback disabled`
+- Actual stale navigation test:
+  - Before stale operation: route `#/g/4252697/page/1-2`, note `local`.
+  - A stale `loadFullImage()` was started for page 1 with `oldShow=3`, `oldRender=3`.
+  - Latest target moved to page 4.
+  - After stale async completion, current route became `#/g/4252697/page/4-5`.
+  - Current reader images were page 4 and page 5, both `naturalWidth = 1813`.
+  - Status did not change from the pre-move status.
+  - Note reflected the latest target `cdn/TN（未ダウンロード）`, not the stale old target.
+  - Stale async writes did not pollute current route, reader DOM, status, or priority.
+- Screenshot: `S:\Documents\Kilo_Commons\hitomi-hub\scratch\hitomi-usage\cp10_root_actual_full_pixels.png`
+- Pass judgment for this step: actual full image pixels are displayed when an actual full image is available through the runtime root. `no_full` remains not an image-display pass.
 
 ## CP8 revised actual viewer display policy
 
@@ -206,3 +262,138 @@ This result is not accepted as completion if the completion requires actual view
 - [ ] `current-task.tsv` の参照行を削除
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
+
+## 記録決定 / 元メモ保存（2026-11-01）
+
+- 決定: 重要な情報（元メモ）は消えないように本タスク内へ逐一記録する。この「記録を残す」という決定自体も本タスク内に記録する。
+
+### 元メモ（ユーザー提示 2026-11-01 09:29 UTC）
+
+```text
+元のメモを提示します。
+重要な情報が決して消えないように逐一記録は残してください。
+記録を残すという決定もタスク内に記録してください。
+確認を継続
+
+先ほど挙げた **`Hitorus`** や **`hitomi_search_plus`** をはじめ、このジャンルのツールやアプリは基本的にすべてオープンソース（ソースコードがGitHub等で公開されているフリーソフト）です。
+
+その中でも、「本家の検索・閲覧を大きく超える機能（高度な検索、高速化、管理・同期など）を持っている」という点で、**特に機能が優れていて評価されているオープンソースツール**をいくつか厳選して比較・紹介します。
+
+---
+
+### 1. 最も高機能・多機能な検索・閲覧クライアント
+
+#### **`hitomi_search_plus` (GitHub: `h-akatsuki/hitomi_search_plus`)**
+
+* **オープンソース:** はい（Apache License 2.0 / Dart, Rust）
+* **対応プラットフォーム:** Android / Windows
+* **何が優れているか（高度な機能）:**
+* **高度な検索クエリとグループ化:** 本家サイトではやりにくい `((tag:A | tag:B) -tag:C) | tag:D` のような、**括弧を使った複雑なAND/OR/NOT条件の組み合わせ**が可能です。
+* **スマートブックマーク（クエリ自体の保存）:** 単に「お気に入りタグ」を登録するだけでなく、**「自分が組んだ複雑な検索条件そのもの」をブックマーク**でき、背景で自動更新させることで新着を追えます。
+* **Rustによる爆速サジェスト・検索:** アプリ内に軽量なインデックスとRust製エンジンを内蔵しており、数百万件規模のデータからでもラグなく一瞬で候補や検索結果を出力します。
+* **デバイス間データ同期:** 閲覧履歴やお気に入りを別デバイス間で同期する仕組みも備わっています。
+
+### 2. デスクトップでローカル一元管理したい場合
+
+#### **`Hitorus` (GitHub: `kaismic/Hitorus`)**
+
+* **オープンソース:** はい
+* **対応プラットフォーム:** Windows / macOS / Linux (デスクトップWebアプリ形式)
+* **何が優れているか（高度な機能）:**
+* **完全なローカルDB（SQLite）管理:** ダウンロード、お気に入り、既読ステータスがすべてローカルのファイルとして保存されるため、Webサービスと違ってアカウントBANやサーバー閉鎖のリスクがなく、自分の手元で半永久的に管理できます。
+* **強力なフィルターとビューアー統合:** ブラウザ感覚でサクサク動くUIを持ちながら、ローカルのファイル群とメタデータをシームレスに紐付けて一括管理できます。
+
+### 3. ダウンロード・保存・整理に特化したツール
+
+#### **`hitomi-downloader` (Python/Tauri版などの派生・関連ツール群)**
+
+* **オープンソース:** はい
+* **何が優れているか（高度な機能）:**
+* 複数スレッドによる超高速一括ダウンロード。
+* ダウンロードした作品を、作者名やカテゴリ別に**自動でフォルダ分け・リネーム**して保存。
+* 取得したデータをそのまま **PDF や CBZ（電子書籍フォーマット）に一撃で変換**して出力する機能を持ちます。
+
+### 💡 結論：どれを選ぶべきか？
+
+* 「スマホやPCで、快適な検索・既読・スマートなお気に入り管理をトータルでやりたい」なら、機能面で頭一つ抜けている **`hitomi_search_plus`** が最も洗練されています。
+* 「PCの大きな画面で、自分のローカル環境にデータを溜め込み、自分好みに管理・閲覧したい」なら **`Hitorus`** や、定番のダウンローダーと自炊マンガ用リーダー（Komga等）の組み合わせが強力です。
+```
+
+### 確認継続（2026-11-01）
+
+- 元メモの `Hitorus` は GitHub で確認済み:
+  - Repository: `https://github.com/kaismic/Hitorus`
+  - License: GNU General Public License v3.0 (GPL-3.0)
+  - Primary language: C#
+  - Nature: desktop web app for Hitomi.la search/download/view
+  - Main storage: local SQLite + `Galleries` folder
+- 元メモの `hitomi_search_plus` は GitHub で確認済み:
+  - Repository: `https://github.com/h-akatsuki/hitomi_search_plus`
+  - License: Apache License 2.0, README に記載
+  - Primary stack: Flutter/Dart with Rust suggestion/search support
+  - Key confirmed features from README: advanced grouped search, per-query bookmarks, fast Rust suggestion, device data sync, viewer with caching
+- 元メモの `hitomi-downloader` は GitHub 上では代表的に `https://github.com/lanyeeee/hitomi-downloader` を確認:
+  - License: MIT license, GitHub repository resources に記載
+  - Primary stack: Tauri + Rust + Vue frontend
+  - Key confirmed features: GUI, multi-threaded download, export to PDF/CBZ, customizable directory structure
+  - Note: Python/Tauri 派生関連ツール群という表現は広義。今回「Tauri版」として確認できたのは `lanyeeee/hitomi-downloader`。Python版特定リポジトリは未確定。
+- GitHub repos の image handling 確認:
+  - `h-akatsuki/hitomi_search_plus` viewer uses full image bytes from `imageDownloadStatusProvider` and DB `image` table. Display is `Image.memory(data)` only after download/status done. Search/top card uses `smallImageProvider` TN thumbnail separately; TN is not the viewer display fallback.
+  - `h-akatsuki/hitomi_search_plus` full image download constructs URL via `GGJS.imgUrl(ImgType.webp)` and sends `referer: https://hitomi.la/...`; search/top card uses `smallSmallThumb` TN webp.
+  - `kaismic/Hitorus` viewer displays local downloaded file through `api/image`. Missing local image file returns not-found/HTTP error. It does not use TN as viewer display fallback.
+  - `kaismic/Hitorus` download tries image formats `avif` and `webp`, with preferred format first; if all formats 404, it can update live server info and retry; failure is counted when non-404 or repeated failure occurs.
+  - `lanyeeee/hitomi-downloader` separates cover TN and full image:
+    - Cover uses `url_from_url_from_hash(..., base="tn")`, specifically `webpbigtn`.
+    - Full download uses `image_url_from_image(...)` for `webp` or `avif` based on `haswebp`/`hasavif`.
+    - Uses `gg.js` dynamic `GG` logic for `b`, hash segment `s`, and subdomain calculation.
+    - Sends `referer: https://hitomi.la/` for CDN requests.
+- Current project policy remains consistent with these upstream examples on viewer display: TN is cover/search-card behavior, not `#reader`/`#thumbs` viewer fallback. Actual full image pixels require local file, persistent full cache, or successful full image fetch/cache.
+- Current unresolved point remains: actual cache-less screen result showed `no_full` for `4296091`, but `4296091` was not confirmed as downloaded in the current runtime root. The active process root mismatch hypothesis remains open and requires runtime root actual screen confirmation.
+- This confirmation step did not change code. No implementation change was made from this record/verification pass.
+
+### CP11 cache-less gg cause investigation
+
+- Fresh cache-less server `http://127.0.0.1:8734/api/image/899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9?format=avif` returned `404`, `x-cache: no_full`, `naturalWidth=0` behavior via actual screen status.
+- Direct live `gg.js` at `2026-11-01 10:23Z` has this live `m()` shape:
+  - `var gg={ m: function(g){ var o=0; switch(g){ case ...; o=1; break; } return o; }, s: ..., b:'1793527201/' }`
+- For hash `899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9`, `gg.s(hash)=2335`.
+- `case 2335` is not present in the live switch at this time, so live `m(2335)=0`.
+- Direct request with app UA and `Referer: https://hitomi.la/`:
+  - `a1` URL for `2335` returned `200`
+  - `w1` URL for `2335` returned `200`
+  - `a2` URL for `2335` returned `404`
+  - `w2` URL for `2335` returned `404`
+- The app builds `a2`/`w2` for this hash because `parseGG()` stores live `case` values as `ZeroSet` and returns `0` only for values inside `ZeroSet`. This is opposite to the live `gg.js` shape observed at this time.
+- Recorded known issue: `docs/ai/known-issues/2026-11-01-parsegg-switch-value-inversion.md`.
+- Implementation was approved for this cause correction. Implementation scope was limited to `parseGG`, `gen_ggset.py`, tests, canonical EXE rebuild, canonical server restart, and cache-less actual screen verification.
+
+### CP11 implementation verification
+
+- Code changes:
+  - `app/gg.go`: `GG.ZeroSet` → `GG.CaseSet`; `M(value)` now returns `1` for live `case` values and `0` for values outside cases.
+  - `tools/gen_ggset.py`: generates `ggCaseSet` and `ggM` using the observed live shape `var o = 0; switch (g) { ... o = 1; break; }`.
+  - `app/ggset.go` was regenerated from live `gg.js` using the canonical generator.
+  - `app/hitomi_test.go`, `app/searchhtml_test.go`, and `app/viewer_test.go` fixture assumptions were updated to the live switch polarity.
+  - `newTestViewer()` uses `viewerFixtureGG()` so viewer tests verify the rule by fixture instead of rotating live snapshot values.
+- Verification:
+  - `go vet ./...` pass.
+  - `go test .` pass `22.533s`.
+  - `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+  - Canonical server was restarted after rebuild with process ID `bgp_196b07014001jT62QJx8infSQG`, URL `http://127.0.0.1:8731`.
+- Cache-less actual screen pass:
+  - Fresh cache-less server process `bgp_196b0a6c0001oVuL1sQU6jAF0j`, root `scratch/hitomi-usage-fixed`, port `8735`, stopped after verification.
+  - `http://127.0.0.1:8735/?x=cp12fixed#/g/4252697/page/1-2`
+  - API check: `/api/image/899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9?format=avif` returned `200`, `x-cache: miss`, `content-type: image/avif`.
+  - Reader `#reader img`: blob `src`, `naturalWidth=3746`, `naturalHeight=2525`.
+  - Status at first actual display: `full display cache 1/203 | no full 0/203 | TN display fallback disabled`.
+  - `#thumbs img` displayed actual full objectURLs with `naturalWidth > 0`; no TN viewer display source was used.
+  - Screenshot: `scratch/hitomi-usage-fixed/cp12_fixed_cacheless_actual_full_pixels.png`
+- Recorded future verification policy: screen verification must be performed from a cache-less runtime root. Cache-backed actual screen passes are not treated as cache-less passes. Decision entry: `docs/ai/decisions/2026-11-01-required-function-verification.md`.
+- Post-fix cache-less actual screen pass was reconfirmed from a cache-less root and delivered to the user's Kilo app as `cp13_fixed_cacheless_actual_full_pixels_pass.png`.
+  - Server process `bgp_196b7e737001xfLhcaCpEXzbF1` used cache-less root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-verify`, port `8736`, and was stopped after screenshot confirmation.
+  - Screenshot path used for delivery: `C:\Users\fujim\AppData\Local\Temp\kilo\cp13_fixed_cacheless_actual_full_pixels_pass.png`.
+  - Actual screen URL: `http://127.0.0.1:8736/?x=cp13cachelesspass#/g/4252697/page/1-2`
+  - Status: `full display cache 1/203 | no full 0/203 | TN display fallback disabled`
+  - Reader: blob `src`, `naturalWidth=3746`, `naturalHeight=2525`.
+- Runtime-server note: the canonical server `http://127.0.0.1:8731` was not stopped except for the approved EXE update restart. The cache-less verification server was stopped after screenshot confirmation, then a fresh persistent cache-less verification server was restarted at `http://127.0.0.1:8736` with root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`, process ID `bgp_196bb0154001aophdh5vu5ya8s`. This server is to be kept running for future cache-less verification.
+- Stale status/strip pollution remains open: `docs/ai/known-issues/2026-11-01-stale-async-status-strip-writes.md`.
