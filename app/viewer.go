@@ -197,7 +197,7 @@ func (v *viewer) searchResult(id int) map[string]any {
 	thumbnail := ""
 	if len(info.Files) > 0 {
 		format := imageFormat(v.cfg)
-		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format + "&gallery=" + strconv.Itoa(id)
+		thumbnail = "/api/thumb/" + info.Files[0].Hash + "?format=" + format + "&gallery=" + strconv.Itoa(id) + "&variant=bigtn"
 	}
 	return map[string]any{"id": id, "title": info.Title, "language": info.Language,
 		"type": info.Type, "url": info.URL, "tags": info.Tags, "artists": info.Artists,
@@ -283,16 +283,18 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("format"); q != "" {
 		format = q
 	}
+	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
+
+	body, err := v.client.get(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
+	if err == nil {
+		setImageHeaders(w, format)
+		w.Write(body)
+		return
+	}
 	if v.serveLocalImage(w, r, hash, format) {
 		return
 	}
-	body, err := v.client.get(r.Context(), ThumbnailURL(hash, format, v.client.GG()), [2]int64{-1, -1})
-	if err != nil {
-		v.imageProxy(w, r)
-		return
-	}
-	setImageHeaders(w, format)
-	w.Write(body)
+	v.imageProxy(w, r)
 }
 
 func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +311,12 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := v.client.get(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
+	if err == nil {
+		setImageHeaders(w, format)
+		w.Write(body)
+		return
+	}
+	body, err = v.client.get(r.Context(), ThumbnailURL(hash, format, v.client.GG()), [2]int64{-1, -1})
 	if err != nil {
 		http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
 		return

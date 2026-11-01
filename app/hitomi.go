@@ -134,27 +134,50 @@ func StorageURL(hash, format string, gg GG) string {
 
 // TN base の正典バイト（実測 200）: webp `77656270626967746e`、avif `61766966626967746e`。
 // `746e626967746e`（tnbigtn）は TN base として存在せず実測 404（KI-20261101-01）。
-const tnBigtn = "\x62\x69\x67\x74\x6e"
 
-// ThumbnailURL は hitomi の tn path（common.js の url_from_url_from_hash(..., base='tn')）と同じ。
-// TN base は format で決まる（webpbigtn / avifbigtn）。subdomain は `a`/`b` + `tn`（gg.m で決まる）。
-// TN に格納されるのは webp と avif ののみ（実測）。galleryinfo `name` の ext は tn path に使わない。
-func ThumbnailURL(hash, format string, gg GG) string {
+// TNVariantSuffix は hitomi の gallery.js が使う TN variant を返す。
+// work page thumbnail list は devicePixelRatio 1 で smallsmalltn、それ以外 smalltn を使う。
+// search card は hitomi の galleryblock で bigtn を使う。
+func TNVariantSuffix(variant string) string {
+	switch strings.ToLower(strings.TrimSpace(variant)) {
+	case "bigtn", "smalltn", "smallsmalltn", "smallbigtn":
+		return strings.ToLower(strings.TrimSpace(variant))
+	default:
+		return "bigtn"
+	}
+}
+
+// TNFormat は TN path で使う format。hitomi の TN に格納されるのは webp と avif ののみ（実測）。
+// galleryinfo `name` の ext（png / jpg など）は TN path に使わない。
+func TNFormat(format string) string {
+	if strings.ToLower(format) == "avif" {
+		return "avif"
+	}
+	return "webp"
+}
+
+// TNBase は TN path の base（webpbigtn / avifbigtn / webpsmalltn / webpsmallsmalltn など）。
+func TNBase(format, variant string) string {
+	return TNFormat(format) + TNVariantSuffix(variant)
+}
+
+// ThumbnailURLVariant は hitomi の tn path（common.js の url_from_url_from_hash(..., base='tn')）と同じ。
+// subdomain は `a`/`b` + `tn`（gg.m で決まる）。hash の末尾は `(last)/(prev two)`。
+func ThumbnailURLVariant(hash, format, variant string, gg GG) string {
 	if len(hash) < 3 {
 		return ""
 	}
-	format = strings.ToLower(format)
-	if format == "jpeg" {
-		format = "jpg"
-	}
-	if format != "avif" {
-		format = "webp"
-	}
 
+	format = TNFormat(format)
 	sub := string(rune('a'+gg.M(gg.Value(hash)))) + "\x74\x6e"
 	last := hash[len(hash)-1:]
 	prev2 := hash[len(hash)-3 : len(hash)-1]
-	return "https://" + sub + "." + hitomiDomain + "/" + format + tnBigtn + "/" + last + "/" + prev2 + "/" + hash + "." + format
+	return "https://" + sub + "." + hitomiDomain + "/" + TNBase(format, variant) + "/" + last + "/" + prev2 + "/" + hash + "." + format
+}
+
+// ThumbnailURL は search card / main image fallback の既定 TN variant（bigtn）を使う。
+func ThumbnailURL(hash, format string, gg GG) string {
+	return ThumbnailURLVariant(hash, format, "bigtn", gg)
 }
 
 // fileExt は galleryinfo `name` の ext。tn path の format には使わない。

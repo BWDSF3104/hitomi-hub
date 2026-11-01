@@ -120,31 +120,48 @@ function fileFormatFromName(name) {
   return ext || "webp";
 }
 
-function thumbURL(hash, format, gallery) {
+function thumbURL(hash, format, gallery, variant) {
   if (!hash) return "";
-  const u = "/api/thumb/" + hash + "?format=" + encodeURIComponent(format || "webp");
-  return gallery ? u + "&gallery=" + encodeURIComponent(gallery) : u;
+  let u = "/api/thumb/" + hash + "?format=" + encodeURIComponent(format || "webp");
+  if (gallery) u += "&gallery=" + encodeURIComponent(gallery);
+  if (variant) u += "&variant=" + encodeURIComponent(variant);
+  return u;
+}
+
+function stripVariant() {
+  return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";
 }
 
 async function showPage() {
   if (!current.id) return;
   const data = await api("/api/gallery/" + current.id + "/page/" + current.page);
-  document.getElementById("image").src = data.src;
-  document.getElementById("note").textContent = data.local ? "local" : "cdn（未ダウンロード）";
+  const img = document.getElementById("image");
+  img.onerror = () => document.getElementById("note").textContent = "image load failed";
+  img.src = data.src;
+  document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   setRoute(current.id, current.page);
   await post("/api/read", { gallery_id: current.id, page: current.page });
   await showLists();
   highlightStrip();
 }
+function stripGroupPage() {
+  return Math.max(1, Math.floor((current.page - 1) / 50) + 1);
+}
 function renderStrip() {
   const parts = [];
-  current.files.slice(0, 20).forEach((entry, i) => {
-    if (!entry.local && i !== 0) return;
+  const group = stripGroupPage();
+  const start = (group - 1) * 50;
+  const end = Math.min(start + 50, current.files.length);
+  const variant = stripVariant();
+  for (let i = start; i < end; i++) {
+    const entry = current.files[i];
     const page = i + 1;
-    const src = thumbURL(entry.hash, current.format || entry.format || "webp", current.id);
-    parts.push("<a href='" + route(current.id, page) + "'><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' loading='lazy' src='" + src + "' alt='" + page + "'></a>");
-  });
+    const src = thumbURL(entry.hash, current.format || entry.format || "webp", current.id, variant);
+    const marker = entry.local ? " title='local'" : "";
+    const localMark = entry.local ? "・local" : "";
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'></a>");
+  }
   document.getElementById("thumbs").innerHTML = parts.join("");
 }
 function highlightStrip() {

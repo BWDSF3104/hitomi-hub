@@ -174,6 +174,36 @@ func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	}
 }
 
+func TestTNVariantPathsMatchHitomiWorkPage(t *testing.T) {
+	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};") // sampleHash（2488）は case 外 → m=1（`btn`）
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		variant string
+		want    string
+	}{
+		{variant: "bigtn", want: "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70bigtn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"},
+		{variant: "smalltn", want: "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70smalltn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"},
+		{variant: "smallsmalltn", want: "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70smallsmalltn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"},
+		{variant: "smallbigtn", want: "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70smallbigtn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"},
+	}
+	for _, c := range cases {
+		if got := ThumbnailURLVariant(sampleHash, "webp", c.variant, gg); got != c.want {
+			t.Errorf("variant %q: got %s want %s", c.variant, got, c.want)
+		}
+	}
+
+	// hitomi の TN に格納されるのは webp / avif ののみ。name の ext は TN path に使わない。
+	if got := ThumbnailURLVariant(sampleHash, "png", "smalltn", gg); got != "https://\x62\x74\x6e." + hitomiDomain + "/\x77\x65\x62\x70smalltn/9/b8/" + sampleHash + ".\x77\x65\x62\x70" {
+		t.Errorf("name ext must not appear in TN path: got %s", got)
+	}
+	if got := ThumbnailURLVariant("21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065", "avif", "smalltn", gg); got != "https://\x62\x74\x6e." + hitomiDomain + "/\x61\x76\x69\x66smalltn/5/06/21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065.\x61\x76\x69\x66" {
+		t.Errorf("avif TN variant: got %s", got)
+	}
+}
+
 func TestTNBaseUsesExactFormatBytesNotTnName(t *testing.T) {
 	// TN base は format で決まる（実測 200: webpbigtn / avifbigtn）。`746e626967746e` は存在せず 404。
 	// subdomain は gg.m で `a`/`b` + `tn`。hash の末尾は `(last)/(prev two)`。

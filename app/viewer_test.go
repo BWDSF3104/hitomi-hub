@@ -160,6 +160,29 @@ func TestViewerImageProxyServesSameOriginWebp(t *testing.T) {
 	}
 }
 
+func TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "tn.") {
+			return []byte("tn"), nil
+		}
+		return nil, errors.New("storage missing")
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn" {
+		t.Fatalf("image TN fallback: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if len(urls) != 2 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "tn.") {
+		t.Fatalf("image fallback fetch order: got %v", urls)
+	}
+	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
+		t.Fatalf("image TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
+	}
+}
+
 func TestViewerThumbProxyUsesRealTNPathAndContent(t *testing.T) {
 	var gotURL string
 	v, _ := newTestViewer(t, "")
@@ -178,6 +201,27 @@ func TestViewerThumbProxyUsesRealTNPathAndContent(t *testing.T) {
 	}
 	if rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
 		t.Fatalf("thumb proxy CORP: got %q", rec.Header().Get("cross-origin-resource-policy"))
+	}
+}
+
+func TestViewerThumbProxyUsesSmalltnVariantWhenRequested(t *testing.T) {
+	var gotURL string
+	v, _ := newTestViewer(t, "")
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		gotURL = rawurl
+		return []byte("small"), nil
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&variant=smalltn", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "small" {
+		t.Fatalf("smalltn thumb proxy: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
+	}
+	want := "https://\x62\x74\x6e.gold-usergeneratedcontent.net/\x77\x65\x62\x70smalltn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"
+	if gotURL != want {
+		t.Fatalf("smalltn thumb proxy path: got %q want %q", gotURL, want)
+	}
+	if rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
+		t.Fatalf("smalltn thumb proxy CORP: got %q", rec.Header().Get("cross-origin-resource-policy"))
 	}
 }
 
@@ -219,12 +263,12 @@ func TestViewerThumbProxyUsesAvifTNBaseAndContent(t *testing.T) {
 	}
 }
 
-func TestViewerThumbProxyLocalFirstWhenGalleryQuery(t *testing.T) {
+func TestViewerThumbProxyTNFirstWhenGalleryQueryAndLocalExists(t *testing.T) {
 	v, galleryRoot := newTestViewer(t, "")
 	var gotURL string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		gotURL = rawurl
-		return []byte("cdn"), nil
+		return []byte("tn"), nil
 	}
 	if err := os.MkdirAll(filepath.Join(galleryRoot, "4252697"), 0o755); err != nil {
 		t.Fatal(err)
@@ -235,14 +279,39 @@ func TestViewerThumbProxyLocalFirstWhenGalleryQuery(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn" {
+		t.Fatalf("TN-first thumb: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if gotURL == "" || !strings.Contains(gotURL, "tn.") {
+		t.Errorf("hitomi work page should try TN first even when local exists: got %q", gotURL)
+	}
+}
+
+func TestViewerThumbProxyFallsBackToLocalWhenTNMissingAndLocalExists(t *testing.T) {
+	v, galleryRoot := newTestViewer(t, "")
+	var gotURL string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		gotURL = rawurl
+		if strings.Contains(rawurl, "tn.") {
+			return nil, errors.New("tn missing")
+		}
+		return []byte("cdn"), nil
+	}
+	if err := os.MkdirAll(filepath.Join(galleryRoot, "4252697"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(galleryRoot, "4252697", sampleHash+".webp"), []byte("local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697&variant=smalltn", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "local" {
-		t.Fatalf("local thumb: code %d body %q", rec.Code, rec.Body.String())
+		t.Fatalf("TN missing local fallback: code %d body %q", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
-		t.Fatalf("local thumb headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
-	}
-	if gotURL != "" {
-		t.Errorf("local thumb should not fetch TN: got %q", gotURL)
+	wantTN := "https://\x62\x74\x6e.gold-usergeneratedcontent.net/\x77\x65\x62\x70smalltn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"
+	if gotURL != wantTN {
+		t.Errorf("TN smalltn path: got %q want %q", gotURL, wantTN)
 	}
 }
 
@@ -316,7 +385,7 @@ func TestSearchResultUsesCoverOnlyThumbnail(t *testing.T) {
 	v, _ := newTestViewer(t, galleryJSON)
 	out := v.searchResult(1)
 	wantFormat := imageFormat(v.cfg)
-	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat + "&gallery=1"
+	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat + "&gallery=1&variant=bigtn"
 	if out["thumbnail"] != wantThumb {
 		t.Errorf("thumbnail: got %v want %s", out["thumbnail"], wantThumb)
 	}
@@ -325,20 +394,29 @@ func TestSearchResultUsesCoverOnlyThumbnail(t *testing.T) {
 	}
 }
 
-func TestEmbeddedUIThumbUsesServerFormat(t *testing.T) {
+func TestEmbeddedUIThumbUsesHitomiTNVariants(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(page)
+	if strings.Contains(s, `if (!entry.local && i !== 0) return;`) {
+		t.Errorf("ui reader strip must not hide non-local hitomi TN entries: got %q", s)
+	}
 	if !strings.Contains(s, `current.format || entry.format || "webp"`) || strings.Contains(s, "fileFormatFromName(entry.name)") {
-		t.Errorf("ui thumb should prefer server format: got %q", s)
+		t.Errorf("ui thumb should prefer server TN format: got %q", s)
 	}
-	if !strings.Contains(s, `thumbURL(entry.hash, current.format || entry.format || "webp", current.id)`) {
-		t.Errorf("ui reader strip should pass current.id for local-first proxy: got %q", s)
+	if !strings.Contains(s, `return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";`) {
+		t.Errorf("ui reader strip should use hitomi work page TN variants: got %q", s)
 	}
-	if !strings.Contains(s, `if (!entry.local && i !== 0) return;`) {
-		t.Errorf("ui reader strip should render only cover and local files: got %q", s)
+	if !strings.Contains(s, `thumbURL(entry.hash, current.format || entry.format || "webp", current.id, variant)`) {
+		t.Errorf("ui reader strip should pass TN variant and gallery id: got %q", s)
+	}
+	if !strings.Contains(s, `const group = stripGroupPage();`) || !strings.Contains(s, `Math.max(1, Math.floor((current.page - 1) / 50) + 1);`) {
+		t.Errorf("ui reader strip should render hitomi work page group of 50 entries: got %q", s)
+	}
+	if !strings.Contains(s, "const marker = entry.local ? \" title='local'\" : \"\";") {
+		t.Errorf("ui should keep local as app feature marker, not filter: got %q", s)
 	}
 }
 
