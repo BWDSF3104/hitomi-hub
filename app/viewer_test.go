@@ -709,6 +709,23 @@ func TestEmbeddedUIStripControlsUseSelectableGroup(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIIndependentScrollPanels(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }`) {
+		t.Errorf("body should constrain the viewport so panels can scroll independently: got %q", s)
+	}
+	if !strings.Contains(s, `flex: 1; min-height: 0;`) {
+		t.Errorf(".cols should take the remaining viewport height without allowing inner panels to expand the page scroll: got %q", s)
+	}
+	if !strings.Contains(s, `.side { width: 30rem; height: 100%; min-height: 0; overflow-y: auto; }`) || !strings.Contains(s, `.main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }`) {
+		t.Errorf(".side and .main should fill the viewport height and scroll independently: got %q", s)
+	}
+}
+
 func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

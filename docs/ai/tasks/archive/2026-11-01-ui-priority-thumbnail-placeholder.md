@@ -439,3 +439,29 @@ Actual screen and stale verification:
   - `#thumbs img`: `50/50`
 
 Stale known issue `docs/ai/known-issues/2026-11-01-stale-async-status-strip-writes.md` is resolved.
+
+### CP16 independent scroll panels
+
+Implementation:
+- `body` constrains the viewport: `height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column;`.
+- `.side` and `.main` fill `.cols` height and scroll independently with `height: 100%; min-height: 0; overflow-y: auto;`.
+
+Verification:
+- `go test .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass, `21.563s`.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.cp18.exe .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass.
+- Cache-less ongoing server process: `bgp_197a46b53001g5Ml5Id720ruZ4`, root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`, URL `http://127.0.0.1:8736`.
+- Actual screen URL: `http://127.0.0.1:8736/?x=cp18-scroll-fixed#/g/4252697/page/1`
+  - `bodyOverflow`: `hidden`
+  - `sideOverflowY`: `auto`
+  - `mainOverflowY`: `auto`
+  - `sideScrollable`: `true`
+  - `mainScrollable`: `true`
+  - `bodyScrollTop`: `0`
+  - `sideScrollTop`: `3762`, `mainScrollTop`: `0` after user-driven scrolling, proving side and main scroll independently.
+  - Actual display pass remained true: `#reader img` `1/1`, `#results img` `25/25`, `#thumbs img` `50/50`.
+  - `readerClass`: `reader single landscape`
+  - `stripControlsCount`: `4`
+  - `stripGroupStatus`: `strip group 1/5`
+  - `prefetchStatus`: `full display cache 203/203 | no full 0/203 | TN display fallback disabled`
+
+Backlog `#10` is completed and removed.
