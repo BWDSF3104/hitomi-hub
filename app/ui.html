@@ -210,6 +210,8 @@ const sourceTypeByEntry = new Map();
 const activeObjectUrlKeys = new Set();
 const galleryCache = new Map();
 const searchCardCache = new Map();
+const titleGroups = new Map();
+const TITLE_GROUPS_STORAGE_KEY = "hitomi_hub_title_groups";
 const galleryFormats = new Map();
 let currentSearchTotal = 0;
 let perfStatus = { searchMs: 0, serverTiming: "", cardsLoaded: 0, cardTotalMs: 0, cacheDistribution: {} };
@@ -1131,14 +1133,51 @@ function searchCardCoverSource(card) {
   return card && card.thumbnail ? card.thumbnail : "";
 }
 
+function normalizeTitleKey(r) {
+  return String(r.title || r.japanese_title || r.id || "").trim().toLowerCase();
+}
+
+function loadTitleGroups() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TITLE_GROUPS_STORAGE_KEY));
+    if (!raw) return;
+    for (const [key, group] of Object.entries(raw)) titleGroups.set(key, group);
+  } catch (err) {}
+}
+
+function saveTitleGroups() {
+  try {
+    localStorage.setItem(TITLE_GROUPS_STORAGE_KEY, JSON.stringify(Object.fromEntries(titleGroups)));
+  } catch (err) {}
+}
+
+function setSearchTitleGroup(r) {
+  const key = normalizeTitleKey(r);
+  if (!key || r.id === undefined) return;
+  const existing = titleGroups.get(key);
+  if (!existing || existing.language !== "japanese" || r.language === "japanese") {
+    titleGroups.set(key, { bestId: r.id, language: r.language || "", name: r.japanese_title || r.title || String(r.id) });
+    saveTitleGroups();
+  }
+}
+
+function sameTitleJapaneseAnchor(r) {
+  const key = normalizeTitleKey(r);
+  const group = titleGroups.get(key);
+  if (!key || !group || r.language === "japanese" || group.language !== "japanese" || Number(group.bestId) === Number(r.id)) return "";
+  return "<div class='meta'>同名の日本語版: <a href='" + route(group.bestId, 1) + "'" + targetAttr() + ">#" + group.bestId + "</a></div>";
+}
+
 function renderSearchCard(r) {
   searchCardCache.set(r.id, r);
+  setSearchTitleGroup(r);
   const key = r.files && r.files[0] ? fullCacheKey(r.files[0], r.id) : "";
   const thumbnail = r.thumbnail || "";
   const tags = (r.tags || []).join(", ");
   const tagsTitle = tags ? " title='" + escapeHTML(tags) + "'" : "";
+  const anchor = sameTitleJapaneseAnchor(r);
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-key='" + key + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
-  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div></div></li>";
+  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
 }
 
 async function loadSearchCardCover(r, searchGen = searchGeneration) {
@@ -1424,6 +1463,7 @@ window.addEventListener("hashchange", async () => {
   }
 });
 
+loadTitleGroups();
 loadSpreadDirection();
 const spreadButton = document.getElementById("spread-direction");
 if (spreadButton) spreadButton.textContent = spreadDirection;

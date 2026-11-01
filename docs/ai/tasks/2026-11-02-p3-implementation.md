@@ -230,6 +230,33 @@ Verification:
   - First warm run showed `/api/search 11833ms`, server `search=9478;record=2350`, cards `26496ms` before search-card `x-cache` response headers were added.
 - Screenshot: `scratch/hitomi-usage/p3-10-search-measurement.png`
 
+## Checkpoint #17 same-title Japanese anchor
+
+Implemented in `app/ui.html`:
+
+- Full dedup was not adopted. The adopted low-risk anchor-only display is used.
+- Added `titleGroups` Map and `TITLE_GROUPS_STORAGE_KEY`.
+- `normalizeTitleKey(r)` uses normalized `title || japanese_title || id` so same original title entries group across languages.
+- Japanese entries become the group best entry.
+- `loadTitleGroups()` / `saveTitleGroups()` persists group cache separately from `SEARCH_STORAGE_KEY`.
+- `renderSearchCard(r)` calls `setSearchTitleGroup(r)` and appends `同名の日本語版: #id` anchor for non-Japanese cards when the group best entry is Japanese.
+- Hide is not performed by default.
+
+Tests in `app/viewer_test.go`:
+
+- `TestEmbeddedUIHasSameTitleJapaneseAnchor`
+
+Verification:
+
+- `go test -count=1 .`: pass, `23.624s`
+- `go vet .`: pass
+- Canonical exe rebuilt after test pass.
+- Screen verify cache-less group cache reload:
+  - URL: `http://127.0.0.1:8736/?x=anchor17-normalized-reload#/q/kemo%20nee-san%2010/page/1`
+  - First card for `Kemo Nee-san 10` (`chinese`) showed:
+    - `同名の日本語版: #4252697`
+  - Screenshot: `scratch/hitomi-usage/p3-17-same-title-japanese-anchor.png`
+
 ## Verification
 
 No separate verification beyond checkpoint sections yet.

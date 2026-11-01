@@ -1607,6 +1607,38 @@ func TestEmbeddedUIHasSearchMeasurementStatus(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIHasSameTitleJapaneseAnchor(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `const titleGroups = new Map();`) || !strings.Contains(s, `const TITLE_GROUPS_STORAGE_KEY = "hitomi_hub_title_groups";`) {
+		t.Errorf("ui should keep same-title Japanese group cache separately from search storage: got %q", s)
+	}
+	if !strings.Contains(s, `function normalizeTitleKey(r) {`) || !strings.Contains(s, `String(r.title || r.japanese_title || r.id`) || !strings.Contains(s, `function loadTitleGroups() {`) || !strings.Contains(s, `function saveTitleGroups() {`) || !strings.Contains(s, `function setSearchTitleGroup(r) {`) || !strings.Contains(s, `function sameTitleJapaneseAnchor(r) {`) {
+		t.Errorf("ui should expose same-title group helpers: got %q", s)
+	}
+	if !strings.Contains(s, `Object.fromEntries(titleGroups)`) || !strings.Contains(s, `localStorage.setItem(TITLE_GROUPS_STORAGE_KEY`) {
+		t.Errorf("same-title group cache should persist in localStorage separately from SEARCH_STORAGE_KEY: got %q", s)
+	}
+
+	renderStart := strings.Index(s, "function renderSearchCard(r) {")
+	if renderStart < 0 {
+		t.Fatalf("renderSearchCard function not found")
+	}
+	renderBody := s[renderStart:strings.Index(s, "async function loadSearchCardCover(")]
+	if !strings.Contains(renderBody, `setSearchTitleGroup(r);`) || !strings.Contains(renderBody, `sameTitleJapaneseAnchor(r)`) || !strings.Contains(renderBody, `anchor + `) {
+		t.Errorf("renderSearchCard should append same-title Japanese anchor without default hide: got %q", renderBody)
+	}
+	if !strings.Contains(s, `同名の日本語版`) {
+		t.Errorf("same-title Japanese anchor text should be exposed: got %q", s)
+	}
+	if !strings.Contains(s, `loadTitleGroups();`) {
+		t.Errorf("ui should load same-title group cache before search restore: got %q", s)
+	}
+}
+
 func TestEmbeddedUIShowsGalleryViewerPositionOnly(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
