@@ -132,6 +132,7 @@ let tnDone = 0;
 let errorDone = 0;
 let prefetchTotal = 0;
 const PREFETCH_CONCURRENCY = 2;
+let fullObjectUrls = [];
 
 function escapeHTML(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -301,8 +302,16 @@ function entrySource(entry) {
 }
 
 async function prefetchPageImage(entry, signal) {
-  const r = await fetch(entrySource(entry), { signal });
+  const r = await fetch(entrySource(entry), { cache: "no-store", signal });
+  if (!r.ok) return "error";
   return r.headers.get("x-cache") || "miss";
+}
+
+function revokeFullObjectUrls() {
+  for (const objectUrl of fullObjectUrls) {
+    URL.revokeObjectURL(objectUrl);
+  }
+  fullObjectUrls = [];
 }
 
 async function loadFullImage(img, entry, signal) {
@@ -310,13 +319,23 @@ async function loadFullImage(img, entry, signal) {
   const targetHash = img.dataset.hash;
   const fullSrc = entrySource(entry);
   try {
-    const r = await fetch(fullSrc, { signal });
+    const r = await fetch(fullSrc, { cache: "no-store", signal });
     if (signal.aborted) return;
+    if (!r.ok) {
+      updatePrefetchCounts("error");
+      if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
+        document.getElementById("note").textContent = "image load failed: " + targetPage;
+      }
+      return;
+    }
     const cache = r.headers.get("x-cache") || "miss";
+    const blob = await r.blob();
     updatePrefetchCounts(cache);
     if (Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       img.dataset.fullCache = cache;
-      img.src = fullSrc;
+      const objectUrl = URL.createObjectURL(blob);
+      fullObjectUrls.push(objectUrl);
+      img.src = objectUrl;
     }
   } catch (err) {
     if (signal.aborted) return;
@@ -328,6 +347,7 @@ async function loadFullImage(img, entry, signal) {
 }
 
 function renderReader() {
+  revokeFullObjectUrls();
   const container = document.getElementById("reader");
   if (!container || !current.id) return;
   const items = readerItems();

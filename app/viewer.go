@@ -147,9 +147,14 @@ func safeCachePath(cacheRoot, hash, format string) (string, error) {
 }
 
 func writeImage(w http.ResponseWriter, format string, data []byte, cacheState string) {
-	setImageHeaders(w, format)
-	w.Header().Set("x-cache", cacheState)
-	w.Write(data)
+	setImageHeaders(w, format);
+	if cacheState == "tn" {
+		w.Header().Set("cache-control", "no-store");
+	} else {
+		w.Header().Set("cache-control", "private, max-age=604800");
+	}
+	w.Header().Set("x-cache", cacheState);
+	w.Write(data);
 }
 
 func (v *viewer) serveStoredImage(w http.ResponseWriter, format string, path string, cacheState string) bool {

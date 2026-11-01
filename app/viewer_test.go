@@ -174,6 +174,9 @@ func TestViewerImageProxyServesSameOriginWebp(t *testing.T) {
 	if rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
 		t.Fatalf("image proxy CORP: got %q", rec.Header().Get("cross-origin-resource-policy"))
 	}
+	if rec.Header().Get("cache-control") != "private, max-age=604800" {
+		t.Fatalf("image proxy cache-control: got %q", rec.Header().Get("cache-control"))
+	}
 }
 
 func TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing(t *testing.T) {
@@ -197,6 +200,9 @@ func TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing(t *testing.T) {
 	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
 		t.Fatalf("image TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
 	}
+	if rec.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("image TN fallback cache-control: got %q", rec.Header().Get("cache-control"))
+	}
 }
 
 func TestViewerImageProxyFallsBackToSmalltnVariantWhenBigtnTNMissing(t *testing.T) {
@@ -219,6 +225,9 @@ func TestViewerImageProxyFallsBackToSmalltnVariantWhenBigtnTNMissing(t *testing.
 	}
 	if len(urls) != 4 || strings.Contains(urls[0], "tn.") || !strings.Contains(urls[1], "/webpbigtn/") || !strings.Contains(urls[2], "/webpsmallbigtn/") || !strings.Contains(urls[3], "/webpsmalltn/") {
 		t.Fatalf("image TN variant order: got %v", urls)
+	}
+	if rec.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("image TN variant cache-control: got %q", rec.Header().Get("cache-control"))
 	}
 }
 
@@ -245,6 +254,9 @@ func TestViewerImageProxyFallsBackToAvifSmalltnVariantForHasavif(t *testing.T) {
 	}
 	if rec.Header().Get("content-type") != "image/avif" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
 		t.Fatalf("image avif TN fallback headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
+	}
+	if rec.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("image avif TN fallback cache-control: got %q", rec.Header().Get("cache-control"))
 	}
 }
 
@@ -650,8 +662,8 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 2;`) {
 		t.Errorf("ui should use cancellable bounded prefetch concurrency: got %q", s)
 	}
-	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(entrySource(entry), { signal })") {
-		t.Errorf("ui should prefetch full images background through abortable entry source fetch: got %q", s)
+	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(entrySource(entry), { cache: \"no-store\", signal })") {
+		t.Errorf("ui should prefetch full images background through abortable no-store entry source fetch: got %q", s)
 	}
 	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status) {`) || !strings.Contains(s, `tnDone`) {
 		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
@@ -733,8 +745,11 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `gap: 0;`) || !strings.Contains(s, `--reader-page-width: min(45vw, 500px);`) || !strings.Contains(s, `--reader-page-height: min(78vh, 700px);`) || !strings.Contains(s, `width: min(var(--reader-page-width), 100%);`) || !strings.Contains(s, `object-fit: contain;`) {
 		t.Errorf("ui should fix reader display size without gap between pages: got %q", s)
 	}
-	if !strings.Contains(s, `async function loadFullImage(img, entry, signal) {`) || !strings.Contains(s, `fetch(fullSrc, { signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `img.dataset.fullCache = cache`) || !strings.Contains(s, `img.src = fullSrc`) {
-		t.Errorf("ui should replace placeholder thumbnail after checking x-cache, while counting TN separately: got %q", s)
+	if !strings.Contains(s, `async function loadFullImage(img, entry, signal) {`) || !strings.Contains(s, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `img.dataset.fullCache = cache`) || !strings.Contains(s, `URL.createObjectURL(blob)`) || !strings.Contains(s, `img.src = objectUrl`) {
+		t.Errorf("ui should replace placeholder thumbnail from a no-store fetched image bytes, while counting TN separately: got %q", s)
+	}
+	if !strings.Contains(s, `let fullObjectUrls = [];`) || !strings.Contains(s, `function revokeFullObjectUrls() {`) || !strings.Contains(s, `revokeFullObjectUrls();`) {
+		t.Errorf("ui should revoke reader object URLs when the reader is re-rendered: got %q", s)
 	}
 	if !strings.Contains(s, `function renderReader() {`) || !strings.Contains(s, `entryPlaceholder(entry)`) || !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `loadFullImage(img, item.entry, signal)`) {
 		t.Errorf("ui should render placeholder items and load full images through background prefetch: got %q", s)
