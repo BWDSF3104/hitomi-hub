@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-01
-**Next Action**: 完成フォルダの manifest（exe + data ファイル）整備と、検索/閲覧/DL・既読・お気に入り層の実装。スキャン層の Go port は parity 検証済み
+**Next Action**: 残るknown issue の対応（main ループでの YARA の役割分担・`ggset.go` snapshot の live gg.js とのずれ）。実装済み層（scan・search・download・read/fav・viewer）は checkpoint 8 まで完了・commit 済み（`12f71fc` 以降）
 
 ## 意図 / 背景
 
