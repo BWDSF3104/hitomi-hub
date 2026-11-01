@@ -833,6 +833,55 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id) {")
+	if updateStart < 0 {
+		t.Fatalf("updatePrefetchCounts function not found")
+	}
+	updateEnd := strings.Index(s, "\nfunction entrySource(entry, galleryId = current.id) {")
+	if updateEnd < 0 {
+		t.Fatalf("updatePrefetchCounts body end not found")
+	}
+	updateBody := s[updateStart:updateEnd]
+	if !strings.Contains(updateBody, `galleryId !== current.id`) || !strings.Contains(updateBody, `backgroundGalleryId !== galleryId`) {
+		t.Errorf("updatePrefetchCounts should not write status for stale gallery/background targets: got %q", updateBody)
+	}
+	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id) {")
+	if prefetchStart < 0 {
+		t.Fatalf("prefetchPageImage function not found")
+	}
+	prefetchBody := s[prefetchStart:strings.Index(s, "\nfunction revokeFullObjectUrls() {")]
+	if strings.Index(prefetchBody, `galleryId !== current.id || backgroundGalleryId !== galleryId`) >= strings.Index(prefetchBody, `storeFullCache(entry,`) {
+		t.Errorf("prefetchPageImage should guard stale background writes before storing status or object URL: got %q", prefetchBody)
+	}
+	storeStart := strings.Index(s, "function storeFullCache(entry, status, objectUrl, galleryId = current.id) {")
+	if storeStart < 0 {
+		t.Fatalf("storeFullCache function not found")
+	}
+	storeBody := s[storeStart:strings.Index(s, "\nasync function prefetchPageImage(entry, signal, galleryId = current.id) {")]
+	if !strings.Contains(storeBody, `galleryId === current.id && backgroundGalleryId === galleryId`) {
+		t.Errorf("storeFullCache should update strip DOM only for the current background target: got %q", storeBody)
+	}
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
+	if loadStart < 0 {
+		t.Fatalf("loadFullImage function not found")
+	}
+	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	loadGuard := strings.Index(loadBody, `if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;`)
+	noFullStore := strings.Index(loadBody, `storeFullCache(entry, "no_full", null, galleryId);`)
+	if loadGuard < 0 || noFullStore < 0 || loadGuard >= noFullStore {
+		t.Errorf("loadFullImage should return before stale status or no_full store writes: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `if (signal.aborted) return;`) {
+		t.Errorf("loadFullImage should stop stale background work when aborted: got %q", loadBody)
+	}
+}
+
 func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

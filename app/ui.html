@@ -441,6 +441,7 @@ function renderGalleryLoading(id, page, second) {
 }
 
 function updatePrefetchCounts(status, entry, galleryId = current.id) {
+  if (galleryId !== current.id || backgroundGalleryId !== galleryId) return;
   const key = fullCacheKey(entry, galleryId);
   if (prefetchedEntries.has(key)) return;
   prefetchedEntries.set(key, status);
@@ -463,18 +464,22 @@ function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
   if (objectUrl && !fullObjectUrls.has(objectUrl)) fullObjectUrls.add(objectUrl);
   fullCache.set(key, { status, objectUrl });
-  if (objectUrl) updateThumbCache(key, objectUrl);
+  if (objectUrl && galleryId === current.id && backgroundGalleryId === galleryId) {
+    updateThumbCache(key, objectUrl);
+  }
   if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
     revokeFullObjectUrls();
   }
 }
 
 async function prefetchPageImage(entry, signal, galleryId = current.id) {
+  if (galleryId !== current.id || backgroundGalleryId !== galleryId) return "error";
   const key = fullCacheKey(entry, galleryId);
   if (fullCache.has(key)) return fullCache.get(key).status;
   const fullSrc = entrySource(entry, galleryId);
   const r = await fetch(fullSrc, { cache: "no-store", signal });
   if (signal.aborted) return "error";
+  if (galleryId !== current.id || backgroundGalleryId !== galleryId) return "error";
   if (!r.ok) {
     const cache = r.headers.get("x-cache") || "error";
     storeFullCache(entry, cache, null, galleryId);
@@ -482,7 +487,10 @@ async function prefetchPageImage(entry, signal, galleryId = current.id) {
     return cache;
   }
   const cache = r.headers.get("x-cache") || "miss";
-  const objectUrl = URL.createObjectURL(await r.blob());
+  if (galleryId !== current.id || backgroundGalleryId !== galleryId) return cache;
+  const blob = await r.blob();
+  if (galleryId !== current.id || backgroundGalleryId !== galleryId) return cache;
+  const objectUrl = URL.createObjectURL(blob);
   storeFullCache(entry, cache, objectUrl, galleryId);
   updatePrefetchCounts(cache, entry, galleryId);
   return cache;

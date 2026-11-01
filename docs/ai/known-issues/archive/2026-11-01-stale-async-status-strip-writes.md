@@ -1,7 +1,7 @@
 # loading-time switch で stale async completion が status / strip を汚染する
 
 **Date**: 2026-11-01
-**Status**: 未解決
+**Status**: resolved, implementation verified 2026-11-01
 
 ## 症状
 
@@ -35,6 +35,18 @@
 
 Status, strip images, priority, title, route, and counts should be updated only for the latest target, or should use per-gallery counts in a way that does not pollute the current display intent. A stale async completion must not update status text or strip DOM.
 
-## Resolution scope
+## 解決
 
-No implementation change was made in this record pass. Implementation approval is required before fixing stale status/strip writes.
+- `updatePrefetchCounts()` returns before status updates when `galleryId !== current.id || backgroundGalleryId !== galleryId`.
+- `prefetchPageImage()` returns before `storeFullCache()` / `updatePrefetchCounts()` for stale background targets.
+- `storeFullCache()` updates strip DOM only when `galleryId === current.id && backgroundGalleryId === galleryId`.
+- `loadFullImage()` returns before `storeFullCache()` and status counts when `loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration`.
+
+Actual stale verification on cache-less runtime root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`:
+- URL before stale test: `http://127.0.0.1:8736/?x=cp16-stale-search#/g/4252697/page/1`
+- A stale `loadFullImage()` was started for entry `899dc18877a116799a4ab10f2e65d1281f9` with old show/render, while `showGeneration` was advanced to simulate the latest target.
+- `prefetchedEntries` did not gain the stale key.
+- Status text did not change.
+- Counts did not change.
+- `updatePrefetchCounts("full", entry, otherGalleryId)` did not change status, counts, or `prefetchedEntries`.
+- User UI page movement to `#/g/4252697/page/2-3` preserved double display for portrait pages `2` and `3`, and actual display pass remained true: `#reader img` `2/2`, `#results img` `25/25`, `#thumbs img` `50/50`.

@@ -1,3 +1,2 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-01-scan-layer-move.md	進行中	残りは backlog の P2（#8 AVIF の pdf embed、#9 `bookmark_queries.notify` の用途）。完了判定はユーザーの承認後、`current-task.tsv` の行削除と archive 操作で締める
-docs/ai/tasks/2026-11-01-ui-priority-thumbnail-placeholder.md	進行中	CP11 cache-less `no_full` cause was fixed: `parseGG` now matches live `gg.m()` switch polarity. Canonical tests/build and cache-less actual screen passed. Remaining open issue is stale async status/strip pollution recorded in `docs/ai/known-issues/2026-11-01-stale-async-status-strip-writes.md`; implementation approval required before fixing stale writes.

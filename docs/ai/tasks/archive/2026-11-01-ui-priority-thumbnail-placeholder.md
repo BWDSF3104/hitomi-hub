@@ -1,6 +1,6 @@
 # UI priority queue and thumbnail placeholder implementation
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-01
 
 ## 意図 / 背景
@@ -259,8 +259,8 @@ This result is not accepted as completion if the completion requires actual view
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
+- [x] `current-task.tsv` の参照行を削除
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
 
 ## 記録決定 / 元メモ保存（2026-11-01）
@@ -396,4 +396,46 @@ This result is not accepted as completion if the completion requires actual view
   - Status: `full display cache 1/203 | no full 0/203 | TN display fallback disabled`
   - Reader: blob `src`, `naturalWidth=3746`, `naturalHeight=2525`.
 - Runtime-server note: the canonical server `http://127.0.0.1:8731` was not stopped except for the approved EXE update restart. The cache-less verification server was stopped after screenshot confirmation, then a fresh persistent cache-less verification server was restarted at `http://127.0.0.1:8736` with root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`, process ID `bgp_196bb0154001aophdh5vu5ya8s`. This server is to be kept running for future cache-less verification.
-- Stale status/strip pollution remains open: `docs/ai/known-issues/2026-11-01-stale-async-status-strip-writes.md`.
+
+### CP14 strip group controls and already-landscape display
+
+- Completed in task `docs/ai/tasks/archive/2026-11-01-strip-group-and-landscape-double.md`.
+- Resolved known issues archived:
+  - `docs/ai/known-issues/archive/2026-11-01-strip-group-no-user-control.md`
+  - `docs/ai/known-issues/archive/2026-11-01-landscape-entry-forced-double.md`
+
+### CP15 stale async status/strip guard
+
+Code changes:
+- `updatePrefetchCounts()` returns before status writes when `galleryId !== current.id || backgroundGalleryId !== galleryId`.
+- `prefetchPageImage()` returns before `storeFullCache()` / `updatePrefetchCounts()` for stale background targets.
+- `storeFullCache()` updates strip DOM only when `galleryId === current.id && backgroundGalleryId === galleryId`.
+- `loadFullImage()` returns before status/no_full/error/TN writes when `loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration`.
+- `viewer_test.go` added `TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip`.
+
+Verification:
+- `go vet .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass.
+- `go test .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass, `21.395s`.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.cp16.exe .` in `S:\Documents\Kilo_Commons\hitomi-hub\app`: pass.
+- Cache-less ongoing server process for this checkpoint: `bgp_1979b7059001gPUXQ2KGDvqhCb`, root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage-fixed-ongoing`, URL `http://127.0.0.1:8736`.
+
+Actual screen and stale verification:
+- Initial actual screen URL: `http://127.0.0.1:8736/?x=cp16-stale-search#/g/4252697/page/1`
+  - `readerClass`: `reader single landscape`
+  - `readerImageCount`: `1`
+  - `#results img`: `25/25` actual pixel display ok
+  - `#thumbs img`: `50/50` actual pixel display ok
+  - `stripControlsCount`: `4`
+  - `stripGroupStatus`: `strip group 1/5`
+  - `prefetchStatus`: `full display cache 203/203 | no full 0/203 | TN display fallback disabled`
+- Stale `loadFullImage()` was simulated with old show/render while `showGeneration` was advanced. It did not add the stale key to `prefetchedEntries`, did not change status, and did not change counts.
+- `updatePrefetchCounts("full", entry, otherGalleryId)` did not change status, counts, or `prefetchedEntries`.
+- User UI click `#next` moved to `#/g/4252697/page/2-3` and preserved actual display pass:
+  - `readerClass`: `reader double`
+  - `readerImageCount`: `2`
+  - `readerPages`: `2`, `3`
+  - `#reader img`: `2/2`
+  - `#results img`: `25/25`
+  - `#thumbs img`: `50/50`
+
+Stale known issue `docs/ai/known-issues/2026-11-01-stale-async-status-strip-writes.md` is resolved.
