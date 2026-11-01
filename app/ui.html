@@ -64,6 +64,7 @@
   }
   .reader.double { grid-template-columns: repeat(2, minmax(0, var(--reader-page-width))); }
   .reader:not(.double) { grid-template-columns: minmax(0, var(--reader-page-width)); }
+  .reader.landscape { --reader-page-width: min(92vw, calc(var(--reader-page-height) * 1.6)); grid-template-columns: minmax(0, var(--reader-page-width)); }
   .reader img {
     display: block;
     width: min(var(--reader-page-width), 100%);
@@ -130,6 +131,13 @@
         <button id="fav">お気に入り</button>
       </form>
       <div class="meta">キーボード: ← / → でページ送リ。通常サイズでは見開き。</div>
+      <div id="strip-controls" class="meta">
+        <button id="strip-prev-group">前 group</button>
+        <input id="strip-group" size="4" placeholder="group">
+        <button id="strip-go-group">go</button>
+        <button id="strip-next-group">次 group</button>
+        <span id="strip-group-status" class="meta">strip group -</span>
+      </div>
       <div class="strip" id="thumbs"></div>
     </section>
   </div>
@@ -150,6 +158,7 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
 let current = { id: 0, page: 1, count: 0, favorite: 0, files: [] };
 let viewMode = "double";
 let currentPairEnd = null;
+let stripGroup = null;
 let prefetchAbort = null;
 let backgroundSignal = null;
 let backgroundGalleryId = null;
@@ -276,10 +285,29 @@ function stripItems() {
   }
   return current.files.map((entry, idx) => ({ page: idx + 1, entry, badge: 0 }));
 }
+function stripGroupTotal(items) {
+  return Math.max(1, Math.ceil(items.length / 50));
+}
 function stripGroupPage(items) {
+  const total = stripGroupTotal(items);
+  if (stripGroup && stripGroup >= 1 && stripGroup <= total) return stripGroup;
   const idx = items.findIndex((item) => item.page === current.page);
   if (idx >= 0) return Math.max(1, Math.floor(idx / 50) + 1);
   return Math.max(1, Math.floor((current.page - 1) / 50) + 1);
+}
+function renderStripControls(items, group) {
+  const input = document.getElementById("strip-group");
+  const status = document.getElementById("strip-group-status");
+  const total = stripGroupTotal(items);
+  if (input) input.value = String(group);
+  if (status) status.textContent = "strip group " + group + "/" + total;
+}
+function setStripGroup(group) {
+  if (!current.id) return;
+  const items = stripItems();
+  const total = stripGroupTotal(items);
+  stripGroup = Math.max(1, Math.min(total, Number(group) || 1));
+  renderStrip();
 }
 
 function entryForPage(page) {
@@ -288,15 +316,24 @@ function entryForPage(page) {
 
 function doubleActive() { return viewMode !== "single" && window.innerWidth >= 720; }
 
-function displayMode() {
+function isAlreadyDoublePage(entry) {
+  return entry && Number(entry.width) > Number(entry.height);
+}
+
+function displayModeFor(firstEntry) {
   if (viewMode === "fullscreen") return "fullscreen";
+  if (isAlreadyDoublePage(firstEntry)) return "single landscape";
   if (viewMode === "single" || window.innerWidth < 720) return "single";
   return "double";
 }
 
-function readerClass() {
+function displayMode() { return displayModeFor(entryForPage(current.page)); }
+
+function readerClass(firstEntry = null) {
+  const entry = firstEntry && firstEntry.entry ? firstEntry.entry : firstEntry || entryForPage(current.page);
+  if (isAlreadyDoublePage(entry)) return "reader single landscape";
   if (viewMode === "fullscreen") return "reader fullscreen" + (doubleActive() ? " double" : "");
-  return "reader " + displayMode();
+  return "reader " + displayModeFor(entry);
 }
 
 function displayPlaceholder(entry) { return ""; }
@@ -306,7 +343,7 @@ function readerItems() {
   const firstIdx = items.findIndex((item) => item.page === current.page);
   const first = firstIdx >= 0 ? items[firstIdx] : { page: current.page, entry: entryForPage(current.page), badge: 0 };
   const result = [first];
-  if (doubleActive() && first.entry) {
+  if (doubleActive() && first.entry && !isAlreadyDoublePage(first.entry)) {
     let second = null;
     if (currentPairEnd > current.page) second = { page: currentPairEnd, entry: entryForPage(currentPairEnd), badge: 0 };
     else if (firstIdx >= 0 && firstIdx + 1 < items.length) second = items[firstIdx + 1];
@@ -528,7 +565,7 @@ function renderReader() {
   if (!container || !current.id) return;
   renderGeneration++;
   const items = readerItems();
-  container.className = readerClass();
+  container.className = readerClass(items[0]);
   const parts = [];
   for (const item of items) {
     const entry = item.entry;
@@ -604,6 +641,11 @@ function ensureBackgroundPrefetch(displayed) {
   currentPriorityDone = runPriority(displayed, signal);
 }
 
+function startFullPrefetch(displayed = readerItems()) {
+  if (!current.id) return;
+  ensureBackgroundPrefetch(displayed);
+}
+
 function startBackgroundWorkers(signal) {
   async function worker() {
     while (prefetchQueue.length && !signal.aborted) {
@@ -661,6 +703,7 @@ function renderStrip() {
   const parts = [];
   const items = stripItems();
   const group = stripGroupPage(items);
+  renderStripControls(items, group);
   const start = (group - 1) * 50;
   const end = Math.min(start + 50, items.length);
   for (let i = start; i < end; i++) {
@@ -674,6 +717,7 @@ function renderStrip() {
     parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + fullCacheKey(entry, current.id) + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
+  highlightStrip();
 }
 function highlightStrip() {
   const pages = readerItems().map((item) => item.page);
@@ -683,6 +727,7 @@ function highlightStrip() {
 }
 async function openGallery(id, page, second) {
   const gen = ++openGeneration;
+  stripGroup = null;
   if (prefetchAbort) prefetchAbort.abort();
   if (backgroundSignal) backgroundSignal.abort();
   history.replaceState(null, "", route(id, page, second));
@@ -935,6 +980,19 @@ window.addEventListener("keydown", async (e) => {
   if (e.key === "s") setViewMode("single");
   if (e.key === "f") setViewMode("fullscreen");
 });
+document.getElementById("strip-prev-group").addEventListener("click", () => {
+  setStripGroup(stripGroupPage(stripItems()) - 1);
+});
+document.getElementById("strip-next-group").addEventListener("click", () => {
+  setStripGroup(stripGroupPage(stripItems()) + 1);
+});
+document.getElementById("strip-go-group").addEventListener("click", () => {
+  setStripGroup(Number(document.getElementById("strip-group").value) || 1);
+});
+document.getElementById("strip-group").addEventListener("change", () => {
+  setStripGroup(Number(document.getElementById("strip-group").value) || 1);
+});
+
 window.addEventListener("hashchange", async () => {
   const reader = parseReaderHash(window.location.hash);
   if (reader) { await openGallery(reader.id, reader.page, reader.end); return; }

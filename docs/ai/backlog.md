@@ -7,3 +7,7 @@
 - #7 デバイス間同期 — 不要（ユーザー判断 2026-11-01）
 - #8 AVIF の pdf embed（pure-Go decoder が無い。webp・png・jpeg は decoder あり）
 - #9 `bookmark_queries.notify` の用途（現行実装では未使用）
+- #10 UI scroll separation: search-side panel and viewer/main panel should scroll independently instead of sharing body scroll.
+- #11 Viewer new-tab behavior: direct hash route can already open viewer in a new tab; if desired, add explicit `target="_blank"` links or query-param new-tab policy without breaking same-tab hashchange.
+- #12 Viewer thumbnail strip currently renders only the current 50-item group, not all entries; `stripGroupPage()` selects group by current page.
+

@@ -681,6 +681,34 @@ func TestEmbeddedUIReaderStripUsesFullCacheOrPlaceholder(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIStripControlsUseSelectableGroup(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="strip-controls"`) || !strings.Contains(s, `id="strip-group"`) || !strings.Contains(s, `id="strip-group-status"`) {
+		t.Errorf("ui should expose strip group controls: got %q", s)
+	}
+	if !strings.Contains(s, `let stripGroup = null;`) || !strings.Contains(s, `function stripGroupTotal(items) {`) || !strings.Contains(s, `function setStripGroup(group) {`) {
+		t.Errorf("ui should track a selectable strip group independently from current page: got %q", s)
+	}
+	if !strings.Contains(s, `const group = stripGroupPage(items);`) || !strings.Contains(s, `renderStripControls(items, group);`) {
+		t.Errorf("renderStrip should render the selectable group and update controls: got %q", s)
+	}
+	if strings.Contains(s, `function stripGroupPage(items) {`) && strings.Index(s, `if (stripGroup && stripGroup >= 1 && stripGroup <= total) return stripGroup;`) < 0 {
+		t.Errorf("stripGroupPage should prefer the user-selected group when it is valid: got %q", s)
+	}
+	if !strings.Contains(s, `document.getElementById("strip-prev-group").addEventListener`) || !strings.Contains(s, `document.getElementById("strip-next-group").addEventListener`) {
+		t.Errorf("ui should wire strip group controls to user actions: got %q", s)
+	}
+	if !strings.Contains(s, `async function openGallery(id, page, second) {
+  const gen = ++openGeneration;
+  stripGroup = null;`) {
+		t.Errorf("openGallery should reset the selected strip group for a new gallery target: got %q", s)
+	}
+}
+
 func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
@@ -959,6 +987,21 @@ func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 	if !strings.Contains(s, `function displayMode() {`) || !strings.Contains(s, `function readerItems() {`) || !strings.Contains(s, `function parseReaderHash(hash) {`) {
 		t.Errorf("ui should have reader spread display mode and hash parser: got %q", s)
 	}
+	if !strings.Contains(s, `function isAlreadyDoublePage(entry) {`) || !strings.Contains(s, `Number(entry.width) > Number(entry.height)`) {
+		t.Errorf("ui should classify already landscape/spread entries from entry width and height: got %q", s)
+	}
+	if !strings.Contains(s, `function displayModeFor(firstEntry) {`) || !strings.Contains(s, `function readerClass(firstEntry = null) {`) || !strings.Contains(s, `return "reader single landscape"`) {
+		t.Errorf("ui should render already landscape entries as single landscape: got %q", s)
+	}
+	if !strings.Contains(s, `firstEntry && firstEntry.entry ? firstEntry.entry : firstEntry`) {
+		t.Errorf("readerClass should accept reader items or entries so renderReader can pass the first reader item: got %q", s)
+	}
+	if !strings.Contains(s, `readerClass(items[0])`) {
+		t.Errorf("renderReader should pass the first reader item to readerClass so already landscape entries are not paired: got %q", s)
+	}
+	if !strings.Contains(s, `if (doubleActive() && first.entry && !isAlreadyDoublePage(first.entry))`) {
+		t.Errorf("ui reader items should include second page only when double is active and the first entry is not already a landscape spread: got %q", s)
+	}
 	if !strings.Contains(s, `function route(id, page, second) {`) {
 		t.Errorf("ui route should support hitomi-like #2-3 spread hashes: got %q", s)
 	}
@@ -974,8 +1017,11 @@ func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 	if !strings.Contains(s, `return "reader fullscreen" + (doubleActive() ? " double" : "")`) {
 		t.Errorf("ui should apply reader fullscreen double class when fullscreen double is active: got %q", s)
 	}
-	if !strings.Contains(s, `if (doubleActive() && first.entry)`) {
-		t.Errorf("ui reader items should include second page when fullscreen double is active: got %q", s)
+	if !strings.Contains(s, `if (doubleActive() && first.entry && !isAlreadyDoublePage(first.entry))`) {
+		t.Errorf("ui reader items should include second page when double is active, except already landscape entries: got %q", s)
+	}
+	if !strings.Contains(s, `function startFullPrefetch(displayed = readerItems()) {`) || !strings.Contains(s, `ensureBackgroundPrefetch(displayed);`) {
+		t.Errorf("setViewMode should start full prefetch through a defined helper using the current reader items: got %q", s)
 	}
 	setStart := strings.Index(s, "function setViewMode(mode) {")
 	if setStart < 0 {
