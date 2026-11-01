@@ -1,8 +1,8 @@
 # viewer: 検索実行中表示と FULL 画像 TN variant fallback
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-01
-**Next Action**: 検索 status/lazy card と imageProxy variant fallback を実装し、テスト・画面確認・commit checkpoint
+**Next Action**: 完了として締める。実装・テスト・画面確認済み、commit `7edd5b2`
 
 ## 意図 / 背景
 
