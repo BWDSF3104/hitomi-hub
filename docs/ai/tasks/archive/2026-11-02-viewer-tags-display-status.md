@@ -1,6 +1,6 @@
 # Viewer tags display area and display/status separation
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-02
 **Backlog**: P2 #13, #14
 **Next Action**: Implement tags display area clamp, then implement displayPass/sourceStatus separation and page-switch direct local src; screen-confirm each checkpoint.
