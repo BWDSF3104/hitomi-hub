@@ -88,7 +88,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - `ThumbnailURL` の tn path（実測で確定）: `https://<{a|b}tn>.<domain>/<tn base>/<last hex char>/<prev two hex chars>/<hash>.<format>`。TN base は format で決まる — webp `77656270626967746e`（webpbigtn）・avif `61766966626967746e`（avifbigtn）。`746e626967746e`（tnbigtn）は base として存在せず 404。subdomain は `String.fromCharCode(97 + gg.m(g)) + 'tn'`（common.js）。実測例: `https://btn.gold-usergeneratedcontent.net/77656270626967746e/9/b8/2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89.webp` → 200 `image/webp`。TN に格納されるのは webp・avif ののみ。`fileExt(name)` は tn path に使わない。
 - TN は `referer: https://hitomi.la/` が無いと 404（browser UA でも 404）。client は UA と referer を必ず送る。content-type は format に一致（webp → `image/webp`、avif → `image/avif`）。
 - `validHash` は lowercase hex length `>=3`。Live result hashes は 64 に限らない（48 chars など）。
-- `ggset.go` は `gg.js` の switch values の snapshot（生成時点）。`gg.m(g)` は switch にある value で 0、それ以外で 1。Snapshot（`gg.b = 1793487601/`）は live の現行値（2026-11-01 実測 `1793491201/`）とずれる。TN path は bucket を使わないので影響なし。shard URL は snapshot の値で 200、live の bucket では 404（同一 hash）。再生成時は live で検証してから使うこと（`docs/ai/known-issues/2026-11-01-ggset-snapshot-drift.md`）。
+- `ggset.go` は `gg.js` の snapshot（fallback）。実行時は 1 実行 1 回正典 `gg.js` を読む（`app/gg.go` の `parseGG`・config `hitomi.use_live_gg` 既定 true・失敗時 snapshot へフォールバックし stderr に通知）。`gg.m(g)` は switch の case にある value で 0（`w1`/`atn`）、それ以外 1（`w2`/`btn`）。`gg.b`（shard base）は 1 時間刻みで前進する（実測 `1793491201/` → `1793494802/`）。shard URL は live が指す窓に data が在るときのみ解ける（9:35 に 200 の URL は 10:05 に 404）。TN path は bucket を使わないため影響なし。生成正典: `tools/gen_ggset.py`。tests は rotating 値をハードコードしない（fixture で規則を検証）。
 - Live image proxy sample: `/api/image/098fa2e4529e651af3fe594fa57a57053598502d5ead2533edc03726d1f3f2ce?format=webp` returns `200` WEBP. Reader full image loads width `1997`.
 - Screenshot: `scratch\hitomi-usage\viewer-new-ui-loaded.png` (left cards and right reader visible).
 
@@ -219,6 +219,6 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 ## 留意点
 
-- 現在の規則集は構造検査と重複するため、main ループでは `yr` が「構造 findings なし」のファイルにのみ走る。現行規則では YARA 単独の hit が発生しない（既知問題: `docs/ai/known-issues/2026-11-01-yara-no-op-in-main-loop.md`）
+- main ループは scan target すべてで `yr` を走らせる（構造検査の hit 判定に依存しない）。役割分担: 構造検査は単独 key/entry 条件、YARA は複合条件・参照 entry（`Zip_Reference_Entry`・`PDF_OpenAction_Launch`・`PDF_AA_Script`・`PDF_XFA_Embedded`）。findings の `rule` 列は engine 名（`structural`/`yara`/`virustotal`）、`detail` は検知内容（決定: `docs/ai/decisions/2026-11-01-yara-role-division-and-gate.md`）
 - exe はコミットしない。版・digest の記録は `tools/VERSIONS.md`（go1.27.3 / yr v1.22.1）
 - OS 側のリアルタイム保護（Defender）はアプリから制御しない。external_removal として記録する

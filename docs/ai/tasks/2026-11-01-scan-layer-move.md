@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-01
-**Next Action**: 残るknown issue の対応（main ループでの YARA の役割分担・`ggset.go` snapshot の live gg.js とのずれ）。実装済み層（scan・search・download・read/fav・viewer）は checkpoint 8 まで完了・commit 済み（`12f71fc` 以降）
+**Next Action**: 記録済みの問題は解消（YARA 役割分担・ggset drift → archive）。残りは backlog の P2（#8 AVIF の pdf embed、#9 `bookmark_queries.notify` の用途）。完了判定はユーザーの承認後、`current-task.tsv` の行削除と archive 操作で締める
 
 ## 意図 / 背景
 
@@ -174,6 +174,36 @@ endpoint と呼出し方針は `decisions/2026-11-01-hitomi-client-endpoints.md`
   - browser（playwright）で `#/g/4252697` を開き title/tags・`203 files・local 1（format webp）`・local-first の src を表示。初期 hash は load 時に読む（`ui.html` の load 時 open を追加して再 build 後に確認。favicon 404 のみで console error なし）
 
 checkpoint B commit: `12f71fc`（push 済み）。使い方メモの正典は `docs/ai/usage-memo.md`、完成フォルダ側はコピー。
+
+## checkpoint 9（2026-11-01）: YARA の役割分担と main ループの gate
+
+- `rules/structural.yar` に YARA 固有規則を追加: `Zip_Reference_Entry`（`.url`/`.ini`/`.desktop`）、`PDF_OpenAction_Launch`、`PDF_AA_Script`、`PDF_XFA_Embedded`
+- gate を status 依存から変更: Python `yara_gate(ext, cfg)`、Go `YaraGate(ext, cfg)`。main ループは scan target すべてで YARA を走らせる
+- 決定: `docs/ai/decisions/2026-11-01-yara-role-division-and-gate.md`。known issue は解決して `known-issues/archive/` へ
+
+### Verification（2026-11-01）
+
+- `python -m pytest tests/ -q`（hitomi-hub）→ 16 passed（gate・固有規則・hit 済みファイルへの `yara` 記録）
+- `go vet ./...` clean、`go test -count=1 ./...` → ok（`TestYaraGateRunsForAllScanTargets`、`TestReferenceEntryIsYaraOnlyFinding`）
+- 端到端 `docs/ai/tmp/yaracheck.py`（fixture cbz）: `yara | Zip_Reference_Entry` + `yara | Zip_Path_Traversal` + `yara | Zip_Executable_Entry` + structural findings
+- Common_Operations 側 `python -m pytest tests/ -q` → 109 passed、`pwsh -NoProfile -File tests\smoke_safe_rmdir.ps1`・`smoke_recycle_external.ps1` は正典ツール変更なし（該当なし）
+
+## checkpoint 10（2026-11-01）: gg.js の実行時読取（snapshot は fallback）
+
+- 正典生成スクリプト `tools/gen_ggset.py`（live gg.js → `app/ggset.go`・`--dry-run`）
+- `app/gg.go` に `GG` / `parseGG` / `Client.LoadGG`（1 実行 1 回・失敗時 snapshot、stderr に `gg: snapshot fallback`）。`ImageURL`・`StorageURL`・`ThumbnailURL` は `GG` を受け取る
+- CLI 各ネットワークコマンド（search/gallery/download/check/view）で `loadGG()`。config `hitomi.use_live_gg`（既定 true）
+- tests は rotating な実値をハードコードしない（fixture で規則を検証）。snapshot は非空のみ検証
+- 決定: `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。known issue は解決して `known-issues/archive/` へ
+
+### Verification（2026-11-01）
+
+- `go vet ./...` clean、`go test -count=1 ./...` → ok、`python -m pytest tests/ -q` → 16 passed
+- exe 再ビルド（`-trimpath -ldflags="-s -w"`）→ `output/hitomi-hub/hub.exe`（12.5 MB。`app/scratch/dist/hub.exe` のRelative 出力先 mistake に注意: 正典 exe は `output/hitomi-hub/hub.exe`）
+- live（exe 単体・`view`・呼出し 3 件・間隔 ≥1 s）:
+  - `GET /api/thumb/2d18a9a8…42b89` → `200 image/webp` 55320 bytes（TN は bucket を使わない）
+  - `GET /api/image/2d18a9a8…42b89` → 404。URL は live gg.js の bucket（`1793494802/`）と `m`（`w2`）で組まれていた → 実行時読取は動作しているが、その時点で data が窓に無い
+  - `docs/ai/tmp/gg_probe2.py`（同一 hash の 4 組合せ）→ すべて 404。9:35 に 200 だった `w1`+`1793491201` は 10:05 に 404（bucket は 1 時間刻みで前進）
 
 ## 完了時 Memory Bank 操作
 

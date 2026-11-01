@@ -1,7 +1,7 @@
 # ggset.go の switch snapshot は live gg.js とずれる
 
 **Date**: 2026-11-01
-**Status**: 未修復（運用で回避）
+**Status**: 解決済み（2026-11-01・実行時に正典 gg.js を読み、snapshot は fallback に降格）
 
 ## 症状
 
@@ -27,3 +27,11 @@
 
 - `ggset.go` を再生成するときは live で URL を検証してから使う（同一時点の bucket と switch を使う）。
 - 生成脚本: `Common_Operations\scratch\hitomi-usage\gen_ggset_current.py`（本リポジトリの `docs/ai/tmp/` に写して実行）。
+
+## 解決（2026-11-01）
+
+- 実行時に正典 `gg.js` を 1 実行 1 回読んで URL を組む（`app/gg.go` の `parseGG` / `GG`）。`ggset.go` は offline 時の fallback。生成正典は `tools/gen_ggset.py`。
+- tests は rotating な実値をハードコードしない（fixture で規則を検証）。
+- 追加実測: bucket は 1 時間刻みで前進する（`1793491201` → `1793494802`）。9:35 に 200 だった URL は 10:05 に 404（4 組合せすべて）。drift は snapshot の問題ではなく、shard URL が live の窓に data が在る時点のみ解ける性質。
+
+決定: `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`
