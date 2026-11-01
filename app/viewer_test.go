@@ -1735,6 +1735,199 @@ func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
 	}
 }
 
+func TestViewerAcquisitionCopiesCacheFileIntoTitleFolder(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), root)
+
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(v.cacheRoot, sampleHash+".png")
+	png := []byte("\x89PNG\r\n\x1a\n")
+	if err := os.WriteFile(cachePath, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
+		strings.NewReader(`{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":false}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code: got %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "copied" || out["scan_status"] != "not_evaluated" || out["title"] != "Kemo" {
+		t.Errorf("acquisition: got %v", out)
+	}
+
+	dest := filepath.Join(v.acquisitionRoot, "Kemo", "002.png")
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("dest: %s", err)
+	}
+	if string(data) != string(png) {
+		t.Errorf("dest bytes: got %q", data)
+	}
+	if filepath.Base(dest) != "002.png" {
+		t.Errorf("page filename should use page number, not hash: got %s", dest)
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Errorf("cache source should remain: %s", err)
+	}
+
+	rel, err := filepath.Rel(root, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var path, status, source string
+	if err := db.QueryRow("SELECT path, scan_status, scan_source FROM files WHERE path = ?", rel).Scan(&path, &status, &source); err != nil {
+		t.Fatal(err)
+	}
+	if path != rel || status != "not_evaluated" || source != "acquisition" {
+		t.Errorf("recorded file: got path=%q status=%q source=%q", path, status, source)
+	}
+}
+
+func TestViewerAcquisitionExistingTitleFolderRequiresOverwrite(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), root)
+
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(v.cacheRoot, sampleHash+".png")
+	png := []byte("\x89PNG\r\n\x1a\n")
+	if err := os.WriteFile(cachePath, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	titleDir := filepath.Join(v.acquisitionRoot, "Kemo")
+	if err := os.MkdirAll(titleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
+		strings.NewReader(`{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":false}`)))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || out["status"] != "confirm" {
+		t.Errorf("overwrite false should require confirmation: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(titleDir, "002.png")); err == nil {
+		t.Error("existing title folder should not be written before confirmation")
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
+		strings.NewReader(`{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("overwrite code: got %d body %q", rec.Code, rec.Body.String())
+	}
+	out = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "copied" {
+		t.Errorf("overwrite: got %v", out)
+	}
+	data, err := os.ReadFile(filepath.Join(titleDir, "002.png"))
+	if err != nil {
+		t.Fatalf("overwrite dest: %s", err)
+	}
+	if string(data) != string(png) {
+		t.Errorf("overwrite dest bytes: got %q", data)
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Errorf("cache source should remain: %s", err)
+	}
+}
+
+func TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), root)
+
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "..", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(v.cacheRoot, sampleHash+".png")
+	png := []byte("\x89PNG\r\n\x1a\n")
+	if err := os.WriteFile(cachePath, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
+		strings.NewReader(`{"gallery_id":1,"page":1,"hash":"`+sampleHash+`","format":"png","overwrite":true}`)))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("path outside root: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "path outside acquisition dir") {
+		t.Errorf("path outside root body: got %q", rec.Body.String())
+	}
+}
+
+func TestEmbeddedUIHasAcquisitionHandler(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	if !strings.Contains(s, `id="acquisition-controls"`) ||
+		!strings.Contains(s, `id="acquisition-start"`) ||
+		!strings.Contains(s, `id="acquisition-abort"`) ||
+		!strings.Contains(s, `id="acquisition-status"`) ||
+		!strings.Contains(s, `id="acquisition-results"`) {
+		t.Errorf("ui should expose acquisition button, abort, progress, and per-page results: got %q", s)
+	}
+	if strings.Contains(s, `download button`) || strings.Contains(s, `id="download"`) {
+		t.Errorf("acquisition UI should not use download: got %q", s)
+	}
+
+	if !strings.Contains(s, `function renderAcquisitionStatus() {`) ||
+		!strings.Contains(s, `function appendAcquisitionResult(r) {`) ||
+		!strings.Contains(s, `async function runAcquisition() {`) {
+		t.Errorf("ui should have acquisition handler helpers: got %q", s)
+	}
+	if !strings.Contains(s, `acquisition progress `) || !strings.Contains(s, `acquisitionDone`) || !strings.Contains(s, `acquisitionAbort`) {
+		t.Errorf("ui should track acquisition progress and abort: got %q", s)
+	}
+	if !strings.Contains(s, `window.confirm(`) || !strings.Contains(s, `await post("/api/cache/acquire"`) {
+		t.Errorf("ui should show overwrite confirmation through the acquisition endpoint: got %q", s)
+	}
+	if !strings.Contains(s, `document.getElementById("acquisition-start").addEventListener("click", runAcquisition);`) ||
+		!strings.Contains(s, `document.getElementById("acquisition-abort").addEventListener("click"`) {
+		t.Errorf("acquisition buttons should be wired to acquisition handlers: got %q", s)
+	}
+
+	runStart := strings.Index(s, "async function runAcquisition() {")
+	if runStart < 0 {
+		t.Fatalf("runAcquisition function not found")
+	}
+	runBody := s[runStart:strings.Index(s, "\ndocument.getElementById(\"acquisition-start\")")]
+	if !strings.Contains(runBody, `if (acquisitionAbort) break;`) ||
+		!strings.Contains(runBody, `result.status === "confirm"`) ||
+		!strings.Contains(runBody, `appendAcquisitionResult(`) {
+		t.Errorf("runAcquisition should abort, handle confirmation, and append per-page results: got %q", runBody)
+	}
+}
+
 func TestViewerIndexServesEmbeddedPage(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	rec := httptest.NewRecorder()

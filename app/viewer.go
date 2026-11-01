@@ -18,13 +18,14 @@ import (
 var uiPage embed.FS
 
 type viewer struct {
-	db          *sql.DB
-	cfg         Config
-	client      *Client
-	root        string
-	galleryRoot string
-	cacheRoot   string
-	infoCache   map[int]*GalleryInfo
+	db             *sql.DB
+	cfg            Config
+	client         *Client
+	root           string
+	galleryRoot    string
+	cacheRoot      string
+	acquisitionRoot string
+	infoCache      map[int]*GalleryInfo
 }
 
 func newViewer(db *sql.DB, cfg Config, root string) *viewer {
@@ -33,8 +34,9 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		cfg:         cfg,
 		root:        root,
 		galleryRoot: filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries")),
-		cacheRoot:   filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
-		client:      &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
+		cacheRoot:       filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
+		acquisitionRoot: filepath.Join(root, orDefault(cfg.AcquisitionDir, "acquisition")),
+		client:          &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
 		infoCache:   map[int]*GalleryInfo{},
 	}
 }
@@ -52,6 +54,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("POST /api/read", v.read)
 	mux.HandleFunc("POST /api/fav", v.fav)
 	mux.HandleFunc("POST /api/query", v.query)
+	mux.HandleFunc("POST /api/cache/acquire", v.acquire)
 	mux.HandleFunc("GET /files/{gallery}/{name}", v.serveFile)
 	return mux
 }

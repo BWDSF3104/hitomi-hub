@@ -53,14 +53,15 @@ type UIConfig struct {
 }
 
 type Config struct {
-	DB         string        `json:"db"`
-	GalleryDir string        `json:"gallery_dir"`
-	CacheDir   string        `json:"cache_dir"`
-	Yr         string        `json:"yr"`
-	VirusTotal VTConfig      `json:"virustotal"`
-	Hitomi     HitomiConfig  `json:"hitomi"`
-	Viewer     UIConfig      `json:"viewer"`
-	Limits     Limits        `json:"limits"`
+	DB             string        `json:"db"`
+	GalleryDir     string        `json:"gallery_dir"`
+	CacheDir       string        `json:"cache_dir"`
+	AcquisitionDir string        `json:"acquisition_dir"`
+	Yr             string        `json:"yr"`
+	VirusTotal     VTConfig      `json:"virustotal"`
+	Hitomi         HitomiConfig  `json:"hitomi"`
+	Viewer         UIConfig      `json:"viewer"`
+	Limits         Limits        `json:"limits"`
 }
 
 func fileSize(path string) int64 {
@@ -122,6 +123,9 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.Hitomi.ImageMinIntervalMS == 0 {
 		cfg.Hitomi.ImageMinIntervalMS = 250
+	}
+	if cfg.AcquisitionDir == "" {
+		cfg.AcquisitionDir = "acquisition"
 	}
 	if cfg.Viewer.Port == 0 {
 		cfg.Viewer.Port = 8731

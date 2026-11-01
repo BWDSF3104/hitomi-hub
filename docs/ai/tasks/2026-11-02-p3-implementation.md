@@ -257,6 +257,44 @@ Verification:
     - `同名の日本語版: #4252697`
   - Screenshot: `scratch/hitomi-usage/p3-17-same-title-japanese-anchor.png`
 
+## Checkpoint #12 normalized cache acquisition
+
+Implemented in `app/acquisition.go`, `app/main.go`, `app/viewer.go`, `app/ui.html`:
+
+- Server-side acquisition endpoint was added as `POST /api/cache/acquire`.
+- The UI button is named `acquisition`, not `download`.
+- Acquisition copies source cache files; move is not used.
+- Source cache remains under `cache/images/<hash>.<format>`.
+- Destination is the preconfigured acquisition folder inside the runtime root, default `acquisition`.
+- Title folder is created from the DB gallery title, sanitized for path safety. If no title is available, gallery ID is used as the fallback folder name.
+- Page filenames use page number, such as `001.webp`, not hash.
+- Existing title folders require explicit overwrite confirmation before writing.
+- UI confirms, retries with `overwrite=true`, shows progress, abort, and per-page result statuses: `confirm`, `copied`, `overwrite`, `skipped`, `error`.
+- Acquired files are recorded with `recordFile()` after copy, with `scan_source = acquisition`.
+
+Tests in `app/viewer_test.go`:
+
+- `TestViewerAcquisitionCopiesCacheFileIntoTitleFolder`
+- `TestViewerAcquisitionExistingTitleFolderRequiresOverwrite`
+- `TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot`
+- `TestEmbeddedUIHasAcquisitionHandler`
+
+Verification:
+
+- `go test -count=1 .`: pass, `23.924s`
+- `go vet .`: pass
+- Canonical exe rebuilt after test pass.
+- Screen verify acquisition UI:
+  - URL: `http://127.0.0.1:8736/?x=acquisition12`
+  - Existing title folder `acquisition/1` was precreated to confirm confirmation behavior.
+  - UI results showed:
+    - `page 1 2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89 confirm acquisition\1`
+    - `page 1 2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89 overwrite acquisition\1\001.webp`
+  - Page-number destination filename was confirmed: `acquisition\1\001.webp`.
+  - Source cache remained: `cache\images\2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89.webp`.
+  - Acquisition network check on the screen server showed only local `/api/cache/acquire` requests for the acquisition action. The UI startup routes for lists/search/search-card were intercepted, and no hitomi/image/thumb network request appeared during acquisition.
+  - Screenshot: `scratch/hitomi-usage/p3-12-acquisition-ui.png`
+
 ## Verification
 
 No separate verification beyond checkpoint sections yet.
