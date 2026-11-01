@@ -98,6 +98,34 @@ Verification:
 
 Canonical exe was rebuilt and canonical server restarted with the same test build.
 
+## Checkpoint #15 view mode buttons and state
+
+Implemented in `app/ui.html`:
+
+- Added `#view-mode-buttons` with `data-mode="single|double|fullscreen"`.
+- Added `#view-state` and `renderViewState()`.
+- `setViewMode()`, `showPage()`, `setGalleryMeta()`, `renderGalleryLoading()`, `fullscreenchange`, and resize update view state.
+- Button click uses `setViewMode(button.dataset.mode)` and `button.blur()` to keep keyboard `d/s/f` working.
+- `f` became a fullscreen toggle when fullscreen state is active.
+
+Test added in `app/viewer_test.go`:
+
+- `TestEmbeddedUIHasViewModeButtonsAndState`
+
+Verification:
+
+- `go test .`: pass
+- `go vet .`: pass
+- Screen verify:
+  - URL: `http://127.0.0.1:8731/?x=viewmode#/g/4295693/page/2-3`
+  - Initial state: `view: double・display: single landscape・page 2-3 / 15・fullscreen off`
+  - Clicked `single` button: state became `view: single・display: single landscape・page 2 / 15・fullscreen off`
+  - Button focus cleared to `BODY` after `blur()`.
+  - Pressed `d` after button click: state returned to `view: double` with pair `2-3`.
+  - Screenshot: `scratch/hitomi-usage/p3-15-view-mode-buttons-state.png`
+
+Canonical exe was rebuilt and canonical server restarted with the same test build.
+
 ## Verification
 
 No verification yet.

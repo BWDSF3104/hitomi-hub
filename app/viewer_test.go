@@ -1328,6 +1328,48 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="view-mode-buttons"`) || !strings.Contains(s, `data-mode="single"`) || !strings.Contains(s, `data-mode="double"`) || !strings.Contains(s, `data-mode="fullscreen"`) {
+		t.Errorf("ui should expose view mode buttons: got %q", s)
+	}
+	if !strings.Contains(s, `id="view-state"`) || !strings.Contains(s, `function renderViewState() {`) {
+		t.Errorf("ui should expose view state row: got %q", s)
+	}
+	if !strings.Contains(s, `button.blur();`) || !strings.Contains(s, `e.key === "f"`) {
+		t.Errorf("view mode buttons should preserve keyboard mode by clearing button focus and keep f toggle: got %q", s)
+	}
+	if !strings.Contains(s, `if (viewMode === "fullscreen" && document.fullscreenElement)`) || !strings.Contains(s, `setViewMode("fullscreen");`) {
+		t.Errorf("f should toggle fullscreen when fullscreen state is active: got %q", s)
+	}
+
+	setStart := strings.Index(s, "function setViewMode(mode) {")
+	if setStart < 0 {
+		t.Fatalf("setViewMode function not found")
+	}
+	setBody := s[setStart:strings.Index(s, "\nfunction parseReaderHash(hash) {")]
+	if !strings.Contains(setBody, `renderViewState();`) {
+		t.Errorf("setViewMode should render view state: got %q", setBody)
+	}
+
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+	if !strings.Contains(showBody, `renderViewState();`) {
+		t.Errorf("showPage should render view state for current page indicator: got %q", showBody)
+	}
+
+	if !strings.Contains(s, `window.addEventListener("resize"`) || !strings.Contains(s, `renderViewState();`) {
+		t.Errorf("ui should update view state on resize because doubleActive is evaluated at render time: got %q", s)
+	}
+}
+
 func TestEmbeddedUIHasSearchPrevNextButtons(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

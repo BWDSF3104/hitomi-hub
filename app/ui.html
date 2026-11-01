@@ -131,6 +131,12 @@
           <option value="fullscreen">フルスクリーン</option>
         </select>
         <span class="meta">キーボード: ← / → / d=見開き / s=単一 / f=フルスクリーン</span>
+        <div id="view-mode-buttons" class="meta">
+          <button type="button" data-mode="single">single</button>
+          <button type="button" data-mode="double">double</button>
+          <button type="button" data-mode="fullscreen">fullscreen</button>
+        </div>
+        <div id="view-state" class="meta"></div>
       </div>
       <div id="reader-position" class="meta"></div>
       <div id="note" class="note"></div>
@@ -242,6 +248,7 @@ function setGalleryMeta(data) {
     "<span class='meta'>" + current.count + " files・local " + data.local + "（format " + escapeHTML(data.format) + "）</span>";
   document.getElementById("pagenum").value = current.page;
   renderPosition();
+  renderViewState();
   updateTabTitle(g.japanese_title || g.title || current.id);
 }
 function fileFormatFromName(name) {
@@ -487,6 +494,7 @@ function setViewMode(mode) {
   applyFullscreen();
   renderReader();
   renderPosition();
+  renderViewState();
   startFullPrefetch();
 }
 
@@ -519,6 +527,18 @@ function renderLoadingPosition(id, pageLabel, pairLabel) {
   const el = document.getElementById("reader-position");
   if (!el || !id) return;
   el.textContent = "position: " + pageLabel + pairLabel + " / -";
+}
+
+function renderViewState() {
+  const el = document.getElementById("view-state");
+  if (!el) return;
+  if (!current.id) {
+    el.textContent = "view: " + viewMode + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
+    return;
+  }
+  const pair = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
+  const pageText = pair ? current.page + "-" + pair : String(current.page);
+  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・page " + pageText + " / " + (current.count || "-") + "・fullscreen " + (document.fullscreenElement ? "on" : "off");
 }
 
 function galleryDataFromCard(card) {
@@ -556,6 +576,7 @@ function renderGalleryLoading(id, page, second) {
   if (note) note.textContent = "reader content loading";
   setPrefetchStatus("gallery read load: " + id);
   renderLoadingPosition(id, pageLabel, pairLabel);
+  renderViewState();
   updateTabTitle((card && card.japanese_title) || title || id);
 }
 
@@ -874,6 +895,7 @@ async function showPage() {
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   renderPosition();
+  renderViewState();
   setRoute(current.id, current.page);
   if (showGen !== showGeneration || openGen !== openGeneration) return;
   runBackgroundReadAndLists(showGen, openGen);
@@ -1172,6 +1194,13 @@ document.getElementById("complete").addEventListener("click", async () => {
   await showLists();
 });
 document.getElementById("view-mode").addEventListener("change", (e) => setViewMode(e.target.value));
+document.getElementById("view-mode-buttons").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-mode]");
+  if (!button) return;
+  e.preventDefault();
+  setViewMode(button.dataset.mode);
+  button.blur();
+});
 document.addEventListener("fullscreenchange", () => {
   if (!document.fullscreenElement && viewMode === "fullscreen") {
     viewMode = "single";
@@ -1179,6 +1208,8 @@ document.addEventListener("fullscreenchange", () => {
     if (select) select.value = "single";
     applyFullscreen();
     renderReader();
+    renderPosition();
+    renderViewState();
     startFullPrefetch();
   }
 });
@@ -1194,13 +1225,25 @@ document.getElementById("thumbs").addEventListener("click", async (e) => {
   e.preventDefault();
   await openGallery(Number(t.dataset.id), Number(t.dataset.page));
 });
+window.addEventListener("resize", () => {
+  if (!current.id) return;
+  renderReader();
+  renderPosition();
+  renderViewState();
+});
 window.addEventListener("keydown", async (e) => {
   if (!current.id || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
   if (e.key === "ArrowLeft") { if (movePage(-1)) await showPage(); }
   if (e.key === "ArrowRight") { if (movePage(1)) await showPage(); }
   if (e.key === "d") setViewMode("double");
   if (e.key === "s") setViewMode("single");
-  if (e.key === "f") setViewMode("fullscreen");
+  if (e.key === "f") {
+    if (viewMode === "fullscreen" && document.fullscreenElement) {
+      setViewMode("double");
+    } else {
+      setViewMode("fullscreen");
+    }
+  }
 });
 document.getElementById("strip-prev-group").addEventListener("click", () => {
   setStripGroup(stripGroupPage(stripItems()) - 1);
