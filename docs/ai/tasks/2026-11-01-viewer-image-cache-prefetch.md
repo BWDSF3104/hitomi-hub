@@ -22,12 +22,23 @@
 
 ## Verification
 
+### Checkpoint 1: persistent cache
+
 - `python -m pytest tests/ -q`（Common_Operations 正典テストは本 checkpoint で変更なし）
 - `go vet ./...` → no output, passed。
 - `go test -count=1 ./...` → `hitomi-hub/app 29.917s`, passed。Added tests: normalize/safe cache path, persistent cache hit, TN fallback not persisted, UI background prefetch.
 - `go build -trimpath -ldflags "-s -w" -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → passed。
 - 画面確認 `http://127.0.0.1:8731/#/g/2648601/page/2`: `prefetch-status` = `full prefetch 7/27`, current image `naturalWidth=2059`、`naturalHeight=2880`、note `cdn/TN（未ダウンロード）`, thumbs `27`。スクショ: `scratch\hitomi-usage\image_cache_background_prefetch.png`。
 - Server cache verify: `cache/images` に `.avif` files を確認。既存 cache file `f82b691eb39344f296449aaca795d7c649e81127fc2c66be8a5591e15dc75427` への 2 次 fetch で `x-cache=cache` を確認。
+
+### Checkpoint 2: direct background full-image fetch
+
+- UI は `current.files` の `local_formats` と `hasavif` から full image URL を組み、背景 prefetch では `/api/gallery/<id>/page/<n>` JSON を per-page で呼ばない。
+- `go vet ./...` → no output, passed。
+- `go test -count=1 ./...` → `hitomi-hub/app 30.059s`, passed。Test updated to require `entrySource(entry)`、`AbortController`、`PREFETCH_CONCURRENCY = 2`、nonblocking `startFullPrefetch()`。
+- `go build -trimpath -ldflags "-s -w" -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → passed。
+- 画面確認 reload 後: `prefetch-status` = `full prefetch 27/27`, current image `naturalWidth=2059`、`naturalHeight=2880`, note `cdn/TN（未ダウンロード）`, thumbs `27`。スクショ: `scratch\hitomi-usage\image_cache_background_prefetch_direct.png`。
+- Performance resource check: reload 後の背景 prefetch resource は `/api/image/<hash>?format=avif&gallery=2648601` だけ。`/api/gallery/2648601/page/*` JSON は reload 後の prefetch で確認せず。
 
 ## 完了時 Memory Bank 操作
 

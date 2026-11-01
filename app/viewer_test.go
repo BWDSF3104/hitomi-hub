@@ -650,8 +650,11 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 2;`) {
 		t.Errorf("ui should use cancellable bounded prefetch concurrency: got %q", s)
 	}
-	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(data.src, { signal })") {
-		t.Errorf("ui should prefetch full images background through abortable fetch: got %q", s)
+	if !strings.Contains(s, `function startFullPrefetch() {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(entrySource(entry), { signal })") {
+		t.Errorf("ui should prefetch full images background through abortable entry source fetch: got %q", s)
+	}
+	if !strings.Contains(s, `function entrySource(entry) {`) || !strings.Contains(s, `entry.local_formats`) {
+		t.Errorf("ui should use entry local_formats and remote TN/full format for background prefetch: got %q", s)
 	}
 	if strings.Contains(s, `await startFullPrefetch`) {
 		t.Errorf("showPage should start background prefetch without blocking current page load: got %q", s)

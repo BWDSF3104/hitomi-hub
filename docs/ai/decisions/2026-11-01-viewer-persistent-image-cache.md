@@ -16,3 +16,4 @@
 - UI は `AbortController` と concurrency `2` を使う。
 - order は current page を優先し、その後 current strip group、残 page を扱う。gallery/page change 時に旧 prefetch を abort する。
 - current page は `showPage()` で `img.src` に設定済みとして status 上の 1 件として扱い、背景 fetch では skip する。
+- background prefetch は `current.files` の `local_formats` と `hasavif` から full image URL を組み、per-page `/api/gallery/<id>/page/<n>` JSON を呼ばない。local file は `/files/<id>/<hash>.<local format>`、remote full は `/api/image/<hash>?format=<format>&gallery=<id>` を使う。

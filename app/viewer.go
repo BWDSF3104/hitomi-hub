@@ -286,12 +286,15 @@ func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read_state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	format := imageFormat(v.cfg)
+	baseFormat := imageFormat(v.cfg)
 	files := []map[string]any{}
 	for _, entry := range info.Files {
+		eFormat := entryFormat(entry, baseFormat)
+		localFormats := v.entryLocalFormats(id, entry.Hash, baseFormat, eFormat)
 		files = append(files, map[string]any{
 			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
-			"hasavif": entry.HasAVIF, "local": v.fileLocal(id, entry.Hash, format),
+			"hasavif": entry.HasAVIF, "format": eFormat, "local": len(localFormats) > 0,
+			"local_formats": localFormats,
 		})
 	}
 	jsonOut(w, map[string]any{"gallery": map[string]any{
@@ -299,7 +302,21 @@ func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
 		"language": info.Language, "type": info.Type, "tags": info.Tags, "artists": info.Artists,
 		"groups": info.Groups, "characters": info.Characters, "url": info.URL, "files": files,
 		"scene_indexes": info.SceneIndexes,
-	}, "read_state": state, "local": v.localCount(id), "format": format})
+	}, "read_state": state, "local": v.localCount(id), "format": baseFormat})
+}
+
+func (v *viewer) entryLocalFormats(id int, hash, baseFormat, eFormat string) []string {
+	candidates := []string{baseFormat}
+	if eFormat != baseFormat {
+		candidates = append(candidates, eFormat)
+	}
+	localFormats := []string{}
+	for _, format := range candidates {
+		if v.fileLocal(id, hash, format) {
+			localFormats = append(localFormats, format)
+		}
+	}
+	return localFormats
 }
 
 func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
@@ -325,10 +342,7 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 	baseFormat := imageFormat(v.cfg)
 	entry := info.Files[page-1]
 	format := entryFormat(entry, baseFormat)
-	localFormats := []string{baseFormat}
-	if format != baseFormat {
-		localFormats = append(localFormats, format)
-	}
+	localFormats := v.entryLocalFormats(id, entry.Hash, baseFormat, format)
 	for _, localFormat := range localFormats {
 		local, err := safeGalleryPath(v.galleryRoot, strconv.Itoa(id)+"/"+entry.Hash+"."+localFormat)
 		if err == nil {

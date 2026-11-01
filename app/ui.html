@@ -169,9 +169,16 @@ function setPrefetchStatus(text) {
   if (el) el.textContent = text;
 }
 
-async function prefetchPageImage(page, signal) {
-  const data = await api("/api/gallery/" + current.id + "/page/" + page);
-  await fetch(data.src, { signal });
+function entrySource(entry) {
+  const formats = entry.local_formats || [];
+  if (formats.length) {
+    return "/files/" + current.id + "/" + entry.hash + "." + formats[0];
+  }
+  return "/api/image/" + entry.hash + "?format=" + encodeURIComponent(formatForEntry(entry)) + "&gallery=" + encodeURIComponent(current.id);
+}
+
+async function prefetchPageImage(entry, signal) {
+  await fetch(entrySource(entry), { signal });
 }
 
 function startFullPrefetch() {
@@ -196,7 +203,7 @@ function startFullPrefetch() {
         continue;
       }
       try {
-        await prefetchPageImage(item.page, signal);
+        await prefetchPageImage(item.entry, signal);
         if (signal.aborted) return;
         prefetchDone++;
         setPrefetchStatus("full prefetch " + prefetchDone + "/" + prefetchTotal);
@@ -211,7 +218,12 @@ function startFullPrefetch() {
 
 async function showPage() {
   if (!current.id) return;
-  const data = await api("/api/gallery/" + current.id + "/page/" + current.page);
+  const entry = current.files[current.page - 1];
+  if (!entry) {
+    document.getElementById("note").textContent = "page out of range";
+    return;
+  }
+  const data = { page: current.page, src: entrySource(entry), local: !!entry.local, format: formatForEntry(entry) };
   const img = document.getElementById("image");
   img.onerror = () => document.getElementById("note").textContent = "image load failed";
   img.src = data.src;
