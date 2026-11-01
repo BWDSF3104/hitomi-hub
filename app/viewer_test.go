@@ -315,10 +315,8 @@ func TestViewerThumbProxyFallsBackToLocalWhenTNMissingAndLocalExists(t *testing.
 	}
 }
 
-func TestViewerGalleryFilesIncludeLocalFlags(t *testing.T) {
-	galleryJSON := `var galleryinfo = {"id":"4252697","title":"Kemo","language":"japanese","type":"doujinshi",` +
-		`"files":[{"hash":"` + sampleHash + `","name":"001.jpg"},` +
-		`{"hash":"58e06942c116cdf2bdd416345856f889b4dcd68d76f361f923c34ab84d432688","name":"002.jpg"}]}`
+func TestViewerGalleryFilesIncludeLocalAndHitomiFlags(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"4252697","title":"Kemo","language":"japanese","type":"doujinshi","scene_indexes":[0,1],"files":[{"hash":"` + sampleHash + `","name":"001.jpg","hasavif":1},{"hash":"58e06942c116cdf2bdd416345856f889b4dcd68d76f361f923c34ab84d432688","name":"002.jpg","hasavif":0}]}`
 	v, galleryRoot := newTestViewer(t, galleryJSON)
 	if err := os.MkdirAll(filepath.Join(galleryRoot, "4252697"), 0o755); err != nil {
 		t.Fatal(err)
@@ -336,12 +334,19 @@ func TestViewerGalleryFilesIncludeLocalFlags(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	files := out["gallery"].(map[string]any)["files"].([]any)
+	gallery := out["gallery"].(map[string]any)
+	files := gallery["files"].([]any)
 	if len(files) != 2 {
 		t.Fatalf("files: got %v", files)
 	}
 	if files[0].(map[string]any)["local"] != true || files[1].(map[string]any)["local"] != false {
 		t.Errorf("local flags: got %v", files)
+	}
+	if files[0].(map[string]any)["hasavif"] != float64(1) || files[1].(map[string]any)["hasavif"] != float64(0) {
+		t.Errorf("hasavif flags: got %v", files)
+	}
+	if scene := gallery["scene_indexes"].([]any); len(scene) != 2 || scene[0].(float64) != 0 || scene[1].(float64) != 1 {
+		t.Errorf("scene_indexes: got %v", gallery)
 	}
 }
 
@@ -403,17 +408,23 @@ func TestEmbeddedUIThumbUsesHitomiTNVariants(t *testing.T) {
 	if strings.Contains(s, `if (!entry.local && i !== 0) return;`) {
 		t.Errorf("ui reader strip must not hide non-local hitomi TN entries: got %q", s)
 	}
-	if !strings.Contains(s, `current.format || entry.format || "webp"`) || strings.Contains(s, "fileFormatFromName(entry.name)") {
-		t.Errorf("ui thumb should prefer server TN format: got %q", s)
+	if !strings.Contains(s, `function formatForEntry(entry) {`) || !strings.Contains(s, `entry.hasavif ? "avif" : (current.format || "webp")`) {
+		t.Errorf("ui should use hitomi TN format rules: got %q", s)
 	}
 	if !strings.Contains(s, `return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";`) {
 		t.Errorf("ui reader strip should use hitomi work page TN variants: got %q", s)
 	}
-	if !strings.Contains(s, `thumbURL(entry.hash, current.format || entry.format || "webp", current.id, variant)`) {
+	if !strings.Contains(s, `thumbURL(entry.hash, formatForEntry(entry), current.id, variant)`) {
 		t.Errorf("ui reader strip should pass TN variant and gallery id: got %q", s)
 	}
-	if !strings.Contains(s, `const group = stripGroupPage();`) || !strings.Contains(s, `Math.max(1, Math.floor((current.page - 1) / 50) + 1);`) {
-		t.Errorf("ui reader strip should render hitomi work page group of 50 entries: got %q", s)
+	if !strings.Contains(s, `const items = stripItems();`) || !strings.Contains(s, `const group = stripGroupPage(items);`) {
+		t.Errorf("ui reader strip should use hitomi work page scene items and group of 50 entries: got %q", s)
+	}
+	if !strings.Contains(s, `current.sceneIndexes.slice(0, current.sceneIndexes.length - 1).map`) || !strings.Contains(s, `sceneIndex + 1`) {
+		t.Errorf("ui reader strip should render hitomi scene_indexes pages when present: got %q", s)
+	}
+	if !strings.Contains(s, `item.badge > 1`) {
+		t.Errorf("ui should render hitomi scene badge count for scenes with multiple images: got %q", s)
 	}
 	if !strings.Contains(s, "const marker = entry.local ? \" title='local'\" : \"\";") {
 		t.Errorf("ui should keep local as app feature marker, not filter: got %q", s)

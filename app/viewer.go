@@ -229,13 +229,14 @@ func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
 	for _, entry := range info.Files {
 		files = append(files, map[string]any{
 			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
-			"local": v.fileLocal(id, entry.Hash, format),
+			"hasavif": entry.HasAVIF, "local": v.fileLocal(id, entry.Hash, format),
 		})
 	}
 	jsonOut(w, map[string]any{"gallery": map[string]any{
 		"id": info.ID, "title": info.Title, "japanese_title": info.JapaneseTitle,
 		"language": info.Language, "type": info.Type, "tags": info.Tags, "artists": info.Artists,
 		"groups": info.Groups, "characters": info.Characters, "url": info.URL, "files": files,
+		"scene_indexes": info.SceneIndexes,
 	}, "read_state": state, "local": v.localCount(id), "format": format})
 }
 

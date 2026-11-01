@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-01
-**Next Action**: commit・push はユーザー承認待ち（実装・テスト・画面確認完了）
+**Next Action**: scene_indexes 画面確認完了。記録更新後に commit。push はユーザー承認が必要。
 
 ## 意図 / 背景
 
@@ -30,6 +30,12 @@ hitomi の work page（作品ページ）は local file だけを見せる実装
   - `local` entry は filter ではなく `title='local'`、`data-local`、alt marker として app 機能で表示。
   - main image load failure は note に表示。
 
+追加実装（exact hitomi work page fidelity）:
+- `app/hitomi.go`: `FileEntry.HasAVIF` は hitomi JSON の `hasavif`（number）を `int` として受け、`GalleryInfo.SceneIndexes []int`（`scene_indexes`）を保持。
+- `app/viewer.go`: `/api/gallery/<id>` の JSON に `hasavif` と `scene_indexes` を出力。UI が hitomi の work page item count/format rule を再現できるようにする。
+- `app/ui.html`: `setGalleryMeta()` は `scene_indexes` から hitomi work page の item count を算出。`stripItems()` は `scene_indexes` があれば scene item を page に変換し、block size を badge として保持。`stripGroupPage(items)` は UI group を hitomi work page の 50 item unit に合わせる。`formatForEntry()` は `hasavif` entry で `avif`、その他で server format/webp を使う。badge は CSS `.strip a` と `.badge` で表示。
+- UI の local marker/filter は維持。local は app 機能の marker であり、hitomi work page item を filter しない。
+
 ## Verification
 
 - `go vet ./...` → clean
@@ -39,17 +45,29 @@ hitomi の work page（作品ページ）は local file だけを見せる実装
   - `TestViewerThumbProxyTNFirstWhenGalleryQueryAndLocalExists`: local file があっても hitomi work page の TN-first を維持。
   - `TestViewerThumbProxyFallsBackToLocalWhenTNMissingAndLocalExists`: TN missing 時 local fallback。
   - `TestViewerImageProxyFallsBackToTnBigtnWhenStorageMissing`: full image CDN failure の TN fallback。
-  - `TestEmbeddedUIThumbUsesHitomiTNVariants`: UI filter 廃止、DPR variant、group 50、marker 維持。
+  - `TestEmbeddedUIThumbUsesHitomiTNVariants`: UI filter 廃止、DPR variant、scene items、hasavif format selection、badge、marker 維持。
+  - `TestGalleryParse`: `scene_indexes` と `hasavif` numeric parse。
+  - `TestViewerGalleryFilesIncludeLocalAndHitomiFlags`: local/hasavif flags と `scene_indexes` output。
 - `python -m pytest tests/ -q` → 16 passed
 - build completion exe → `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe`
 
 Screen verification（2026-11-01）:
+
+### no-scene exact check
 - viewer server: `http://127.0.0.1:8731/#/g/2648601/page/1`
 - gallery: `Kumo Hebi no Ecchi Hon`・27 files・local 0
 - reader strip count `27`、loaded `27`、broken `0`、errors `0`。playwright DPR `2` で hitomi work page の `smalltn` variant を使用。
-- sample strip src example: `/api/thumb/30c5ca9585628457f43bdbd7ea6ffbe62a2ff4ce6924a2e1972368d08d99a022?format=webp&gallery=2648601&variant=smalltn` → `naturalWidth 300`。
+- `current.sceneIndexes` was empty and reader strip remained `27` raw-file items.
+- sample strip src example: `/api/thumb/30c5ca9585628457f43bdbd7ea6ffbe62a2ff4ce6924a2e1972368d08d99a022?format=avif&gallery=2648601&variant=smalltn` because `hasavif` is truthy.
 - main image load ok（naturalWidth `640`）。full shard current window では TN bigtn fallback で表示。
 - Screenshot: `scratch\hitomi-usage\screen_hitomi_tn_all_strip.png`
+
+### scene_indexes UI check
+- Actual scene fixture via `webfetch` could not be found because local DNS to `ltn.hitomi.la` failed in Python/Playwright; no external API test script call succeeded.
+- UI check used synthetic `galleryinfo` object in `setGalleryMeta()` with `scene_indexes=[0,1,3]` and four files.
+- Result: hitomi work page item count `2`, badges `2`, scene page links `/g/2648601/page/1` and `/g/2648601/page/2`.
+- `formatForEntry()` selected `format=avif` for `hasavif: 1` and `format=webp` for `hasavif: 0`.
+- Screenshot: `scratch\hitomi-usage\screen_hitomi_scene_ui.png`
 
 ## 完了時 Memory Bank 操作
 

@@ -26,6 +26,8 @@
   .tags, .strip { margin-top: .35rem; }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
   .strip img { width: 90px; height: 90px; }
+  .strip a { position: relative; }
+  .badge { position: absolute; right: 4px; top: 4px; background: #8ab4f8; color: #14161a; padding: 2px 5px; border-radius: 4px; font-size: .8rem; }
   .current { border: 2px solid #8ab4f8; }
   .pageimg { max-width: 100%; max-height: 78vh; background: #1d2126; object-fit: contain; }
 </style>
@@ -106,7 +108,12 @@ function setRoute(id, page) {
 }
 function setGalleryMeta(data) {
   const g = data.gallery, s = data.read_state;
-  current = { id: g.id, page: current.page || s.last_page || 1, count: g.files.length, favorite: s.favorite, files: g.files, format: data.format || "webp" };
+  const sceneIndexes = g.scene_indexes || [];
+  const count = sceneIndexes.length ? sceneIndexes.length - 1 : g.files.length;
+  current = {
+    id: g.id, page: current.page || s.last_page || 1, count, favorite: s.favorite, files: g.files,
+    sceneIndexes, format: data.format || "webp"
+  };
   document.getElementById("gallery").innerHTML =
     "<b>" + escapeHTML(g.title || current.id) + "</b> <span class='meta'>" + escapeHTML(g.language) + " / " + escapeHTML(g.type) + "</span><br>" +
     "<span class='meta'>" + escapeHTML((g.artists || []).join(", ")) + "</span><br>" +
@@ -131,6 +138,24 @@ function thumbURL(hash, format, gallery, variant) {
 function stripVariant() {
   return window.devicePixelRatio === 1 ? "smallsmalltn" : "smalltn";
 }
+function formatForEntry(entry) {
+  return entry.hasavif ? "avif" : (current.format || "webp");
+}
+function stripItems() {
+  if (current.sceneIndexes && current.sceneIndexes.length) {
+    return current.sceneIndexes.slice(0, current.sceneIndexes.length - 1).map((sceneIndex, idx) => ({
+      page: sceneIndex + 1,
+      entry: current.files[sceneIndex],
+      badge: current.sceneIndexes[idx + 1] ? current.sceneIndexes[idx + 1] - sceneIndex : 0
+    }));
+  }
+  return current.files.map((entry, idx) => ({ page: idx + 1, entry, badge: 0 }));
+}
+function stripGroupPage(items) {
+  const idx = items.findIndex((item) => item.page === current.page);
+  if (idx >= 0) return Math.max(1, Math.floor(idx / 50) + 1);
+  return Math.max(1, Math.floor((current.page - 1) / 50) + 1);
+}
 
 async function showPage() {
   if (!current.id) return;
@@ -145,22 +170,22 @@ async function showPage() {
   await showLists();
   highlightStrip();
 }
-function stripGroupPage() {
-  return Math.max(1, Math.floor((current.page - 1) / 50) + 1);
-}
 function renderStrip() {
   const parts = [];
-  const group = stripGroupPage();
+  const items = stripItems();
+  const group = stripGroupPage(items);
   const start = (group - 1) * 50;
-  const end = Math.min(start + 50, current.files.length);
+  const end = Math.min(start + 50, items.length);
   const variant = stripVariant();
   for (let i = start; i < end; i++) {
-    const entry = current.files[i];
-    const page = i + 1;
-    const src = thumbURL(entry.hash, current.format || entry.format || "webp", current.id, variant);
+    const item = items[i];
+    const entry = item.entry;
+    const page = item.page;
+    const src = thumbURL(entry.hash, formatForEntry(entry), current.id, variant);
     const marker = entry.local ? " title='local'" : "";
     const localMark = entry.local ? "・local" : "";
-    parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'></a>");
+    const badge = item.badge > 1 ? "<div class='badge'>" + item.badge + "</div>" : "";
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + "><img class='" + (page === current.page ? "current" : "") + "' data-id='" + current.id + "' data-page='" + page + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
 }

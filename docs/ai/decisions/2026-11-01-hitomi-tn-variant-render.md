@@ -28,3 +28,9 @@ https://<{a|b}tn>.gold-usergeneratedcontent.net/<format><variant>/<last hex char
 - `/api/image/`: local full file -> remote full image -> TN `bigtn` fallback.
 
 This keeps the viewer as an extension of hitomi: remote entries remain visible through hitomi TN, local files remain an app feature.
+
+## Scene and format rules
+
+`scene_indexes` is part of hitomi work page model. UI item count uses `scene_indexes.length - 1` when present; otherwise it uses `files.length`. Each scene item maps to `sceneIndexes[i] + 1`. A scene block is shown as one strip item and its size is shown as a badge when `size > 1`.
+
+TN format selection uses hitomi `hasavif`: `hasavif` truthy uses `avif`; otherwise UI uses server format, default `webp`. `hasavif` in JSON is numeric, so `FileEntry.HasAVIF` is `int`.

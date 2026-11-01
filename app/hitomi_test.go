@@ -236,7 +236,7 @@ func TestGalleryParse(t *testing.T) {
 		if !strings.Contains(rawurl, "/galleries/4294614.js") {
 			t.Errorf("url: got %s", rawurl)
 		}
-		return []byte(`var galleryinfo = {"id":"4294614","title":"Heroine Profile","language":"english","type":"doujinshi","tags":[{"tag":"corruption","female":"1","male":""}],"artists":[{"artist":"alfre-tori"}],"groups":null,"files":[{"hash":"abc","name":"01_1.webp","width":1280,"height":1791}]}`), nil
+		return []byte(`var galleryinfo = {"id":"4294614","title":"Heroine Profile","language":"english","type":"doujinshi","tags":[{"tag":"corruption","female":"1","male":""}],"artists":[{"artist":"alfre-tori"}],"groups":null,"scene_indexes":[0,13,15],"files":[{"hash":"abc","name":"01_1.webp","width":1280,"height":1791,"hasavif":1}]}`), nil
 	}
 	info, err := c.Gallery(4294614)
 	if err != nil {
@@ -251,8 +251,11 @@ func TestGalleryParse(t *testing.T) {
 	if len(info.Artists) != 1 || info.Artists[0] != "alfre-tori" {
 		t.Errorf("artists: got %v", info.Artists)
 	}
-	if len(info.Files) != 1 || info.Files[0].Hash != "abc" {
+	if len(info.Files) != 1 || info.Files[0].Hash != "abc" || info.Files[0].HasAVIF != 1 {
 		t.Errorf("files: got %v", info.Files)
+	}
+	if len(info.SceneIndexes) != 3 || info.SceneIndexes[0] != 0 || info.SceneIndexes[1] != 13 {
+		t.Errorf("scene_indexes: got %v", info.SceneIndexes)
 	}
 }
 

@@ -202,10 +202,11 @@ func SanitizeTerm(term string) string {
 }
 
 type FileEntry struct {
-	Hash   string `json:"hash"`
-	Name   string `json:"name"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
+	Hash    string `json:"hash"`
+	Name    string `json:"name"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	HasAVIF int    `json:"hasavif"`
 }
 
 type GalleryInfo struct {
@@ -220,6 +221,7 @@ type GalleryInfo struct {
 	Characters    []string    `json:"characters"`
 	URL           string      `json:"galleryurl"`
 	Files         []FileEntry `json:"files"`
+	SceneIndexes  []int       `json:"scene_indexes"`
 }
 
 type rawGallery struct {
@@ -234,6 +236,7 @@ type rawGallery struct {
 	Characters    []map[string]string `json:"characters"`
 	GalleryURL    string              `json:"galleryurl"`
 	Files         []FileEntry         `json:"files"`
+	SceneIndexes  []int               `json:"scene_indexes"`
 }
 
 func names(entries []map[string]string, key string) []string {
@@ -273,7 +276,7 @@ func (c *Client) Gallery(id int) (*GalleryInfo, error) {
 	}
 	return &GalleryInfo{
 		ID: galleryID, Title: raw.Title, JapaneseTitle: raw.JapaneseTitle, Language: raw.Language,
-		Type: raw.Type, URL: raw.GalleryURL, Files: raw.Files,
+		Type: raw.Type, URL: raw.GalleryURL, Files: raw.Files, SceneIndexes: raw.SceneIndexes,
 		Tags: names(raw.Tags, "tag"), Artists: names(raw.Artists, "artist"),
 		Groups: names(raw.Groups, "group"), Characters: names(raw.Characters, "character"),
 	}, nil
