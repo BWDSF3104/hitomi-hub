@@ -1,3 +1,2 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-01-scan-layer-move.md	進行中	残りは backlog の P2（#8 AVIF の pdf embed、#9 `bookmark_queries.notify` の用途）。完了判定はユーザーの承認後、`current-task.tsv` の行削除と archive 操作で締める
-docs/ai/tasks/2026-11-02-p3-implementation.md	進行中	Set tests for P3 adopted plans and implement from #16 #11 #13 #15 #18 #14 #10 #17 #12 with screen verify and checkpoint commits

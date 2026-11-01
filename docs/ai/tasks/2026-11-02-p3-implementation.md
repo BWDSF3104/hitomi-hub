@@ -1,8 +1,8 @@
 # Implement P3 adopted plans from lowest difficulty
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-02
-**Next Action**: Set tests for P3 adopted plans and implement from #16 #11 #13 #15 #18 #14 #10 #17 #12 with screen verify and checkpoint commits
+**Next Action**: なし（P3 adopted plans completed）
 
 ## 意図 / 背景
 
@@ -297,10 +297,10 @@ Verification:
 
 ## Verification
 
-No separate verification beyond checkpoint sections yet.
+All P3 checkpoint sections are recorded. The completed order was #16, #11, #13, #15, #18, #14, #10, #17, #12.
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当しない）
+- [x] `backlog.md` の完了項目を削除（P3 completed items removed）
