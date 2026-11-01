@@ -419,6 +419,17 @@ func TestViewerThumbProxyTNFirstWhenGalleryQueryAndLocalExists(t *testing.T) {
 	}
 }
 
+func TestSafeThumbnailCachePathUsesVariantAndStaysInsideThumbCache(t *testing.T) {
+	cacheRoot := filepath.Join("cache", "images")
+	got, err := safeThumbnailCachePath(cacheRoot, sampleHash, "webp", "bigtn")
+	if err != nil || got != filepath.Join(cacheRoot, "thumbs", sampleHash+".webp.bigtn") {
+		t.Errorf("thumb cache path: got %q err %v", got, err)
+	}
+	if _, err := safeThumbnailCachePath(cacheRoot, sampleHash, "../bad", "bigtn"); err == nil {
+		t.Error("unsafe thumb cache format should be rejected")
+	}
+}
+
 func TestViewerThumbProxyUsesFullCacheBeforeTN(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
@@ -432,6 +443,35 @@ func TestViewerThumbProxyUsesFullCacheBeforeTN(t *testing.T) {
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "cache bytes" || rec.Header().Get("x-cache") != "cache" {
 		t.Errorf("thumbProxy should serve full cache before remote TN: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+}
+
+func TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
+	calls := 0
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte("tn"), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn" {
+		t.Fatalf("remote TN thumb: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+	cacheFile := filepath.Join(v.cacheRoot, "thumbs", sampleHash+".webp.bigtn")
+	data, err := os.ReadFile(cacheFile)
+	if err != nil || string(data) != "tn" {
+		t.Fatalf("persistent TN thumb cache: err %v data %q", err, string(data))
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+	if calls != 1 {
+		t.Errorf("TN cache hit should not call network: calls %d", calls)
+	}
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn-cache" {
+		t.Errorf("TN cache hit: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
 }
 

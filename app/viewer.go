@@ -146,6 +146,18 @@ func safeCachePath(cacheRoot, hash, format string) (string, error) {
 	return filepath.Join(cacheRoot, hash+"."+format), nil
 }
 
+func safeThumbnailCachePath(cacheRoot, hash, format, variant string) (string, error) {
+	if !validHash(hash) {
+		return "", errors.New("invalid hash")
+	}
+	format = normalizeFormat(format)
+	if format == "" {
+		return "", errors.New("invalid format")
+	}
+	variant = TNVariantSuffix(variant)
+	return filepath.Join(cacheRoot, "thumbs", hash+"."+format+"."+variant), nil
+}
+
 func writeImage(w http.ResponseWriter, format string, data []byte, cacheState string) {
 	setImageHeaders(w, format);
 	if cacheState == "tn" {
@@ -388,14 +400,23 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	format := resolveFormat(v.cfg, r.URL.Query().Get("format"))
 	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
 
-	cachePath, cacheErr := safeCachePath(v.cacheRoot, hash, format)
-	if cacheErr == nil && v.serveStoredImage(w, format, cachePath, "cache") {
+	fullCachePath, fullCacheErr := safeCachePath(v.cacheRoot, hash, format)
+	if fullCacheErr == nil && v.serveStoredImage(w, format, fullCachePath, "cache") {
+		return
+	}
+
+	thumbCachePath, thumbCacheErr := safeThumbnailCachePath(v.cacheRoot, hash, format, variant)
+	if thumbCacheErr == nil && v.serveStoredImage(w, format, thumbCachePath, "tn-cache") {
 		return
 	}
 
 	body, err := v.client.getImage(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
 	if err == nil {
 		writeImage(w, format, body, "tn")
+		if thumbCacheErr == nil && len(body) > 0 {
+			_ = os.MkdirAll(filepath.Join(v.cacheRoot, "thumbs"), 0o755)
+			_ = os.WriteFile(thumbCachePath, body, 0o644)
+		}
 		return
 	}
 	if v.serveLocalImage(w, r, hash, format) {

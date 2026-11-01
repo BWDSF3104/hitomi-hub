@@ -16,6 +16,7 @@
 - CP2: `startFullPrefetch()` の background worker を current displayed priority promise まで wait。reader placeholder は TN fetchせず empty placeholder。`storeFullCache()` が strip placeholder を objectURL で update。
 - CP3: search card は metadata-first placeholder、cover TN は `currentPriorityDone` の後、full cache objectURLがあればそちら優先。`thumbProxy()` は full cache hitをTN remoteより前へ。
 - CP4: viewer display は TN fallback を表示しない。`/api/image` は local / full cache / remote full だけへ変更。UI の `cachedFullSrc()` は `tn` と `tn-cache` を display source にしない。
+- CP5: TN thumbnails を persistent cache へ保存。`thumbProxy()` は full cache hit → TN variant cache hit → remote TN の順。remote TN 成功時は `cache/images/thumbs/<hash>.<format>.<variant>` へ保存し、cache hit は `x-cache: tn-cache` で返す。
 
 ## Verification
 
@@ -61,6 +62,15 @@
   - `prefetchedEntries` status `tn` makes `cachedFullSrc()` return empty placeholder.
   - `loadFullImage()` with mock `x-cache: tn` stores `tn` status but `objectUrl` is null, reader img `src` remains empty, note shows `tn display fallback disabled: 1`.
 - Screenshot: `scratch\hitomi-usage\cp4_no_tn_display_fallback.png`
+
+### CP5 TN thumbnail persistent cache
+- `go vet ./...` pass.
+- `go test .` pass `21.408s` with `TestSafeThumbnailCachePathUsesVariantAndStaysInsideThumbCache` and `TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit`.
+- `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass.
+- Active process restarted with rebuilt `hub.exe`.
+- Screen verify `http://127.0.0.1:8731/?x=tnendpoint&v=cp5tnCache` using a pre-created runtime TN cache file `cache/images/thumbs/2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89.webp.bigtn`:
+  - `/api/thumb/<hash>?format=webp&gallery=1&variant=bigtn` returned `x-cache: tn-cache`, `cache-control: private, max-age=604800`, `content-type: image/webp` without remote TN fetch.
+- Screenshot: `scratch\hitomi-usage\cp5_tn_persistent_cache_hit.png`
 
 ## 完了時 Memory Bank 操作
 
