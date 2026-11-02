@@ -437,6 +437,30 @@ func TestViewerImageProxyDoesNotRetryWhenGGBucketUnchanged(t *testing.T) {
 	}
 }
 
+func TestViewerImageProxyRetriesUsingInitialGGWhenAnotherRequestUpdatedGG(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "/gg.js") {
+			return []byte("var gg = { b: '1793494803/', m: function (g) { return 1; } }; case 2488:"), nil
+		}
+		if strings.Contains(rawurl, sampleHash+".webp") && len(urls) == 1 {
+			return nil, errors.New("status 404 for " + rawurl)
+		}
+		return []byte("data"), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "data" {
+		t.Fatalf("initial gg race retry: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if len(urls) != 3 || !strings.Contains(urls[0], sampleHash+".webp") || !strings.Contains(urls[1], "/gg.js") || !strings.Contains(urls[2], sampleHash+".webp") {
+		t.Fatalf("initial gg race fetch order: got %v", urls)
+	}
+}
+
 func TestViewerInfoCacheConcurrentHandlersDoNotWriteUnprotectedMap(t *testing.T) {
 	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
 	v, _ := newTestViewer(t, galleryJSON)
@@ -1645,8 +1669,9 @@ func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 	fIndex := strings.Index(keyBody, `if (e.key === "f") {`)
 	escapeIndex := strings.Index(keyBody, `if (e.key === "Escape") {`)
 	buttonIndex := strings.Index(keyBody, `e.target.tagName === "BUTTON"`)
-	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || fIndex > buttonIndex || escapeIndex > buttonIndex {
-		t.Errorf("f and Escape should remain fullscreen gestures even from control focus before d/s/r are skipped: got %q", keyBody)
+	modifierIndex := strings.Index(keyBody, `if (e.ctrlKey || e.metaKey || e.altKey) return;`)
+	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || modifierIndex < 0 || modifierIndex > fIndex || modifierIndex > escapeIndex || fIndex > buttonIndex || escapeIndex > buttonIndex {
+		t.Errorf("f and Escape should remain fullscreen gestures even from control focus after modifier keys are excluded before d/s/r are skipped: got %q", keyBody)
 	}
 	if !strings.Contains(s, `last layout: " + lastViewMode`) || !strings.Contains(s, `fullscreen " + fullscreenState`) {
 		t.Errorf("view state should show last layout mode and fullscreenState: got %q", s)
@@ -1755,8 +1780,9 @@ func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) 
 	fIndex := strings.Index(keyBody, `if (e.key === "f") {`)
 	escapeIndex := strings.Index(keyBody, `if (e.key === "Escape") {`)
 	buttonIndex := strings.Index(keyBody, `e.target.tagName === "BUTTON"`)
-	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || fIndex > buttonIndex || escapeIndex > buttonIndex {
-		t.Errorf("f and Escape should remain fullscreen gestures even from control focus before d/s/r are skipped: got %q", keyBody)
+	modifierIndex := strings.Index(keyBody, `if (e.ctrlKey || e.metaKey || e.altKey) return;`)
+	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || modifierIndex < 0 || modifierIndex > fIndex || modifierIndex > escapeIndex || fIndex > buttonIndex || escapeIndex > buttonIndex {
+		t.Errorf("f and Escape should remain fullscreen gestures even from control focus after modifier keys are excluded before d/s/r are skipped: got %q", keyBody)
 	}
 }
 
@@ -1766,8 +1792,8 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(page)
-	if !strings.Contains(s, `id="retry-failed"`) || !strings.Contains(s, `retry failed`) || !strings.Contains(s, `manualRetryFailedFullImages()`) || !strings.Contains(s, `manualRetryingKeys`) || !strings.Contains(s, `manualRetryRunning`) || !strings.Contains(s, `allowRecount = false`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "error"`) {
-		t.Errorf("ui should expose a manual full-image retry button with manual-only recount and error-only targeting: got %q", s)
+	if !strings.Contains(s, `id="retry-failed"`) || !strings.Contains(s, `retry failed`) || !strings.Contains(s, `manualRetryFailedFullImages()`) || !strings.Contains(s, `manualRetryingKeys`) || !strings.Contains(s, `manualRetryRunning`) || !strings.Contains(s, `allowRecount = false`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "error"`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "no_full"`) {
+		t.Errorf("ui should expose a manual full-image retry button with manual-only recount and error/no_full targeting: got %q", s)
 	}
 	if !strings.Contains(s, `document.getElementById("retry-failed").addEventListener("click",`) {
 		t.Errorf("manual retry button must have an actual UI click handler: got %q", s)
@@ -1778,8 +1804,8 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 		t.Fatalf("renderRetryButtonState function not found")
 	}
 	renderButtonBody := s[renderButtonStart:strings.Index(s, "\nfunction renderPrefetchStatus() {")]
-	if !strings.Contains(renderButtonBody, `const button = document.getElementById("retry-failed");`) || !strings.Contains(renderButtonBody, `button.disabled = manualRetryRunning || !current.id || Number(counts.errorDone) <= 0;`) {
-		t.Errorf("retry button should be disabled for no errors or while manual retry is running: got %q", renderButtonBody)
+	if !strings.Contains(renderButtonBody, `const button = document.getElementById("retry-failed");`) || !strings.Contains(renderButtonBody, `button.disabled = manualRetryRunning || !current.id || Number(counts.errorDone) <= 0;`) || !strings.Contains(renderButtonBody, `if (Number(counts.noFullDone) > 0) button.disabled = false;`) {
+		t.Errorf("retry button should be enabled for errors or no_full entries and disabled while manual retry is running: got %q", renderButtonBody)
 	}
 
 	renderStatusStart := strings.Index(s, "function renderPrefetchStatus() {")
@@ -1796,8 +1822,8 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 		t.Fatalf("manualRetryFailedFullImages function not found")
 	}
 	manualBody := s[manualStart:strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")]
-	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `if (sourceStatusByEntry.get(key) !== "error") continue;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
-		t.Errorf("manual retry must be manual-only, error-only, re-entrancy protected, and use generation-guarded loadFullImage/prefetchPageImage with allowRecount: got %q", manualBody)
+	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `const retryableErrorStatus = sourceStatusByEntry.get(key) !== "error";`) || !strings.Contains(manualBody, `!retryableErrorStatus && sourceStatusByEntry.get(key) !== "no_full") continue;`) || !strings.Contains(manualBody, `if (retryableErrorStatus) continue;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
+		t.Errorf("manual retry must be manual-only, error/no_full targeted, re-entrancy protected, and use generation-guarded loadFullImage/prefetchPageImage with allowRecount: got %q", manualBody)
 	}
 }
 

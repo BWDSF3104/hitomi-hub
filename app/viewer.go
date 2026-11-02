@@ -546,9 +546,8 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(err.Error(), "status 404") {
-		ggBefore := v.client.GG()
 		source := v.client.EnsureGG(r.Context(), true)
-		if source == "live" && !sameGG(ggBefore, v.client.GG()) {
+		if source == "live" && !sameGG(gg, v.client.GG()) {
 			body, err = v.client.getImage(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
 			if err == nil {
 				writeImage(w, format, body, "miss")

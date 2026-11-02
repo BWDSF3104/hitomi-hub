@@ -269,6 +269,7 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 	})
 
 	var results []int
+	orGroupOffset := 0
 	if len(positive) > 0 {
 		ids, err := c.termIDs(&state, positive[0])
 		if err != nil {
@@ -287,9 +288,10 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 		}
 		results = unionIDs(groupIDs)
 		applySearchOrder(results, &state)
+		orGroupOffset = 1
 	}
 
-	for _, group := range orGroups {
+	for _, group := range orGroups[orGroupOffset:] {
 		set := map[int]bool{}
 		for _, term := range group {
 			ids, err := c.termIDs(&state, term)
@@ -309,14 +311,16 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 		results = next
 	}
 
-	for _, term := range positive[1:] {
-		ids, err := c.termIDs(&state, term)
-		if err != nil {
-			return nil, 0, err
-		}
-		results = intersectIDs(results, ids)
-		if len(results) == 0 {
-			return nil, 0, nil
+	if len(positive) > 1 {
+		for _, term := range positive[1:] {
+			ids, err := c.termIDs(&state, term)
+			if err != nil {
+				return nil, 0, err
+			}
+			results = intersectIDs(results, ids)
+			if len(results) == 0 {
+				return nil, 0, nil
+			}
 		}
 	}
 

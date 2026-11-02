@@ -2,7 +2,7 @@
 
 **Status**: 記録のみ（実装未開始）
 **Date**: 2026-11-02
-**Next Action**: 項目別の有効性確認済み。実装は未開始。commit checkpoint の後、優先項目 2-1 の再現テストから確認する。
+**Next Action**: 項目別の有効性確認済み。修正方法と合格条件を優先度順で記録し、テスト先行で実装し、正典検証の合格まで進める。
 
 ## 意図 / 背景
 
@@ -245,6 +245,66 @@
 - **RTL arrow keys**: 有効（確認）。`app/ui.html:237` の既定 `spreadDirection` は `rtl`。`movePage(delta)`（`app/ui.html:504-515`）は `spreadDirection` を見ず、`ArrowLeft` は `movePage(-1)`、`ArrowRight` は `movePage(1)`（`app/ui.html:1526-1527`）。視覚 RTL では左が next pair 側になりうるため、レビューの指摘どおり設計確認が必要。
 - **README**: 有効（確認）。`README.md:13` は「UI は未実装」と言うが、viewer/UI が存在する。`docs/ai/usage-memo.md:59` は check の新着判定を `galleries` 行と説明するが、現行 `check.go` は `bookmark_seen` を使う。
 - **未使用コード**: 有効（確認）。`Search`、`SearchQuery`、`nozomiURL`、`fileExt`、`imageExts` は現行 production path で未使用または test-only。`pageSource` は route として存在するが UI の主要読み取り flow では使っていない。対応は削除するか、テスト専用として意図を明記する。
+
+## 修正方法と合格条件（優先度高い順）
+
+判定は「項目別有効性確認済み」の項目だけ。推定項目は実測で確認できる範囲で進める。実装と確認の合格は正典 `go vet .` と `go test -count=1 -timeout 300s .`（`app`）で確認する。Python 参照実装項目は `python -m pytest tests -v`（ルート）で確認する。
+
+1. `a or b` だけのクエリで panic  
+   方法: `app/searchhtml.go` で `positive[1:]` を呼ぶ前に `len(positive) > 1` を検査し、or-only で初期 group を後の intersect から除く。テストは fixture の data range を term ごとに分けて union 結果と fetch 回数を検証する。  
+   合格: `TestSearchHTMLPreservesOrOnlyUnionWithoutDuplicateGroup` で panic せず union ids が一致し、初期 group の重複 fetch が 0。
+
+2. `EnsureGG` 失敗時に live gg を snapshot で上書き  
+   方法: `app/gg.go` で failure path が直前の live gg を保持し、source と actual gg のズレを残さない。snapshot fallback は source が snapshot でなかった場合だけ。  
+   合格: `TestEnsureGGFailurePreservesLiveGG` で live 成功後に fetch 失敗しても source が `live`、actual gg が直前の live bucket のまま。
+
+3. `imageProxy` の gg 比較 race  
+   方法: `app/viewer.go` で URL 生成時の gg を保持し、404 後の比較もその gg を基準にする。UI の manual retry は `error` だけでなく `no_full` も対象にする。  
+   合格: `TestViewerImageProxyRetriesUsingInitialGGWhenAnotherRequestUpdatedGG` で race 時に retry 1 回が入り、UI string tests で no_full retry と button enable が更新される。
+
+4. plain term 検索 cache  
+   方法: `app/searchindex.go` の内部 node と data cache を追加。top node cache だけでなく `field|version|addr` と `field|version|offset|length` を TTL cache する。cache hit の返却は caller 変更から安全な copy、または decodeIDs 結果 copy。  
+   合格: `TestIndexIDsInternalNodeAndDataCacheReuse` で同一 field/version の 2 回目の term 検索が top cache hit だけで network refetch を増やさない。
+
+5. `classifyFetchURL` 誤分類  
+   方法: `.data`、`galleries/`、明示 TN path を優先分類し、`ltn.` の host substring を image にしない。  
+   合格: `TestClassifyFetchURLSeparatesIndexDataGalleryAndTN` で index `.data` は `data`、`galleries/` は `gallery`、TN path は `image`。
+
+6. acquisition run folder confirmation  
+   方法: `app/acquisition.go` に run 開始時の folder check endpoint を追加し、`app/ui.html` の `runAcquisition()` が per-page confirm ではなく run 開始時 1 回だけ folder 確認する。page 内 file overwrite 確認は server の `confirm` で残す。  
+   合格: `TestViewerAcquisitionCheckReturnsRunStartFolderStatus` で新規は `not_exists`、既存は `confirm`。UI string tests で run 開始時 check path と once-per-run flag が残る。
+
+7. keyboard modifier  
+   方法: `app/ui.html` の keydown handler 先頭で `ctrlKey` / `metaKey` / `altKey` を return。f と Escape の gesture order は保持する。  
+   合格: `TestEmbeddedUIHasReaderSpreadAndFullscreen` と fullscreen keyboard tests が modifier guard を含み、f/Escape が control focus skip より前に残る。
+
+8. `--config` の Limits partial default  
+   方法: `Limits` に custom unmarshal を追加し、JSON key present で explicit zero を保存、key absent だけ default で埋める。`loadConfig` は `Hitomi` と `Limits` を default から初期化し、per-field default を維持する。  
+   合格: `TestLoadConfigLimitsPreservesExplicitZeroAndDefaultsOmittedFields` で partial JSON の未指定 field が default、明示 0 が保持される。
+
+9. transaction が外部呼び出しをまたぐ  
+   方法: `processFileWithYara` で YARA と VT lookup を tx 外へ出し、cache lookup も tx 外で行い、DB 書き込みだけを tx に寄せる。VT usage commit 意味は external lookup 後に確定的な DB 更新として扱う。  
+   合格: `TestProcessFileWritesFindingsAfterExternalLookups` で external mock が tx 内に呼ばれず、rollback 失敗時 findings が残らない。
+
+10. YARA exit code  
+   方法: 正典 `tools/yr.exe` 実測で exit code convention を確定し、`runYaraWithRunner` を exit error として scan_error に統一する。規則 output の有無だけで pass/hit にしない。  
+   合格: `TestRunYaraErrorExit1WithoutRulesIsScanError` が scan_error、既存 exit >1 execution failure tests が scan_error。`tools/VERSIONS.md` に実測 exit code を追記。
+
+11. VT 404 negative cache  
+   方法: `VTLookup` の 404 を `unknown_to_vt` へ分類し、scan cache に short TTL negative cache。process 側は cached negative を API 再呼出しなしで finding detail へ反映。`api_error:*` を上書きする成功後は cache/finding の意味を明確にする。  
+   合格: `TestVT404NegativeCacheAvoidsRepeatedQuotaUsage` で最初の 404 後に cache hit し、再スキャンは fetch を増やさない。
+
+12. `view` startup gg background  
+   方法: `main.go` の `view` で `serve()` 前に同期 `warnGG(loadGG(...))` を呼ばず、startup background で gg を読む。  
+   合格: `TestViewStartupServesBeforeGGLoad` で offline fetch でも handler route が gg load 前に利用可能。
+
+13. `check` tx まとめ  
+   方法: `runSavedQueries` を query ごとに tx にし、`bookmark_seen`、`galleries`、`last_run_at` を 1 tx で commit。rollback 失敗時 partial writes を残さない。  
+   合格: `TestRunSavedQueriesRollsBackNewIdsWhenGalleryRecordFails` で recordDiscovered 失敗後に `bookmark_seen` が rollback される。
+
+14. Python 参照実装 parity  
+   方法: `src/scan.py` の `add_finding` を `INSERT OR IGNORE` にし、既存重複を畳む migration を追加。VT は `last_analysis_stats`、`engine_name`、`result` を読む。YARA failure は rule ではなく scan_error 状態へ寄せる。  
+   合格: `python -m pytest tests -v` で duplicate findings 再スキャンと VT v3 shape tests が通る。
 
 ## 完了時 Memory Bank 操作
 

@@ -88,6 +88,7 @@ func (c *Client) EnsureGG(ctx context.Context, force bool) string {
 	c.singleflightMu.Lock()
 	c.cacheMu.Lock()
 	source := c.gg.Source
+	previous := c.gg
 	age := time.Since(c.ggLoadedAt)
 	useLive := c.cfg.UseLiveGG
 	if !useLive {
@@ -137,19 +138,23 @@ func (c *Client) EnsureGG(ctx context.Context, force bool) string {
 		c.ggForceAt = time.Now()
 	}
 	if err != nil {
-		c.gg = snapshotGG()
-		c.ggLoadedAt = time.Now()
-		if source != "live" {
+		if source == "live" {
+			c.gg = previous
+		} else {
+			c.gg = snapshotGG()
 			source = c.gg.Source
 		}
+		c.ggLoadedAt = time.Now()
 	} else {
 		parsed, parseErr := parseGG(string(body))
 		if parseErr != nil {
-			c.gg = snapshotGG()
-			c.ggLoadedAt = time.Now()
-			if source != "live" {
+			if source == "live" {
+				c.gg = previous
+			} else {
+				c.gg = snapshotGG()
 				source = c.gg.Source
 			}
+			c.ggLoadedAt = time.Now()
 		} else {
 			c.gg = parsed
 			c.ggLoadedAt = time.Now()

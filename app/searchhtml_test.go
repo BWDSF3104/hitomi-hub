@@ -159,6 +159,59 @@ func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 	}
 }
 
+func TestSearchHTMLPreservesOrOnlyUnionWithoutDuplicateGroup(t *testing.T) {
+	keyA := hashTerm("a")
+	keyB := hashTerm("b")
+	slots := []struct {
+		key    []byte
+		offset int64
+	}{
+		{keyA, 1000},
+		{keyB, 1008},
+	}
+	if compareKey(slots[0].key, slots[1].key) > 0 {
+		slots = []struct {
+			key    []byte
+			offset int64
+		}{
+			{keyB, 1008},
+			{keyA, 1000},
+		}
+	}
+	leaf := beNode(2, [][]byte{slots[0].key, slots[1].key},
+		[][2]int64{{slots[0].offset, 12}, {slots[1].offset, 16}}, make([]uint64, btreeOrder+1))
+	dataA := append([]byte{0, 0, 0, 2}, beIDs([]uint32{1, 2})...)
+	dataB := append([]byte{0, 0, 0, 3}, beIDs([]uint32{2, 3, 4})...)
+
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		case rng[0] == 1000:
+			return dataA, nil
+		case rng[0] == 1008:
+			return dataB, nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("a or b", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 || len(ids) != 4 || ids[0] != 1 || ids[1] != 2 || ids[2] != 3 || ids[3] != 4 {
+		t.Fatalf("or-only union: total %d ids %v", total, ids)
+	}
+	if fetches != 4 {
+		t.Fatalf("or-only should not refetch initial group: fetches %d", fetches)
+	}
+}
+
 func TestApplySearchOrderDoesNotDoubleReverseAsc(t *testing.T) {
 	state := &searchState{orderbydir: "asc"}
 	ids := []int{10, 20, 30}

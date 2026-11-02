@@ -50,6 +50,16 @@ type indexTopCacheEntry struct {
 	fetchedAt time.Time
 }
 
+type indexNodeCacheEntry struct {
+	node      *bnode
+	fetchedAt time.Time
+}
+
+type indexDataCacheEntry struct {
+	ids       []int
+	fetchedAt time.Time
+}
+
 type Client struct {
 	http           *http.Client
 	cfg            HitomiConfig
@@ -70,8 +80,11 @@ type Client struct {
 	metrics        map[string]*FetchMetric
 	searchCache    map[string]searchCacheEntry
 	searchCacheMu  sync.Mutex
-	indexTopCache  map[string]*indexTopCacheEntry
+	indexTopCache   map[string]*indexTopCacheEntry
 	indexTopCacheMu sync.Mutex
+	indexNodeCache  map[string]*indexNodeCacheEntry
+	indexDataCache  map[string]indexDataCacheEntry
+	indexCacheMu    sync.Mutex
 }
 
 func defaultHitomiConfig() HitomiConfig {

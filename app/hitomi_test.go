@@ -189,6 +189,37 @@ func TestEnsureGGSingleflightDoesNotRepeatConcurrentForce(t *testing.T) {
 	}
 }
 
+func TestEnsureGGFailurePreservesLiveGG(t *testing.T) {
+	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1
+	c.cfg.GGForceMinIntervalMS = 0
+	calls := 0
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return []byte(fixture), nil
+		}
+		return nil, errors.New("offline")
+	}
+
+	if source := c.EnsureGG(context.Background(), false); source != "live" {
+		t.Fatalf("first source: got %s", source)
+	}
+	bucket := c.gg.Bucket
+
+	c.ggLoadedAt = time.Now().Add(-2 * time.Hour)
+	if source := c.EnsureGG(context.Background(), false); source != "live" {
+		t.Fatalf("failure source must stay live: got %s", source)
+	}
+	if c.gg.Bucket != bucket {
+		t.Fatalf("failure must preserve live gg: bucket %s want %s", c.gg.Bucket, bucket)
+	}
+	if calls != 2 {
+		t.Fatalf("calls: got %d", calls)
+	}
+}
+
 func TestSnapshotGGIsPopulatedAndUsedAsFallback(t *testing.T) {
 	gg := snapshotGG()
 	if gg.Bucket == "" || len(gg.CaseSet) == 0 {

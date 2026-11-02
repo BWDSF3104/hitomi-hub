@@ -392,6 +392,7 @@ function renderRetryButtonState() {
   if (!button) return;
   const counts = getGalleryCounts(current.id);
   button.disabled = manualRetryRunning || !current.id || Number(counts.errorDone) <= 0;
+  if (Number(counts.noFullDone) > 0) button.disabled = false;
 }
 function renderPrefetchStatus() {
   const counts = getGalleryCounts(current.id);
@@ -1019,7 +1020,9 @@ async function manualRetryFailedFullImages() {
     for (const entry of current.files || []) {
       const key = fullCacheKey(entry, current.id);
       if (manualRetryingKeys.has(key)) continue;
-      if (sourceStatusByEntry.get(key) !== "error") continue;
+      const retryableErrorStatus = sourceStatusByEntry.get(key) !== "error";
+      if (!retryableErrorStatus && sourceStatusByEntry.get(key) !== "no_full") continue;
+      if (retryableErrorStatus) continue;
       if (entry.local_formats && entry.local_formats.length) continue;
 
       manualRetryingKeys.add(key);
@@ -1514,6 +1517,7 @@ window.addEventListener("resize", () => {
 });
 window.addEventListener("keydown", async (e) => {
   if (!current.id || e.target.tagName === "INPUT") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "f") {
     setFullscreenFromGesture();
     return;

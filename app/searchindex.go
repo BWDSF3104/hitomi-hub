@@ -268,13 +268,71 @@ func (c *Client) indexTopNodeCached(field, version string) (*bnode, string, erro
 	return node, actualVersion, nil
 }
 
-func (c *Client) indexNode(field, version string, addr uint64) (*bnode, error) {
-	url := indexBaseURL(field) + "/" + field + "." + version + ".index"
-	body, err := c.indexGetRefetch(field, version, url, [2]int64{int64(addr), int64(addr) + maxNodeSize - 1}, true)
+func copyIDs(ids []int) []int {
+	return append([]int(nil), ids...)
+}
+
+func (c *Client) indexNodeCached(field, version string, addr uint64) (*bnode, error) {
+	key := fmt.Sprintf("%s|%s|%d", field, version, addr)
+
+	c.indexCacheMu.Lock()
+	if entry, ok := c.indexNodeCache[key]; ok && time.Since(entry.fetchedAt) < topCacheTTL {
+		c.indexCacheMu.Unlock()
+		return entry.node, nil
+	}
+	c.indexCacheMu.Unlock()
+
+	body, err := c.indexGetRefetch(field, version, indexBaseURL(field)+"/"+field+"."+version+".index", [2]int64{int64(addr), int64(addr) + maxNodeSize - 1}, true)
 	if err != nil {
 		return nil, err
 	}
-	return decodeNode(body)
+	node, err := decodeNode(body)
+	if err != nil {
+		return nil, err
+	}
+
+	c.indexCacheMu.Lock()
+	if c.indexNodeCache == nil {
+		c.indexNodeCache = map[string]*indexNodeCacheEntry{}
+	}
+	c.indexNodeCache[key] = &indexNodeCacheEntry{node: node, fetchedAt: time.Now()}
+	c.indexCacheMu.Unlock()
+	return node, nil
+}
+
+func (c *Client) indexDataIDsCached(field, version string, offset, length int64) ([]int, error) {
+	if length <= 0 || length > 100000000 {
+		return nil, fmt.Errorf("data length %d out of range", length)
+	}
+	key := fmt.Sprintf("%s|%s|%d|%d", field, version, offset, length)
+
+	c.indexCacheMu.Lock()
+	if entry, ok := c.indexDataCache[key]; ok && time.Since(entry.fetchedAt) < topCacheTTL {
+		c.indexCacheMu.Unlock()
+		return copyIDs(entry.ids), nil
+	}
+	c.indexCacheMu.Unlock()
+
+	body, err := c.indexGetRefetch(field, version, indexBaseURL(field)+"/"+field+"."+version+".data", [2]int64{offset, offset + length - 1}, true)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := decodeIDs(body)
+	if err != nil {
+		return nil, err
+	}
+
+	c.indexCacheMu.Lock()
+	if c.indexDataCache == nil {
+		c.indexDataCache = map[string]indexDataCacheEntry{}
+	}
+	c.indexDataCache[key] = indexDataCacheEntry{ids: copyIDs(ids), fetchedAt: time.Now()}
+	c.indexCacheMu.Unlock()
+	return copyIDs(ids), nil
+}
+
+func (c *Client) indexNode(field, version string, addr uint64) (*bnode, error) {
+	return c.indexNodeCached(field, version, addr)
 }
 
 func (c *Client) indexData(field, version string, offset, length int64) ([]byte, error) {
@@ -313,11 +371,7 @@ func (c *Client) IndexIDs(field, term string) ([]int, error) {
 			if where >= len(node.datas) {
 				return nil, errors.New("data slot missing for key")
 			}
-			body, err := c.indexData(field, version, node.datas[where][0], node.datas[where][1])
-			if err != nil {
-				return nil, err
-			}
-			return decodeIDs(body)
+			return c.indexDataIDsCached(field, version, node.datas[where][0], node.datas[where][1])
 		}
 		if isLeaf(node) {
 			return nil, nil

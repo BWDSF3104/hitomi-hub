@@ -267,6 +267,56 @@ func TestIndexIDsUsesTopNodeCache(t *testing.T) {
 	}
 }
 
+func TestIndexIDsCachesInternalNodeAndDataForSameTerm(t *testing.T) {
+	rootKey := []byte{0x20, 0x21, 0x22, 0x23}
+	childKey := hashTerm("kemo")
+	subs := make([]uint64, btreeOrder+1)
+	subs[1] = 464
+	root := beNode(1, [][]byte{rootKey}, [][2]int64{{0, 0}}, subs)
+	child := beNode(1, [][]byte{childKey}, [][2]int64{{1000, 24}}, make([]uint64, btreeOrder+1))
+	childData := append([]byte{0, 0, 0, 2}, beIDs([]uint32{4294614, 4252697})...)
+
+	fetches := 0
+	dataFetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			if rng[0] == 0 {
+				return root, nil
+			}
+			return child, nil
+		default:
+			dataFetches++
+			return childData, nil
+		}
+	}}
+
+	ids, err := c.IndexIDs("galleries", "kemo")
+	if err != nil {
+		t.Fatalf("IndexIDs: %s", err)
+	}
+	if len(ids) != 2 || ids[0] != 4294614 || ids[1] != 4252697 {
+		t.Fatalf("ids %v", ids)
+	}
+	if fetches != 4 || dataFetches != 1 {
+		t.Fatalf("first descent fetches %d data fetches %d", fetches, dataFetches)
+	}
+
+	ids, err = c.IndexIDs("galleries", "kemo")
+	if err != nil {
+		t.Fatalf("IndexIDs cache: %s", err)
+	}
+	if len(ids) != 2 || ids[0] != 4294614 || ids[1] != 4252697 {
+		t.Fatalf("cached ids %v", ids)
+	}
+	if fetches != 4 || dataFetches != 1 {
+		t.Fatalf("internal node and data cache should not refetch within TTL: fetches %d data fetches %d", fetches, dataFetches)
+	}
+}
+
 func TestDecodeIDsLengthGuard(t *testing.T) {
 	full := append(append(append([]byte{}, []byte{0, 0, 0, 2}...), beID(4294614)...), beID(4252697)...)
 	got, err := decodeIDs(full)

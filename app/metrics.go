@@ -23,14 +23,19 @@ func classifyFetchURL(rawurl string) string {
 		return "nozomi"
 	case strings.Contains(rawurl, "gg.js") || strings.Contains(rawurl, "/gg/"):
 		return "gg"
-	case strings.Contains(rawurl, "tn.") ||
+	case strings.HasSuffix(rawurl, ".data"):
+		return "data"
+	case strings.Contains(rawurl, "/galleries/") ||
+		strings.Contains(rawurl, "galleryinfo") ||
+		strings.Contains(rawurl, ".html"):
+		return "gallery"
+	case strings.Contains(rawurl, "://tn.") ||
+		strings.Contains(rawurl, "//tn.") ||
 		strings.Contains(rawurl, "webpbigtn") ||
 		strings.Contains(rawurl, "avifbigtn") ||
 		strings.Contains(rawurl, "webpsmalltn") ||
 		strings.Contains(rawurl, "webpsmallsmalltn"):
 		return "image"
-	case strings.Contains(rawurl, "galleryinfo") || strings.Contains(rawurl, ".html"):
-		return "gallery"
 	default:
 		return "data"
 	}
