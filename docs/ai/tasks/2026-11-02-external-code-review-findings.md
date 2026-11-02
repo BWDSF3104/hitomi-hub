@@ -1173,6 +1173,45 @@
 - Canonical exe rebuild from `app` succeeded: `go build -trimpath -ldflags "-s -w" -o ..\output\hitomi-hub\hub.exe .`
 - Strict UI actual physical confirmation はこの session で pass として記録していない。Playwright/headless screenshot は通常 OS screen capture ではないため strict UI に不合格。
 
+## 未解決事項の追加調査（2026-11-02）
+
+### Full actual pixels
+
+- Target gallery `4299126` は `no_full 37/37` で、actual full image bytes が取得できない。
+- `scratch/p3_canonical_fresh/cache/images` に既存の full image cache があるが、target gallery の hash と一致しない。
+- Existing cache sample:
+  - `86f0dba81c357b9a8f1822162a97ba9007570082fc599314201619f02ad50ed3`
+  - direct `/api/image/...?format=avif` は `200`, `x-cache: cache`
+  - browser decoding confirmed `1295x1812`
+- Pass criteria:
+  - UI-openable gallery contains one existing decodable cache hash, or acquisition fetches full bytes into persistent cache;
+  - display source is `cache`, `local`, or successful remote full fetch;
+  - displayed `img.naturalWidth > 0`;
+  - normal OS physical screen capture shows actual reader pixels.
+- Controlled cache/test fixtures must be recorded as controlled confirmation, not production target pass.
+
+### Reproducible `errorDone`
+
+- Natural production `error` is not guaranteed for `no_full` because server intentionally returns `404 no_full` with `x-cache: no_full`.
+- Controlled actual UI network failure was confirmed:
+  - `/api/image/...` returned `500` without `x-cache`;
+  - fresh UI state showed `errorDone > 0`;
+  - actual UI click processed `error` entries;
+  - after completion, `errorDone` reached `37`, `manualRetryingKeys` empty, `manualRetryRunning` false.
+- Remediation decision:
+  - Use controlled actual UI network failure for UI behavior confirmation.
+  - Do not mark it as direct server natural-failure strict visual pass.
+  - The corrected `error` or `no_full` retry target condition remains the implementation criteria.
+
+### Race detector
+
+- Current implementation protects `Client.gg`, `Client.versions`, and `viewer.infoCache` with mutexes.
+- Existing concurrent handler/cache tests pass under `go test -count=1 .`.
+- `go test -race -count=1 .` remains blocked in this environment because `CGO_ENABLED=0` and `gcc` is unavailable.
+- Pass criteria:
+  - local pass: mutex lock structure and concurrent handler/cache tests;
+  - race proof: run `go test -race -count=1 .` on CI or a machine with cgo/gcc.
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

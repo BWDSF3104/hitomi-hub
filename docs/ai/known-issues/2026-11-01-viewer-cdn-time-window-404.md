@@ -21,3 +21,20 @@
 ##  screenshot
 
 `scratch/hitomi-usage/screen_4252697_page1.png`（search results + reader・local image・page strip）
+
+## 2026-11-02 current investigation
+
+- Current canonical server `pid 5152` returns `no_full` for target gallery `4299126` entries.
+- Target gallery `4299126` has `37` valid hashes, but none is present in `scratch/p3_canonical_fresh/cache/images`.
+- Existing full-image cache files can still satisfy actual UI actual pixels if a UI-openable gallery contains one of those hashes.
+- Confirmed existing cache evidence:
+  - `scratch/p3_canonical_fresh/cache/images/86f0dba81c357b9a8f1822162a97ba9007570082fc599314201619f02ad50ed3.avif`
+  - `http://127.0.0.1:8731/api/image/86f0dba81c357b9a8f1822162a97ba9007570082fc599314201619f02ad50ed3?format=avif`
+    returned `200`, `x-cache: cache`, `content-type: image/avif`.
+  - Browser decoding confirmed dimensions `1295x1812`.
+- Pass criteria for actual UI full-image visual confirmation:
+  - direct server response must be `x-cache: cache`, `local`, or a successful remote full fetch, not `no_full`;
+  - UI must use `objectURL` or `local-direct` as viewer display source;
+  - the displayed `img` must have `naturalWidth > 0`;
+  - a normal OS physical screen capture must show the reader image, not only status text.
+- If no current-window or existing-cache gallery hash matches, actual full-image visual pass remains blocked unless a controlled test environment is explicitly allowed.

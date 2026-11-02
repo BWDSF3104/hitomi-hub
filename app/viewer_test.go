@@ -1806,8 +1806,8 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 		t.Fatalf("renderRetryButtonState function not found")
 	}
 	renderButtonBody := s[renderButtonStart:strings.Index(s, "\nfunction renderPrefetchStatus() {")]
-	if !strings.Contains(renderButtonBody, `const button = document.getElementById("retry-failed");`) || !strings.Contains(renderButtonBody, `button.disabled = manualRetryRunning || !current.id || Number(counts.errorDone) <= 0;`) || !strings.Contains(renderButtonBody, `if (Number(counts.noFullDone) > 0) button.disabled = false;`) {
-		t.Errorf("retry button should be enabled for errors or no_full entries and disabled while manual retry is running: got %q", renderButtonBody)
+	if !strings.Contains(renderButtonBody, `const button = document.getElementById("retry-failed");`) || !strings.Contains(renderButtonBody, `button.disabled = manualRetryRunning || !current.id || !(Number(counts.errorDone) > 0 || Number(counts.noFullDone) > 0);`) {
+		t.Errorf("retry button should be enabled only for errors or no_full entries, require a current gallery, and remain disabled while manual retry is running: got %q", renderButtonBody);
 	}
 
 	renderStatusStart := strings.Index(s, "function renderPrefetchStatus() {")
@@ -1824,8 +1824,93 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 		t.Fatalf("manualRetryFailedFullImages function not found")
 	}
 	manualBody := s[manualStart:strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")]
-	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `const retryableErrorStatus = sourceStatusByEntry.get(key) !== "error";`) || !strings.Contains(manualBody, `!retryableErrorStatus && sourceStatusByEntry.get(key) !== "no_full") continue;`) || !strings.Contains(manualBody, `if (retryableErrorStatus) continue;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
-		t.Errorf("manual retry must be manual-only, error/no_full targeted, re-entrancy protected, and use generation-guarded loadFullImage/prefetchPageImage with allowRecount: got %q", manualBody)
+	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `if (sourceStatusByEntry.get(key) !== "error" && sourceStatusByEntry.get(key) !== "no_full") continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
+		t.Errorf("manual retry must be manual-only, combined error/no_full targeted, re-entrancy protected, and use generation-guarded loadFullImage/prefetchPageImage with allowRecount: got %q", manualBody)
+	}
+}
+
+func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	if !strings.Contains(s, `function renderRetryButtonState() {`) || !strings.Contains(s, `button.disabled = manualRetryRunning || !current.id || !(Number(counts.errorDone) > 0 || Number(counts.noFullDone) > 0);`) {
+		t.Errorf("retry button should use combined error/no_full state with current gallery and manual-run guard: got %q", s)
+	}
+	if !strings.Contains(s, `function statusIsViewerDisplaySource(status) {`) || !strings.Contains(s, `status !== "tn" && status !== "tn-cache" && status !== "no_full" && status !== "error"`) {
+		t.Errorf("display source must continue to reject error, no_full, and TN: got %q", s)
+	}
+
+	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")
+	updateEnd := strings.Index(s, "\nfunction entrySource(entry, galleryId = current.id) {")
+	if updateStart < 0 || updateEnd < 0 {
+		t.Fatalf("updatePrefetchCounts function not found")
+	}
+	updateBody := s[updateStart:updateEnd]
+	for _, want := range []string{
+		`if (allowRecount && prefetchedEntries.has(key)) {`,
+		`if (oldStatus === "tn") counts.tnDone--;`,
+		`else if (oldStatus === "no_full") counts.noFullDone--;`,
+		`else if (oldStatus === "error") counts.errorDone--;`,
+		`else counts.fullDone--;`,
+		`prefetchedEntries.set(key, status);`,
+		`if (status === "tn") counts.tnDone++;`,
+		`else if (status === "no_full") counts.noFullDone++;`,
+		`else if (status === "error") counts.errorDone++;`,
+		`else counts.fullDone++;`,
+	} {
+		if !strings.Contains(updateBody, want) {
+			t.Errorf("manual retry recount path should preserve default and decrement old status: got %q", updateBody)
+			break
+		}
+	}
+
+	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {")
+	prefetchEnd := strings.Index(s, "\nfunction revokeFullObjectUrls() {")
+	if prefetchStart < 0 || prefetchEnd < 0 {
+		t.Fatalf("prefetchPageImage function not found")
+	}
+	prefetchBody := s[prefetchStart:prefetchEnd]
+	if !strings.Contains(prefetchBody, `r.headers.get("x-cache") || "error"`) || !strings.Contains(prefetchBody, `storeFullCache(entry, cache, null, galleryId);`) || !strings.Contains(prefetchBody, `updatePrefetchCounts(cache, entry, galleryId, allowRecount);`) {
+		t.Errorf("prefetchPageImage should preserve x-cache no_full and count true no-x-cache failures as error: got %q", prefetchBody)
+	}
+
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
+	loadEnd := strings.Index(s, "\nfunction renderReader() {")
+	if loadStart < 0 || loadEnd < 0 {
+		t.Fatalf("loadFullImage function not found")
+	}
+	loadBody := s[loadStart:loadEnd]
+	noFullBranch := strings.Index(loadBody, `if (r.status === 404 && cache === "no_full") {`)
+	errorBranch := strings.Index(loadBody, `if (!r.ok) {`)
+	if noFullBranch < 0 || errorBranch < 0 || noFullBranch > errorBranch {
+		t.Errorf("loadFullImage should classify storage 404 as no_full before generic error: got %q", loadBody)
+	}
+
+	manualStart := strings.Index(s, "async function manualRetryFailedFullImages() {")
+	manualEnd := strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")
+	if manualStart < 0 || manualEnd < 0 {
+		t.Fatalf("manualRetryFailedFullImages function not found")
+	}
+	manualBody := s[manualStart:manualEnd]
+	for _, want := range []string{
+		`manualRetryingKeys.add(key);`,
+		`if (sourceStatusByEntry.get(key) !== "error" && sourceStatusByEntry.get(key) !== "no_full") continue;`,
+		`await prefetchPageImage(entry, signal, current.id, true);`,
+		`await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`,
+		`catch (err) {`,
+		`manualRetryingKeys.delete(key);`,
+		`manualRetryRunning = false;`,
+	} {
+		if !strings.Contains(manualBody, want) {
+			t.Errorf("manual retry pass criteria missing %q: got %q", want, manualBody)
+			break
+		}
+	}
+	if !strings.Contains(s, `document.getElementById("retry-failed").addEventListener("click",`) || !strings.Contains(s, `void manualRetryFailedFullImages();`) {
+		t.Errorf("manual retry must be triggered only by an actual UI click handler: got %q", s)
 	}
 }
 

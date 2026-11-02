@@ -73,10 +73,10 @@ Status: active. This decision sets how manual full-image retry should be added w
 ### Manual retry behavior
 
 7. `#retry-failed` exists in the UI and is actionable.
-8. `#retry-failed` is disabled when there is no current gallery or `errorDone == 0`.
-9. `#retry-failed` is enabled only when `errorDone > 0`.
+8. `#retry-failed` is disabled when there is no current gallery or neither `errorDone > 0` nor `noFullDone > 0`.
+9. `#retry-failed` is enabled when `current.id` exists, `manualRetryRunning` is false, and either `Number(counts.errorDone) > 0` or `Number(counts.noFullDone) > 0`.
 10. Clicking `#retry-failed` calls `manualRetryFailedFullImages()`.
-11. Manual retry targets only entries with `sourceStatusByEntry.get(key) === "error"`.
+11. Manual retry targets entries with `sourceStatusByEntry.get(key) === "error"` or `sourceStatusByEntry.get(key) === "no_full"`.
 12. Manual retry does not double-fetch the same key because `manualRetryingKeys` is used.
 13. Manual retry updates `prefetchedEntries` only through the recount path.
 
