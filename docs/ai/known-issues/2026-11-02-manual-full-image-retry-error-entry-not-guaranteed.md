@@ -14,6 +14,17 @@ Status: open.
 - Real hitomi gallery hashes inspected via direct `/api/gallery/4294614` are lowercase hex hashes accepted by `validHash()`; `format=error` therefore does not create UI `sourceStatusByEntry` error.
 - No existing UI path currently produces an actual UI `error` entry from direct server baseline without a network failure or a guaranteed invalid hash/format path.
 
+### Latest canonical build confirmation
+
+- On canonical rebuilt server `pid 17980`, direct served UI contains `Number(counts.noFullDone) > 0` button enable.
+- Fresh isolated browser tab `http://127.0.0.1:8731/?newtab=1#/g/4299126/page/1-2` showed:
+  - `no full 37/37`
+  - `errorDone 0`
+  - enabled `#retry-failed`
+  - actual UI click processed `manualRetryFailedFullImages()`
+- The same entry remains `no_full`, not `error`, so this is not a reproducible actual UI `errorDone > 0` entry.
+- Normal OS physical screen capture cannot be captured from this environment, so strict physical visual confirmation remains blocked.
+
 ## Action
 
 If a reproducible actual UI `error` entry is found later, record it before running the strict confirmation. Use that entry only if it satisfies fresh isolated browser tab, direct server baseline, actual UI network response, and actual UI click requirements.

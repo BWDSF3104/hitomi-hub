@@ -38,6 +38,33 @@
   - Direct `/api/gallery/4294614` returns lowercase hex hashes, so `entryFormat()` does not create `sourceStatusByEntry` error.
 - Recorded blocker in `known-issues/2026-11-02-manual-full-image-retry-error-entry-not-guaranteed.md`.
 
+### Latest canonical build UI confirmation
+
+- Fresh isolated browser tab:
+  - `http://127.0.0.1:8731/?newtab=1#/g/4299126/page/1-2`
+- Actual UI state:
+  - `note`: `no full image: 2`
+  - status: `no full 37/37`
+  - `errorDone`: `0`
+  - `retry-failed` was enabled because `Number(counts.noFullDone) > 0`.
+- Actual UI click on `#retry-failed` executed `manualRetryFailedFullImages()`.
+  - After completion, `manualRetryRunning` was `false` and `manualRetryingKeys` size was `0`.
+  - Counts remained `noFullDone: 37`, `errorDone: 0`.
+- UI network requests for `/api/image/...` all returned `404`.
+- Target page 2 hash:
+  ```text
+  b17f157ac25f3f066f9d0b3707a98040defc90cf8a5847da550b9a0240fb3c53
+  ```
+  - UI request and direct server baseline both returned `404` with `x-cache: no_full`.
+- Direct served UI from canonical rebuilt server includes:
+  ```js
+  if (Number(counts.noFullDone) > 0) button.disabled = false;
+  ```
+- Browser screenshot:
+  - `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\p3_fresh_tab_after_manual_retry.png`
+
+Remaining strict UI blocker: `errorDone > 0` reproducible actual UI entry is still not found. Normal OS physical screen capture cannot be captured from this environment, so strict physical visual confirmation remains blocked.
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
