@@ -461,6 +461,18 @@
     - strict UI confirmation blocker（actual UI `errorDone > 0` entry 再現）は解決していない。
 - Simple UI/API re-request で `/api/search?query=female%3Abig_breasts` が一時的に `502` を返した。これは local test server の network fetch/rate condition で、1回目の UI search success と screenshot evidence から UI path と raw query preservation を確認した。
 
+## Search bottleneck detection result
+
+- P3 `#10` measurement layer は `app/metrics.go`, `app/hitomi.go`, `app/viewer.go`, `app/ui.html` に実装済み。検出可能:
+  - server side: `search_ms`, `record_ms`, `json_ms`, `x-search-timing`
+  - fetch kind metrics: `calls`, `gate_wait_ms`, `network_ms`, `decode_ms`, `retry_sleep_ms`
+  - UI side: `/api/search` time, `/api/search-card/{id}` time, `x-cache` distribution, `#perf-status`
+- Previous P3 measurements showed the search bottleneck was visible:
+  - cache-less `furry` first run: `/api/search 12008ms`, server `search=9444;record=2559;json=0`, cards `24061ms`, cache `cache=1 miss=24`.
+  - cache-less `furry` second run on same server: `/api/search 9656ms`, server `search=7227;record=2425;json=0`, cards `26659ms`, cache `cache=26 miss=24`.
+- Current `female:big_breasts` UI confirmation showed results `25` and `total 32882`, but current direct API re-run returned `502` because remote fetch failed, so no new `perf-status` number was captured in this confirmation.
+- Therefore the measurement path detects bottlenecks, but the current session did not produce a new bottleneck measurement for `female:big_breasts` due to remote fetch failure. The previously recorded P3 measurements remain valid evidence.
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
