@@ -1,6 +1,6 @@
 # 外部コードレビュー（commit f501e2b 時点）
 
-**Status**: 実施完了（正典検証合格）
+**Status**: 完了
 **Date**: 2026-11-02
 **Next Action**: commit checkpoint を実行し、完了時 Memory Bank 操作へ進む。
 
@@ -327,6 +327,6 @@
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（`task_manager.py end` で実施）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし）
+- [x] `backlog.md` の完了項目を削除（該当なし）
