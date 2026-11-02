@@ -66,7 +66,7 @@ func addQuery(db *sql.DB, name, query string, notify int) error {
 	return err
 }
 
-func markQueryRun(db *sql.DB, id int) error {
+func markQueryRun(db dbExec, id int) error {
 	_, err := db.Exec("UPDATE bookmark_queries SET last_run_at = ? WHERE id = ?", nowISO(), id)
 	return err
 }

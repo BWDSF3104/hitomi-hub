@@ -29,6 +29,8 @@ DEFAULT_LIMITS = {
 }
 
 STATUS_VALUES = {"pass", "hit", "not_evaluated", "external_removal", "scan_error"}
+SCAN_CACHE_TTL_SECONDS = 30 * 24 * 3600
+NEGATIVE_SCAN_CACHE_TTL_SECONDS = 2 * 3600
 
 # 正典 data ファイル（schema.sql / rules/ / config.example.json）はリポジトリルート（完成フォルダ直下）
 DATA_DIR = Path(__file__).resolve().parent.parent
@@ -170,10 +172,21 @@ def scan_file(path: Path, cfg: dict) -> tuple:
     return ext, magic, findings, "not_evaluated"
 
 
-def vt_lookup(sha256: str, cfg: dict, state: dict, fetch=None) -> dict:
+def vt_lookup(sha256: str, cfg: dict, state: dict, fetch=None, conn=None) -> dict:
     vt = cfg.get("virustotal", {})
     if not vt.get("enabled"):
         return {"status": "skipped"}
+    if conn is not None:
+        cached = cache_lookup(conn, sha256)
+        if cached.get("verdict"):
+            return {
+                "status": cached["verdict"],
+                "positives": 0,
+                "threat_name": cached.get("threat_name", ""),
+                "detail": cached.get("detail", ""),
+                "http_status": 200,
+            }
+
     now = time.time()
     window = [t for t in state.get("window", []) if now - t < 60]
     state["window"] = window
@@ -188,18 +201,53 @@ def vt_lookup(sha256: str, cfg: dict, state: dict, fetch=None) -> dict:
     if fetch is None:
         req = urllib.request.Request(url, headers={"x-apikey": key})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            payload = json.load(resp)
+            result = json.load(resp)
     else:
-        payload = fetch(url, key)
+        result = fetch(url, key)
+    if isinstance(result, tuple):
+        payload, http_status = result
+    else:
+        payload, http_status = result, 200
+
     state["window"].append(now)
     state["total"] = state.get("total", 0) + 1
-    attrs = payload.get("data", {}).get("attributes", {})
-    stats = attrs.get("stats", {})
+
+    if http_status != 200:
+        status = "not_evaluated"
+        if http_status == 401:
+            status = "auth_error"
+        elif http_status == 429:
+            status = "rate_limited"
+        elif http_status == 404:
+            status = "unknown_to_vt"
+        if conn is not None and status == "unknown_to_vt":
+            cache_store(conn, sha256, status, "virustotal", "", status)
+        return {"status": status, "positives": 0, "threat_name": "", "detail": status, "http_status": http_status}
+
+    attrs = payload.get("data", {})
+    if not isinstance(attrs, dict):
+        return {"status": "not_evaluated", "positives": 0, "threat_name": "", "detail": "", "http_status": http_status}
+    attributes = attrs.get("attributes", {})
+    if not isinstance(attributes, dict):
+        return {"status": "not_evaluated", "positives": 0, "threat_name": "", "detail": "", "http_status": http_status}
+    stats = attributes.get("last_analysis_stats", {})
+    results = attributes.get("last_analysis_results", {})
+    if not isinstance(stats, dict):
+        stats = {}
+    if not isinstance(results, dict):
+        results = {}
     positives = int(stats.get("malicious", 0)) + int(stats.get("suspicious", 0))
+    if not results and positives == 0:
+        return {"status": "not_evaluated", "positives": 0, "threat_name": "", "detail": "", "http_status": http_status}
     verdict = "hit" if positives > 0 else "pass"
-    names = [v.get("category", "") for v in attrs.get("last_analysis_results", {}).values()
-            if v.get("category") in ("malicious", "suspicious")]
-    return {"status": verdict, "positives": positives, "threat_name": ";".join(sorted(set(names))[:5])}
+    names = []
+    for engine, entry in results.items():
+        if isinstance(entry, dict) and entry.get("category") in ("malicious", "suspicious"):
+            engine_name = entry.get("engine_name") or engine
+            result_name = entry.get("result") or ""
+            names.append("%s: %s" % (engine_name, result_name) if result_name else engine_name)
+    return {"status": verdict, "positives": positives, "threat_name": ";".join(sorted(names)[:5]),
+            "detail": "positives=%d" % positives, "http_status": http_status}
 
 
 def open_db(db_path: Path) -> sqlite3.Connection:
@@ -213,11 +261,32 @@ def ensure_schema(conn: sqlite3.Connection, schema_path: Path) -> None:
     conn.commit()
 
 
-def cache_lookup(conn: sqlite3.Connection, sha256: str) -> dict:
+def first_nonempty(*values) -> str:
+    for value in values:
+        if value:
+            return value
+    return ""
+
+
+def cache_lookup(conn: sqlite3.Connection, sha256: str, ttl: int = SCAN_CACHE_TTL_SECONDS,
+                 negative_ttl: int = NEGATIVE_SCAN_CACHE_TTL_SECONDS) -> dict:
     row = conn.execute(
-        "SELECT verdict, engine, threat_name, detail FROM scan_cache WHERE sha256 = ?", (sha256,)
+        "SELECT verdict, engine, threat_name, detail, cached_at FROM scan_cache WHERE sha256 = ?", (sha256,)
     ).fetchone()
-    return {"verdict": row[0], "engine": row[1], "threat_name": row[2], "detail": row[3]} if row else {}
+    if not row:
+        return {}
+    verdict, engine, threat_name, detail, cached_at = row
+    if cached_at:
+        effective_ttl = ttl
+        if verdict == "unknown_to_vt" and negative_ttl < effective_ttl:
+            effective_ttl = negative_ttl
+        try:
+            cached_time = datetime.strptime(cached_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            cached_time = None
+        if effective_ttl > 0 and cached_time is not None and time.time() - cached_time.timestamp() > effective_ttl:
+            return {}
+    return {"verdict": verdict, "engine": engine, "threat_name": threat_name, "detail": detail}
 
 
 def cache_store(conn: sqlite3.Connection, sha256: str, verdict: str, engine: str, threat_name: str, detail: str) -> None:
@@ -227,15 +296,13 @@ def cache_store(conn: sqlite3.Connection, sha256: str, verdict: str, engine: str
         "threat_name = excluded.threat_name, detail = excluded.detail, cached_at = excluded.cached_at",
         (sha256, verdict, engine, threat_name, detail, now_iso()),
     )
-    conn.commit()
 
 
 def add_finding(conn: sqlite3.Connection, path: str, sha256: str, rule: str, detail: str) -> None:
     conn.execute(
-        "INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
         (path, sha256, rule, detail, now_iso()),
     )
-    conn.commit()
 
 
 def record_file(conn: sqlite3.Connection, path: str, sha256: str, size: int, ext: str, magic: str,
@@ -247,7 +314,6 @@ def record_file(conn: sqlite3.Connection, path: str, sha256: str, size: int, ext
         "magic = excluded.magic",
         (path, sha256, size, ext, magic, status, source, now_iso()),
     )
-    conn.commit()
 
 
 def parse_yara_output(text: str) -> list:
@@ -276,20 +342,31 @@ def yara_gate(ext: str, cfg: dict) -> bool:
     return bool(cfg.get("yr")) and ext in SCAN_TARGETS
 
 
-def run_yara(path: Path, rules_path: Path, yr: str, limits: dict) -> list:
+def run_yara_with_runner(path: Path, rules_path: Path, yr: str, limits: dict, runner=None) -> tuple:
     cmd = [yr, "scan", str(rules_path), str(path), "--output-format", "ndjson",
            "--timeout", str(limits.get("yr_timeout_sec", 10)),
            "--cpu-limit", str(limits.get("yr_cpu_limit", 50)),
            "--skip-larger", str(limits.get("yr_skip_larger", 67108864))]
     if limits.get("yr_fast_scan"):
         cmd.append("--fast-scan")
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=limits.get("yr_timeout_sec", 10) + 15)
-    except Exception as exc:
-        return ["yara_error:%s" % exc]
-    rules = parse_yara_output(proc.stdout)
-    if proc.returncode not in (0, 1) and not rules:
-        return ["yara_error:exit_%d" % proc.returncode]
+    if runner is None:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=limits.get("yr_timeout_sec", 10) + 15)
+        except Exception as exc:
+            return ([], "yara_error:%s" % exc)
+    else:
+        try:
+            proc = runner(cmd)
+        except Exception as exc:
+            return ([], "yara_error:%s" % exc)
+    exit_code = getattr(proc, "returncode", 0)
+    if exit_code != 0:
+        return ([], "yara_error:exit_%d" % exit_code)
+    return (parse_yara_output(getattr(proc, "stdout", "")), "")
+
+
+def run_yara(path: Path, rules_path: Path, yr: str, limits: dict) -> list:
+    rules, _ = run_yara_with_runner(path, rules_path, yr, limits)
     return rules
 
 
@@ -321,6 +398,72 @@ def verify_missing(conn: sqlite3.Connection, root: Path) -> int:
             count += 1
     conn.commit()
     return count
+
+
+def process_file(conn: sqlite3.Connection, path: Path, root: Path, cfg: dict, state: dict, summary: dict,
+                 fetch=None, rules_path: Path = None, runner=None, yr: str = "") -> str:
+    sha = sha256_file(path)
+    ext, magic, findings, status = scan_file(path, cfg)
+    rel = str(path.relative_to(root))
+    yr_path = yr or cfg.get("yr")
+    source = "structural"
+    cached = False
+    yara_findings = []
+    vt_findings = []
+    pending_cache = None
+
+    if status != "scan_error" and yr_path and yara_gate(ext, cfg):
+        rules, yara_error = run_yara_with_runner(path, rules_path or DATA_DIR / "rules" / "structural.yar", yr_path, cfg["limits"], runner)
+        if yara_error:
+            if status != "hit":
+                status = "scan_error"
+            source = "structural+yara_error"
+        elif rules:
+            status = "hit"
+            source = "structural+yara"
+            for rule in rules:
+                yara_findings.append(("yara", rule))
+
+    if status not in ("hit", "scan_error") and cfg.get("virustotal", {}).get("enabled") and ext in SCAN_TARGETS:
+        cached_entry = cache_lookup(conn, sha)
+        if cached_entry.get("verdict"):
+            source = "structural+virustotal"
+            cached = True
+            detail = first_nonempty(cached_entry.get("detail", ""), cached_entry.get("threat_name", ""))
+            rule = cached_entry.get("engine", "virustotal")
+            if cached_entry["verdict"] == "hit":
+                status = "hit"
+            vt_findings.append((rule, detail or "cache_hit"))
+        else:
+            result = vt_lookup(sha, cfg, state, fetch, conn)
+            if result.get("status") in ("pass", "hit"):
+                pending_cache = (sha, result["status"], "virustotal", result.get("threat_name", ""),
+                                 result.get("detail", "") or "positives=%d" % result.get("positives", 0))
+                source = "structural+virustotal"
+                if result["status"] == "hit":
+                    status = "hit"
+                    vt_findings.append(("virustotal", first_nonempty(result.get("threat_name", ""), result.get("detail", ""))))
+            elif result.get("status") == "unknown_to_vt":
+                source = "structural+virustotal"
+                vt_findings.append(("virustotal", first_nonempty(result.get("detail", ""), result.get("threat_name", ""))))
+            elif result.get("status") != "skipped":
+                vt_findings.append(("virustotal", "api_error:%s" % result.get("status", "")))
+
+    with conn:
+        for item in findings:
+            add_finding(conn, rel, sha, "structural", item)
+        for rule, detail in yara_findings:
+            add_finding(conn, rel, sha, rule, detail)
+        for rule, detail in vt_findings:
+            add_finding(conn, rel, sha, rule, detail)
+        if pending_cache:
+            cache_store(conn, *pending_cache)
+        record_file(conn, rel, sha, path.stat().st_size, ext, magic, status, source)
+
+    summary[status] = summary.get(status, 0) + 1
+    if cached:
+        summary["cached"] = summary.get("cached", 0) + 1
+    return status
 
 
 def main(argv=None) -> int:
@@ -357,40 +500,7 @@ def main(argv=None) -> int:
     for path in sorted(gallery.rglob("*")):
         if not path.is_file():
             continue
-        sha = sha256_file(path)
-        ext, magic, findings, status = scan_file(path, cfg)
-        rel = str(path.relative_to(root))
-        for item in findings:
-            add_finding(conn, rel, sha, "structural", item)
-        if status == "scan_error":
-            summary["scan_error"] += 1
-            record_file(conn, rel, sha, path.stat().st_size, ext, magic, status, "structural")
-            continue
-        if yara_gate(ext, cfg):
-            for rule in run_yara(path, rules_path, yr, cfg["limits"]):
-                findings.append(rule)
-                add_finding(conn, rel, sha, "yara", rule)
-            if findings:
-                status = "hit"
-        if status != "hit" and cfg.get("virustotal", {}).get("enabled") and ext in SCAN_TARGETS:
-            cached = cache_lookup(conn, sha)
-            if cached:
-                summary["cached"] += 1
-                if cached["verdict"] == "hit":
-                    status = "hit"
-                    add_finding(conn, rel, sha, cached["engine"], cached["detail"] or cached["threat_name"] or "")
-                else:
-                    add_finding(conn, rel, sha, cached["engine"], "cache_hit")
-            else:
-                result = vt_lookup(sha, cfg, state)
-                if result.get("status") in ("pass", "hit"):
-                    cache_store(conn, sha, result["status"], "virustotal", result.get("threat_name", ""),
-                                "positives=%d" % result.get("positives", 0))
-                    if result["status"] == "hit":
-                        status = "hit"
-                        add_finding(conn, rel, sha, "virustotal", "positives=%d" % result.get("positives", 0))
-        summary[status] = summary.get(status, 0) + 1
-        record_file(conn, rel, sha, path.stat().st_size, ext, magic, status, "structural+virustotal" if cfg.get("virustotal", {}).get("enabled") else "structural")
+        process_file(conn, path, root, cfg, state, summary, rules_path=rules_path)
 
     if args.verify:
         summary["external_removal"] = verify_missing(conn, root)

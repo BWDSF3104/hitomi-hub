@@ -58,6 +58,17 @@ func VTLookup(db dbExec, sha string, cfg Config, state *RateState, fetch FetchFu
 	if state == nil {
 		state = &RateState{}
 	}
+
+	if db != nil {
+		verdict, _, threat, _, err := cacheLookup(db, sha, scanCacheTTL)
+		if err != nil {
+			return VTResult{Status: "scan_error"}
+		}
+		if verdict != "" {
+			return VTResult{Status: verdict, ThreatName: threat, HTTPStatus: 200}
+		}
+	}
+
 	now := time.Now()
 	cutoff := now.Add(-time.Minute)
 	kept := []time.Time{}
@@ -111,6 +122,13 @@ func VTLookup(db dbExec, sha string, cfg Config, state *RateState, fetch FetchFu
 			resultStatus = "auth_error"
 		case 429:
 			resultStatus = "rate_limited"
+		case 404:
+			resultStatus = "unknown_to_vt"
+		}
+		if db != nil && resultStatus == "unknown_to_vt" {
+			if err := cacheStore(db, sha, resultStatus, "virustotal", "", resultStatus); err != nil {
+				return VTResult{Status: "scan_error", HTTPStatus: status}
+			}
 		}
 		return VTResult{Status: resultStatus, HTTPStatus: status}
 	}
@@ -245,16 +263,19 @@ func runYaraWithRunner(ctx context.Context, path, rulesPath, yr string, l Limits
 	}
 	out, exit, err := run(ctx, yr, args)
 	rules := ParseYaraOutput(string(out))
-	if err != nil && exit > 1 {
-		return YaraResult{Status: "scan_error", Error: err.Error(), Exit: exit}
+	if err != nil || exit != 0 {
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		} else {
+			errText = fmt.Sprintf("exit status %d", exit)
+		}
+		return YaraResult{Status: "scan_error", Error: errText, Exit: exit}
 	}
 	if len(rules) > 0 {
 		return YaraResult{Rules: rules, Status: "hit", Exit: exit}
 	}
-	if err != nil && exit == 0 {
-		return YaraResult{Status: "scan_error", Error: err.Error(), Exit: exit}
-	}
-	return YaraResult{Rules: rules, Status: "pass", Exit: exit}
+	return YaraResult{Status: "pass", Exit: exit}
 }
 
 func resolveYrPath(yr, root string) string {

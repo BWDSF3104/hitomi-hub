@@ -1,8 +1,8 @@
 # 外部コードレビュー（commit f501e2b 時点）
 
-**Status**: 記録のみ（実装未開始）
+**Status**: 実施完了（正典検証合格）
 **Date**: 2026-11-02
-**Next Action**: 項目別の有効性確認済み。修正方法と合格条件を優先度順で記録し、テスト先行で実装し、正典検証の合格まで進める。
+**Next Action**: commit checkpoint を実行し、完了時 Memory Bank 操作へ進む。
 
 ## 意図 / 背景
 
@@ -305,6 +305,25 @@
 14. Python 参照実装 parity  
    方法: `src/scan.py` の `add_finding` を `INSERT OR IGNORE` にし、既存重複を畳む migration を追加。VT は `last_analysis_stats`、`engine_name`、`result` を読む。YARA failure は rule ではなく scan_error 状態へ寄せる。  
    合格: `python -m pytest tests -v` で duplicate findings 再スキャンと VT v3 shape tests が通る。
+
+## 実施結果（正典検証）
+
+- `SearchHTML`: `TestSearchHTMLPreservesOrOnlyUnionWithoutDuplicateGroup` pass. `positive[1:]` bounds guard added; or-only initial group is not intersected twice.
+- `EnsureGG`: `TestEnsureGGFailurePreservesLiveGG` pass. Failure path preserves previous live source/bucket.
+- `imageProxy` race/UI: `TestViewerImageProxyRetriesUsingInitialGGWhenAnotherRequestUpdatedGG` pass. Exact UI string `sourceStatusByEntry.get(key) !== "error";` is preserved through `retryableErrorStatus`; `no_full` is retryable; button enable and keyboard modifier guard tests pass.
+- plain-term cache: `TestIndexIDsCachesInternalNodeAndDataForSameTerm` pass. Internal node and data caches use TTL and return copies.
+- `classifyFetchURL`: `TestClassifyFetchURLSeparatesIndexDataGalleryAndTN` pass. `ltn.` no longer misclassifies as `image`; index `.data`, gallery, and TN path are separated.
+- acquisition run-start folder check: `TestViewerAcquisitionCheckReturnsRunStartFolderStatus` and UI handler tests pass. UI uses `POST /api/acquisition/check` once before per-page writes.
+- `Limits` partial config: `TestLoadConfigLimitsPreservesExplicitZeroAndDefaultsOmittedFields` pass. Explicit zero is kept; omitted fields get defaults.
+- process transaction: `TestProcessFileYaraExternalLookupBeforeFindingsWrite`, `TestProcessFileVTExternalLookupBeforeFindingsWrite`, `TestProcessFileUsesCachedNegativeVTWithoutFetch`, and existing VT/process tests pass. External YARA/VT/cache lookup happens before DB writes.
+- YARA exit codes: actual `tools/yr.exe` confirms scan/match/no-match exit `0` and invalid rule exit `1`. `runYaraWithRunner` treats nonzero exit as `scan_error`; tests pass. `tools/VERSIONS.md` records the actual result.
+- VT `404`: `TestVT404NegativeCacheAvoidsRepeatedQuotaUsage` passes. VT `404` is `unknown_to_vt` with short negative cache TTL.
+- `view` startup: `view` command no longer calls `warnGG(loadGG(...))` before `serve()`. `serve()` uses `startView`, starts background gg load, and serves the handler. `TestViewStartupServesBeforeGGLoad` passes.
+- `check` transaction: `TestRunSavedQueriesRollsBackNewIdsWhenGalleryRecordFails` passes. Each saved query is processed in one transaction; `bookmark_seen` rolls back when `recordDiscovered` fails.
+- Python reference parity: `python -m pytest tests -v` passes `23 passed`. Added duplicate `INSERT OR IGNORE`, TTL/negative cache, `last_analysis_stats`, `engine_name`/`result`, YARA exit-error classification, and transaction commit in `process_file`.
+- Full Go verification after these changes:
+  - `go vet . && go test -count=1 -timeout 300s .`
+  - Result in `app`: `ok hitomi-hub/app 34.502s`
 
 ## 完了時 Memory Bank 操作
 

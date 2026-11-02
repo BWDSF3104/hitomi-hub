@@ -197,25 +197,37 @@ func TestReferenceEntryIsYaraOnlyFinding(t *testing.T) {
 	}
 }
 
-func TestVTNon200DoesNotCachePass(t *testing.T) {
+func TestVT404NegativeCacheAvoidsRepeatedQuotaUsage(t *testing.T) {
 	db := openTestDB(t)
 	c := cfg()
 	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
 	state := &RateState{}
-	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{"last_analysis_stats": map[string]any{"malicious": 0}}}}
+	payload := map[string]any{}
+	fetchCalls := 0
 	fetch := func(url, key string) (map[string]any, int, error) {
+		fetchCalls++
 		return payload, 404, nil
 	}
+
 	result := VTLookup(db, "abc", c, state, fetch)
-	if result.Status != "not_evaluated" {
+	if result.Status != "unknown_to_vt" {
 		t.Fatalf("status: got %s", result.Status)
 	}
-	verdict, _, _, _, err := cacheLookup(db, "abc", scanCacheTTL)
+
+	verdict, _, _, detail, err := cacheLookup(db, "abc", negativeScanCacheTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verdict != "" {
-		t.Errorf("non-200 VT must not cache pass: got %s", verdict)
+	if verdict != "unknown_to_vt" || detail != "unknown_to_vt" {
+		t.Fatalf("negative cache: got verdict %q detail %q", verdict, detail)
+	}
+
+	result = VTLookup(db, "abc", c, state, fetch)
+	if result.Status != "unknown_to_vt" {
+		t.Fatalf("cached negative status: got %s", result.Status)
+	}
+	if fetchCalls != 1 {
+		t.Errorf("negative cache should avoid repeated fetch: fetchCalls %d", fetchCalls)
 	}
 }
 
@@ -458,12 +470,21 @@ func TestScanCacheTTLStalePassIsNotUsed(t *testing.T) {
 	}
 }
 
-func TestRunYaraExit1WithRulesIsHit(t *testing.T) {
+func TestRunYaraExit1ErrorIsScanError(t *testing.T) {
 	result := runYaraWithRunner(context.Background(), "file.cbz", "rules.yar", "yr", defaultLimits(), func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
 		return []byte(`{"rules":[{"identifier":"Zip_Path_Traversal"}]}`), 1, errors.New("exit status 1")
 	})
-	if result.Status != "hit" || len(result.Rules) != 1 || result.Rules[0] != "Zip_Path_Traversal" {
-		t.Fatalf("yara exit1 rules: got %v %v", result.Status, result.Rules)
+	if result.Status != "scan_error" || len(result.Rules) != 0 || result.Exit != 1 {
+		t.Fatalf("yara exit1 error: got %v %v exit %d", result.Status, result.Rules, result.Exit)
+	}
+}
+
+func TestRunYaraErrorExit1WithoutRulesIsScanError(t *testing.T) {
+	result := runYaraWithRunner(context.Background(), "file.cbz", "rules.yar", "yr", defaultLimits(), func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return nil, 1, errors.New("invalid rule")
+	})
+	if result.Status != "scan_error" || len(result.Rules) != 0 || result.Exit != 1 || result.Error != "invalid rule" {
+		t.Fatalf("yara exit1 error without rules: got %v %v exit %d error %q", result.Status, result.Rules, result.Exit, result.Error)
 	}
 }
 
@@ -509,7 +530,7 @@ func TestProcessFileYaraExecutionFailureIsScanError(t *testing.T) {
 	}
 }
 
-func TestProcessFileYaraRulesDoNotRecordExecutionFailureAsFinding(t *testing.T) {
+func TestProcessFileYaraExit1ErrorIsScanErrorAndNotFinding(t *testing.T) {
 	db := openTestDB(t)
 	dir := t.TempDir()
 	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
@@ -519,20 +540,172 @@ func TestProcessFileYaraRulesDoNotRecordExecutionFailureAsFinding(t *testing.T) 
 
 	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
 		return []byte(`{"rules":[{"identifier":"Zip_Rule"}]}`), 1, errors.New("exit status 1")
-	}); status != "hit" {
+	}); status != "scan_error" {
 		t.Fatalf("status: got %s", status)
 	}
 
-	var rule string
-	if err := db.QueryRow("SELECT rule FROM findings").Scan(&rule); err != nil {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if rule != "yara" {
-		t.Errorf("finding rule: got %s", rule)
+	if count != 0 {
+		t.Errorf("yara exit1 error must not add findings: got %d", count)
+	}
+	if summary["scan_error"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+
+	var source string
+	if err := db.QueryRow("SELECT scan_source FROM files").Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "structural+yara_error" {
+		t.Errorf("source: got %s", source)
+	}
+}
+
+func TestProcessFileYaraExternalLookupBeforeFindingsWrite(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	c.VirusTotal.Enabled = false
+	summary := map[string]int{}
+
+	called := false
+	status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		called = true
+		var count int
+		if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+			t.Fatalf("external yara count: %s", err)
+		}
+		if count != 0 {
+			t.Fatalf("external yara must run before committed findings write, count %d", count)
+		}
+		return []byte(`{"rules":[{"identifier":"Yara_Rule"}]}`), 0, nil
+	})
+
+	if !called {
+		t.Fatal("yara external lookup not called")
+	}
+	if status != "hit" {
+		t.Fatalf("status: got %s", status)
 	}
 	if summary["hit"] != 1 {
 		t.Errorf("summary: got %v", summary)
 	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("committed findings: got %d", count)
+	}
+}
+
+func TestProcessFileUsesCachedNegativeVTWithoutFetch(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	sha, err := Sha256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cacheStore(db, sha, "unknown_to_vt", "virustotal", "", "unknown_to_vt"); err != nil {
+		t.Fatal(err)
+	}
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 5, MaxDaily: 5, APIKey: "k"}
+
+	fetchCalls := 0
+	fetch := func(url, key string) (map[string]any, int, error) {
+		fetchCalls++
+		return nil, 404, nil
+	}
+	summary := map[string]int{}
+	status := processFile(db, c, &RateState{}, dir, path, summary, fetch)
+	if status != "pass" {
+		t.Fatalf("status: got %s", status)
+	}
+	if fetchCalls != 0 {
+		t.Errorf("cached negative VT should avoid fetch: fetchCalls %d", fetchCalls)
+	}
+	if summary["pass"] != 1 || summary["cached"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+
+	var rule, detail string
+	if err := db.QueryRow("SELECT rule, detail FROM findings WHERE rule = 'virustotal'").Scan(&rule, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if rule != "virustotal" || detail != "unknown_to_vt" {
+		t.Errorf("finding: got rule=%q detail=%q", rule, detail)
+	}
+	var source string
+	if err := db.QueryRow("SELECT scan_source FROM files").Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "structural+virustotal" {
+		t.Errorf("source: got %s", source)
+	}
+}
+
+func TestProcessFileVTExternalLookupBeforeFindingsWrite(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = ""
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 5, MaxDaily: 5, APIKey: "k"}
+
+	sha, err := Sha256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
+		"last_analysis_stats":   map[string]any{"malicious": 1},
+		"last_analysis_results": map[string]any{"e": map[string]any{"category": "malicious", "engine_name": "E", "result": "R"}},
+	}}}
+	called := false
+	fetch := func(url, key string) (map[string]any, int, error) {
+		called = true
+		var count int
+		if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+			t.Fatalf("external VT count: %s", err)
+		}
+		if count != 0 {
+			t.Fatalf("external VT must run before committed findings write, count %d", count)
+		}
+		return payload, 200, nil
+	}
+	summary := map[string]int{}
+	status := processFile(db, c, &RateState{}, dir, path, summary, fetch)
+	if !called {
+		t.Fatal("VT external lookup not called")
+	}
+	if status != "hit" {
+		t.Fatalf("status: got %s", status)
+	}
+	if summary["hit"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+
+	var rule, detail string
+	if err := db.QueryRow("SELECT rule, detail FROM findings WHERE rule = 'virustotal'").Scan(&rule, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if rule != "virustotal" || detail != "E: R" {
+		t.Errorf("finding: got rule=%q detail=%q", rule, detail)
+	}
+	var cachedCount int
+	if err := db.QueryRow("SELECT COUNT(1) FROM scan_cache").Scan(&cachedCount); err != nil {
+		t.Fatal(err)
+	}
+	if cachedCount != 1 {
+		t.Errorf("VT cache must be committed, got %d", cachedCount)
+	}
+	_ = sha
 }
 
 func TestResolveYrPathUsesDataDirForRelativePath(t *testing.T) {

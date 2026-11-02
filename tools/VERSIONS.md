@@ -13,6 +13,7 @@
 - 用途: 構造規則 `rules/structural.yar`（リポジトリルート＝完成フォルダ直下）の実行引擎
 - 留意点: このビルドは msvc target。クリーン環境では `vcruntime140.dll`（VC++ ランタイム）を要求する可能性がある。純粋なコピペ運用が優先なら `yr` なしで `scan.py` の構造検査のみで完結させられる
 - 実行時の上限フラグ（`yr scan` に有効なフラグのみ）: `--timeout 10 --cpu-limit 50 --skip-larger 67108864 --fast-scan --output-format ndjson`。classic YARA の `--max-rules` は `yr` に存在しない
+- 実測 exit code（2026-11-02）: `tools/yr.exe` の scan/match/no-match は exit `0`、invalid rule などの error は exit `1`。したがって `runYaraWithRunner` は非 0 exit を scan_error として扱い、rule output の有無だけで hit にしない
 
 ## Go toolchain（開発環境・winget でインストール済み）
 

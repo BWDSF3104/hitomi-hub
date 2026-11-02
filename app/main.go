@@ -100,17 +100,64 @@ func defaultLimits() Limits {
 	}
 }
 
+func (l *Limits) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		MaxEntries           *int   `json:"max_entries"`
+		MaxUncompressed      *int64 `json:"max_uncompressed_bytes"`
+		MaxRatio             *int64 `json:"max_ratio"`
+		MaxScanBytes         *int64 `json:"max_scan_bytes"`
+		YrTimeoutSec         *int   `json:"yr_timeout_sec"`
+		YrCpuLimit           *int   `json:"yr_cpu_limit"`
+		YrSkipLarger         *int64 `json:"yr_skip_larger"`
+		YrFastScan           *bool  `json:"yr_fast_scan"`
+		MaxRequestsPerMinute *int   `json:"-"`
+		MaxDailyRequests     *int   `json:"-"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*l = defaultLimits()
+	if raw.MaxEntries != nil {
+		l.MaxEntries = *raw.MaxEntries
+	}
+	if raw.MaxUncompressed != nil {
+		l.MaxUncompressed = *raw.MaxUncompressed
+	}
+	if raw.MaxRatio != nil {
+		l.MaxRatio = *raw.MaxRatio
+	}
+	if raw.MaxScanBytes != nil {
+		l.MaxScanBytes = *raw.MaxScanBytes
+	}
+	if raw.YrTimeoutSec != nil {
+		l.YrTimeoutSec = *raw.YrTimeoutSec
+	}
+	if raw.YrCpuLimit != nil {
+		l.YrCpuLimit = *raw.YrCpuLimit
+	}
+	if raw.YrSkipLarger != nil {
+		l.YrSkipLarger = *raw.YrSkipLarger
+	}
+	if raw.YrFastScan != nil {
+		l.YrFastScan = *raw.YrFastScan
+	}
+	if raw.MaxRequestsPerMinute != nil {
+		l.MaxRequestsPerMinute = *raw.MaxRequestsPerMinute
+	}
+	if raw.MaxDailyRequests != nil {
+		l.MaxDailyRequests = *raw.MaxDailyRequests
+	}
+	return nil
+}
+
 func loadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, err
 	}
-	cfg := Config{}
+	cfg := Config{Limits: defaultLimits()}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
-	}
-	if cfg.Limits.MaxEntries == 0 {
-		cfg.Limits = defaultLimits()
 	}
 	if cfg.VirusTotal.MaxPerMinute == 0 {
 		cfg.VirusTotal.MaxPerMinute = 4
@@ -256,6 +303,7 @@ func migrateSchema(db *sql.DB, current int) error {
 }
 
 const scanCacheTTL = 30 * 24 * time.Hour
+const negativeScanCacheTTL = 2 * time.Hour
 
 func cacheLookup(db dbExec, sha string, ttl time.Duration) (string, string, string, string, error) {
 	var verdict, engine, threat, detail, cachedAt sql.NullString
@@ -267,9 +315,13 @@ func cacheLookup(db dbExec, sha string, ttl time.Duration) (string, string, stri
 	if err != nil {
 		return "", "", "", "", err
 	}
-	if ttl > 0 && cachedAt.Valid {
+	if cachedAt.Valid {
+		effectiveTTL := ttl
+		if verdict.String == "unknown_to_vt" && negativeScanCacheTTL < effectiveTTL {
+			effectiveTTL = negativeScanCacheTTL
+		}
 		cachedTime, parseErr := time.Parse("2006-01-02T15:04:05Z", cachedAt.String)
-		if parseErr == nil && time.Since(cachedTime) > ttl {
+		if parseErr == nil && effectiveTTL > 0 && time.Since(cachedTime) > effectiveTTL {
 			return "", "", "", "", nil
 		}
 	}
@@ -418,6 +470,19 @@ func downloadFilesParallel(client *Client, target string, entries []FileEntry, f
 	return results
 }
 
+type pendingFinding struct {
+	rule  string
+	detail string
+}
+
+type pendingCacheStore struct {
+	sha     string
+	verdict string
+	engine  string
+	threat  string
+	detail  string
+}
+
 func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int, fetch FetchFunc) string {
 	return processFileWithYara(db, cfg, state, root, path, summary, fetch, nil)
 }
@@ -428,107 +493,103 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 		logScanError(err)
 		return ""
 	}
-	ext, magic, findings, structuralStatus := ScanFile(path, cfg)
+	ext, magic, findings, status := ScanFile(path, cfg)
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		rel = path
 	}
 	galleryID := galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries"))
 
-	tx, err := db.Begin()
-	if err != nil {
-		logScanError(err)
-		return structuralStatus
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for _, item := range findings {
-		if err := addFinding(tx, rel, sha, "structural", item); err != nil {
-			logScanError(err)
-			return structuralStatus
-		}
-	}
-
-	status := structuralStatus
 	source := "structural"
 	cached := false
+	var yaraFindings []pendingFinding
+	var vtFindings []pendingFinding
+	var cacheStoreEntry pendingCacheStore
+	needsCacheStore := false
 
-	if status == "scan_error" {
-		if err := recordScanFile(tx, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
-			logScanError(err)
-			return status
-		}
-		if err := tx.Commit(); err != nil {
-			logScanError(err)
-			return status
-		}
-		summary[status] = summary[status] + 1
-		return status
-	}
-
-	if YaraGate(ext, cfg) {
-		result := runYaraWithRunner(context.Background(), path, rulesFile(root), resolveYrPath(cfg.Yr, root), cfg.Limits, runYara)
-		if result.Status == "scan_error" {
-			if status != "hit" {
-				status = "scan_error"
-			}
-			source = "structural+yara_error"
-		} else if len(result.Rules) > 0 {
-			status = "hit"
-			source = "structural+yara"
-			for _, rule := range result.Rules {
-				findings = append(findings, rule)
-				if err := addFinding(tx, rel, sha, "yara", rule); err != nil {
-					logScanError(err)
-					return status
+	if status != "scan_error" {
+		if YaraGate(ext, cfg) {
+			result := runYaraWithRunner(context.Background(), path, rulesFile(root), resolveYrPath(cfg.Yr, root), cfg.Limits, runYara)
+			if result.Status == "scan_error" {
+				if status != "hit" {
+					status = "scan_error"
+				}
+				source = "structural+yara_error"
+			} else if len(result.Rules) > 0 {
+				status = "hit"
+				source = "structural+yara"
+				for _, rule := range result.Rules {
+					yaraFindings = append(yaraFindings, pendingFinding{rule: "yara", detail: rule})
 				}
 			}
 		}
 	}
 
-	if status != "hit" && cfg.VirusTotal.Enabled && scanTargets[ext] {
-		verdict, engine, threat, detail, err := cacheLookup(tx, sha, scanCacheTTL)
+	if status != "hit" && status != "scan_error" && cfg.VirusTotal.Enabled && scanTargets[ext] {
+		verdict, engine, threat, detail, err := cacheLookup(db, sha, scanCacheTTL)
 		if err != nil {
 			logScanError(err)
 			return status
 		}
 		if verdict != "" {
 			source = "structural+virustotal"
+			cached = true
 			if verdict == "hit" {
 				status = "hit"
-				if err := addFinding(tx, rel, sha, engine, firstNonEmpty(detail, threat)); err != nil {
-					logScanError(err)
-					return status
-				}
+				vtFindings = append(vtFindings, pendingFinding{rule: engine, detail: firstNonEmpty(detail, threat)})
+			} else if verdict == "unknown_to_vt" {
+				vtFindings = append(vtFindings, pendingFinding{rule: engine, detail: firstNonEmpty(detail, threat)})
 			} else {
-				if err := addFinding(tx, rel, sha, engine, "cache_hit"); err != nil {
-					logScanError(err)
-					return status
-				}
+				vtFindings = append(vtFindings, pendingFinding{rule: engine, detail: "cache_hit"})
 			}
-			cached = true
 		} else {
-			result := VTLookup(tx, sha, cfg, state, fetch)
+			result := VTLookup(db, sha, cfg, state, fetch)
 			if result.Status == "pass" || result.Status == "hit" {
-				if err := cacheStore(tx, sha, result.Status, "virustotal", result.ThreatName, fmt.Sprintf("positives=%d", result.Positives)); err != nil {
-					logScanError(err)
-					return status
-				}
+				needsCacheStore = true
+				cacheStoreEntry = pendingCacheStore{sha: sha, verdict: result.Status, engine: "virustotal", threat: result.ThreatName, detail: fmt.Sprintf("positives=%d", result.Positives)}
 				source = "structural+virustotal"
 				if result.Status == "hit" {
 					status = "hit"
-					if err := addFinding(tx, rel, sha, "virustotal", firstNonEmpty(result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))); err != nil {
-						logScanError(err)
-						return status
-					}
+					vtFindings = append(vtFindings, pendingFinding{rule: "virustotal", detail: firstNonEmpty(result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))})
 				}
+			} else if result.Status == "unknown_to_vt" {
+				source = "structural+virustotal"
+				vtFindings = append(vtFindings, pendingFinding{rule: "virustotal", detail: firstNonEmpty(result.ThreatName, result.Status)})
 			} else if result.Status != "skipped" {
-				// VT 側の失敗は構造判定を上書きしない。status は構造側、VT 状態は finding detail に残す
-				if err := addFinding(tx, rel, sha, "virustotal", "api_error:"+result.Status); err != nil {
-					logScanError(err)
-					return status
-				}
+				vtFindings = append(vtFindings, pendingFinding{rule: "virustotal", detail: "api_error:" + result.Status})
 			}
+		}
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		logScanError(err)
+		return status
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, item := range findings {
+		if err := addFinding(tx, rel, sha, "structural", item); err != nil {
+			logScanError(err)
+			return status
+		}
+	}
+	for _, item := range yaraFindings {
+		if err := addFinding(tx, rel, sha, item.rule, item.detail); err != nil {
+			logScanError(err)
+			return status
+		}
+	}
+	for _, item := range vtFindings {
+		if err := addFinding(tx, rel, sha, item.rule, item.detail); err != nil {
+			logScanError(err)
+			return status
+		}
+	}
+	if needsCacheStore {
+		if err := cacheStore(tx, cacheStoreEntry.sha, cacheStoreEntry.verdict, cacheStoreEntry.engine, cacheStoreEntry.threat, cacheStoreEntry.detail); err != nil {
+			logScanError(err)
+			return status
 		}
 	}
 
@@ -831,7 +892,6 @@ func main() {
 			cfg.Viewer.Port = f.port
 		}
 		v := newViewer(db, cfg, root)
-		warnGG(loadGG(v.client))
 		if err := v.serve(); err != nil {
 			fmt.Fprintln(os.Stderr, "viewer: "+err.Error())
 			os.Exit(1)

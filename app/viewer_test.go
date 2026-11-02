@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 
@@ -2036,6 +2038,46 @@ func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
 	}
 }
 
+func TestViewerAcquisitionCheckReturnsRunStartFolderStatus(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), root)
+
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/acquisition/check", `{"gallery_id":1}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("check code: got %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := out["path"].(string)
+	if out["status"] != "not_exists" || out["title"] != "Kemo" || !strings.Contains(path, "Kemo") {
+		t.Errorf("check missing folder: got %v", out)
+	}
+
+	if err := os.MkdirAll(filepath.Join(v.acquisitionRoot, "Kemo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/acquisition/check", `{"gallery_id":1}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("check code: got %d body %q", rec.Code, rec.Body.String())
+	}
+	out = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "confirm" || out["title"] != "Kemo" {
+		t.Errorf("check existing folder: got %v", out)
+	}
+}
+
 func TestViewerAcquisitionCopiesCacheFileIntoTitleFolder(t *testing.T) {
 	db := openTestDB(t)
 	root := t.TempDir()
@@ -2205,8 +2247,8 @@ func TestEmbeddedUIHasAcquisitionHandler(t *testing.T) {
 	if !strings.Contains(s, `acquisition progress `) || !strings.Contains(s, `acquisitionDone`) || !strings.Contains(s, `acquisitionAbort`) {
 		t.Errorf("ui should track acquisition progress and abort: got %q", s)
 	}
-	if !strings.Contains(s, `window.confirm(`) || !strings.Contains(s, `await post("/api/cache/acquire"`) {
-		t.Errorf("ui should show overwrite confirmation through the acquisition endpoint: got %q", s)
+	if !strings.Contains(s, `window.confirm(`) || !strings.Contains(s, `await post("/api/acquisition/check"`) || !strings.Contains(s, `await post("/api/cache/acquire"`) {
+		t.Errorf("ui should check the acquisition folder once at run start and show overwrite confirmation through the acquisition endpoint: got %q", s)
 	}
 	if !strings.Contains(s, `document.getElementById("acquisition-start").addEventListener("click", runAcquisition);`) ||
 		!strings.Contains(s, `document.getElementById("acquisition-abort").addEventListener("click"`) {
@@ -2219,9 +2261,11 @@ func TestEmbeddedUIHasAcquisitionHandler(t *testing.T) {
 	}
 	runBody := s[runStart:strings.Index(s, "\ndocument.getElementById(\"acquisition-start\")")]
 	if !strings.Contains(runBody, `if (acquisitionAbort) break;`) ||
+		!strings.Contains(runBody, `const check = await post("/api/acquisition/check", { gallery_id: current.id });`) ||
+		!strings.Contains(runBody, `check.status === "confirm"`) ||
 		!strings.Contains(runBody, `result.status === "confirm"`) ||
 		!strings.Contains(runBody, `appendAcquisitionResult(`) {
-		t.Errorf("runAcquisition should abort, handle confirmation, and append per-page results: got %q", runBody)
+		t.Errorf("runAcquisition should abort, check the folder once at run start, handle confirmation, and append per-page results: got %q", runBody)
 	}
 	if !strings.Contains(s, `let acquisitionRunFolderConfirmed = false;`) ||
 		!strings.Contains(runBody, `acquisitionRunFolderConfirmed = false;`) {
@@ -2232,6 +2276,55 @@ func TestEmbeddedUIHasAcquisitionHandler(t *testing.T) {
 	if guard < 0 || confirm < 0 || guard > confirm {
 		t.Errorf("runAcquisition should check the folder confirmation flag before window.confirm once per run: got %q", runBody)
 	}
+}
+
+func TestViewStartupServesBeforeGGLoad(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
+	fetchStarted := make(chan struct{})
+	fetchDone := make(chan struct{})
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		close(fetchStarted)
+		<-fetchDone
+		return nil, errors.New("blocked")
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = startView(v, listener)
+	}()
+
+	select {
+	case <-fetchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup gg load did not start")
+	}
+
+	var resp *http.Response
+	for i := 0; i < 20; i++ {
+		resp, err = http.Get("http://" + listener.Addr().String() + "/")
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("startup serve request failed: %s", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("startup handler should serve before gg load finishes: status %d", resp.StatusCode)
+	}
+	select {
+	case <-fetchDone:
+		t.Fatal("startup gg load completed before serve")
+	default:
+	}
+
+	close(fetchDone)
 }
 
 func TestViewerIndexServesEmbeddedPage(t *testing.T) {

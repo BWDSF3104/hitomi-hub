@@ -74,6 +74,31 @@ func TestRunSavedQueriesTracksNewGalleries(t *testing.T) {
 	}
 }
 
+func TestRunSavedQueriesRollsBackNewIdsWhenGalleryRecordFails(t *testing.T) {
+	db := openTestDB(t)
+	if err := addQuery(db, "rollback", "female:yuri", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DROP TABLE galleries"); err != nil {
+		t.Fatal(err)
+	}
+	page := beIDs([]uint32{100})
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return page, nil
+	}}
+
+	if _, err := runSavedQueries(db, c, t.TempDir(), "english", 0); err == nil {
+		t.Fatal("expected gallery record failure")
+	}
+	var seenCount int
+	if err := db.QueryRow("SELECT COUNT(1) FROM bookmark_seen").Scan(&seenCount); err != nil {
+		t.Fatal(err)
+	}
+	if seenCount != 0 {
+		t.Errorf("bookmark_seen must roll back when recordDiscovered fails, got %d", seenCount)
+	}
+}
+
 func TestRunSavedQueriesUsesIndexForPlainQuery(t *testing.T) {
 	db := openTestDB(t)
 	if err := addQuery(db, "kemo", "kemo", 0); err != nil {

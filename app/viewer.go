@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,6 +59,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("POST /api/fav", v.fav)
 	mux.HandleFunc("POST /api/query", v.query)
 	mux.HandleFunc("POST /api/cache/acquire", v.acquire)
+	mux.HandleFunc("POST /api/acquisition/check", v.acquisitionCheck)
 	mux.HandleFunc("GET /files/{gallery}/{name}", v.serveFile)
 	return v.withPOSTSecurity(mux)
 }
@@ -125,14 +127,26 @@ func isLoopbackHost(raw string) bool {
 	return false
 }
 
+func startView(v *viewer, listener net.Listener) error {
+	go func() {
+		warnGG(loadGG(v.client))
+	}()
+	server := &http.Server{Handler: v.handler()}
+	return server.Serve(listener)
+}
+
 func (v *viewer) serve() error {
 	bind := orDefault(v.cfg.Viewer.Bind, "127.0.0.1")
 	port := v.cfg.Viewer.Port
 	if port == 0 {
 		port = 8731
 	}
+	listener, err := net.Listen("tcp", bind+":"+strconv.Itoa(port))
+	if err != nil {
+		return err
+	}
 	fmt.Println("viewer: http://" + bind + ":" + strconv.Itoa(port))
-	return http.ListenAndServe(bind+":"+strconv.Itoa(port), v.handler())
+	return startView(v, listener)
 }
 
 func (v *viewer) index(w http.ResponseWriter, r *http.Request) {

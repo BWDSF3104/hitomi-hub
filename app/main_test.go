@@ -339,6 +339,26 @@ func TestLoadConfigUsesPerFieldHitomiDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigLimitsPreservesExplicitZeroAndDefaultsOmittedFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"limits":{"max_entries":0,"max_ratio":10}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs := defaultLimits()
+	if cfg.Limits.MaxEntries != 0 || cfg.Limits.MaxRatio != 10 {
+		t.Errorf("explicit limits fields should survive defaults: got %+v", cfg.Limits)
+	}
+	if cfg.Limits.MaxUncompressed != defs.MaxUncompressed || cfg.Limits.MaxScanBytes != defs.MaxScanBytes ||
+		cfg.Limits.YrTimeoutSec != defs.YrTimeoutSec || cfg.Limits.YrCpuLimit != defs.YrCpuLimit ||
+		cfg.Limits.YrSkipLarger != defs.YrSkipLarger || cfg.Limits.YrFastScan != defs.YrFastScan {
+		t.Errorf("omitted limits fields should use defaults: got %+v", cfg.Limits)
+	}
+}
+
 func TestOpenDBDSNCarriesPragmaSettings(t *testing.T) {
 	dsn := dbDSN(filepath.Join(t.TempDir(), "hitomi.db"))
 	for _, want := range []string{"_pragma=foreign_keys(1)", "_pragma=journal_mode(WAL)", "_pragma=busy_timeout(5000)"} {

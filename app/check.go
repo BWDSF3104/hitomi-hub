@@ -5,7 +5,7 @@ import (
 )
 
 // isNewForQuery は saved query の bookmark_seen にまだ無い gallery id
-func isNewForQuery(db *sql.DB, queryID, galleryID int) (bool, error) {
+func isNewForQuery(db dbExec, queryID, galleryID int) (bool, error) {
 	var count int
 	if err := db.QueryRow("SELECT COUNT(1) FROM bookmark_seen WHERE query_id = ? AND gallery_id = ?", queryID, galleryID).Scan(&count); err != nil {
 		return false, err
@@ -13,7 +13,7 @@ func isNewForQuery(db *sql.DB, queryID, galleryID int) (bool, error) {
 	return count == 0, nil
 }
 
-func markQuerySeen(db *sql.DB, queryID, galleryID int) error {
+func markQuerySeen(db dbExec, queryID, galleryID int) error {
 	_, err := db.Exec("INSERT OR IGNORE INTO bookmark_seen (query_id, gallery_id, first_seen_at) VALUES (?, ?, ?)",
 		queryID, galleryID, nowISO())
 	return err
@@ -38,15 +38,22 @@ func runSavedQueries(db *sql.DB, client *Client, root, lang string, limit int) (
 	for _, q := range queries {
 		name := q["name"].(string)
 		text := q["query"].(string)
+		queryID := q["id"].(int)
 		ids, err := savedQueryIDs(client, text, lang)
 		if err != nil {
 			out = append(out, map[string]any{"name": name, "query": text, "error": err.Error()})
 			continue
 		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback() }()
+
 		newIDs := []int{}
-		queryID := q["id"].(int)
 		for _, id := range ids {
-			new, err := isNewForQuery(db, queryID, id)
+			new, err := isNewForQuery(tx, queryID, id)
 			if err != nil {
 				return nil, err
 			}
@@ -56,15 +63,18 @@ func runSavedQueries(db *sql.DB, client *Client, root, lang string, limit int) (
 			if limit > 0 && len(newIDs) >= limit {
 				break
 			}
-			if err := markQuerySeen(db, queryID, id); err != nil {
+			if err := markQuerySeen(tx, queryID, id); err != nil {
 				return nil, err
 			}
-			if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+			if err := recordDiscovered(tx, id, galleryDir(root, id)); err != nil {
 				return nil, err
 			}
 			newIDs = append(newIDs, id)
 		}
-		if err := markQueryRun(db, q["id"].(int)); err != nil {
+		if err := markQueryRun(tx, queryID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{"name": name, "query": text,

@@ -72,6 +72,44 @@ func acquisitionStatus(w http.ResponseWriter, status string, fields map[string]a
 	jsonOut(w, out)
 }
 
+func (v *viewer) acquisitionCheck(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		GalleryID int `json:"gallery_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.GalleryID <= 0 {
+		http.Error(w, "gallery_id is required", http.StatusBadRequest)
+		return
+	}
+
+	titleName := acquisitionTitleFromDB(v.db, body.GalleryID)
+	if titleName == "" {
+		titleName = strconv.Itoa(body.GalleryID)
+	}
+	titlePath, err := safeAcquisitionPath(v.acquisitionRoot, titleName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	if _, err := os.Stat(titlePath); err == nil {
+		acquisitionStatus(w, "confirm", map[string]any{
+			"gallery_id": body.GalleryID,
+			"title":      titleName,
+			"path":       acquisitionRel(v.root, titlePath),
+		})
+		return
+	}
+	acquisitionStatus(w, "not_exists", map[string]any{
+		"gallery_id": body.GalleryID,
+		"title":      titleName,
+		"path":       acquisitionRel(v.root, titlePath),
+	})
+}
+
 func (v *viewer) acquire(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		GalleryID int    `json:"gallery_id"`

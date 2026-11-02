@@ -1586,6 +1586,19 @@ async function runAcquisition() {
   if (results) results.textContent = "";
   renderAcquisitionStatus();
 
+  const check = await post("/api/acquisition/check", { gallery_id: current.id });
+  if (check.status === "confirm") {
+    if (acquisitionRunFolderConfirmed) {
+      return;
+    }
+    if (!window.confirm("既存の同名タイトルフォルダがあります。上書きしますか？")) {
+      appendAcquisitionResult({ status: "skipped", path: check.path || "" });
+      return;
+    }
+  }
+  acquisitionRunFolderConfirmed = true;
+  acquisitionOverwrite = true;
+
   for (let i = 0; i < current.files.length; i++) {
     if (acquisitionAbort) break;
     const entry = current.files[i];
@@ -1595,22 +1608,10 @@ async function runAcquisition() {
       let result = await post("/api/cache/acquire", request);
       if (result.status === "confirm") {
         appendAcquisitionResult({ ...result, page, hash: entry.hash });
-        if (acquisitionRunFolderConfirmed) {
-          appendAcquisitionResult({ page, hash: entry.hash, status: "skipped", path: result.path || "" });
-          acquisitionDone++;
-          renderAcquisitionStatus();
-          continue;
-        }
-        acquisitionRunFolderConfirmed = true;
-        if (!window.confirm("既存の同名タイトルフォルダがあります。上書きしますか？")) {
-          appendAcquisitionResult({ page, hash: entry.hash, status: "skipped", path: result.path || "" });
-          acquisitionDone++;
-          renderAcquisitionStatus();
-          continue;
-        }
-        acquisitionOverwrite = true;
-        request.overwrite = true;
-        result = await post("/api/cache/acquire", request);
+        appendAcquisitionResult({ page, hash: entry.hash, status: "skipped", path: result.path || "" });
+        acquisitionDone++;
+        renderAcquisitionStatus();
+        continue;
       }
       appendAcquisitionResult({ ...result, page, hash: entry.hash, status: acquisitionOverwrite ? "overwrite" : result.status });
     } catch (err) {

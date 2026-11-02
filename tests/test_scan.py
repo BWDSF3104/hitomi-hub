@@ -12,6 +12,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -111,8 +112,8 @@ def test_vt_hash_only_lookup_uses_mock(tmp_path):
 
     def fetch(url, key):
         calls.append((url, key))
-        return {"data": {"attributes": {"stats": {"malicious": 0, "suspicious": 0},
-                                        "last_analysis_results": {}}}}
+        return {"data": {"attributes": {"last_analysis_stats": {"malicious": 0, "suspicious": 0},
+                                        "last_analysis_results": {"e": {"category": "undetected"}}}}}, 200
 
     result = scan.vt_lookup("a" * 64, cfg, {"window": [], "total": 0}, fetch=fetch)
     assert result["status"] == "pass"
@@ -234,4 +235,131 @@ def test_status_constraint_and_verify_missing(tmp_path):
     row = conn.execute("SELECT scan_status, missing_at_verify FROM files WHERE sha256 = ?", ("e" * 64,)).fetchone()
     assert row[0] == "external_removal"
     assert row[1] == 1
+    conn.close()
+
+
+def test_add_finding_ignores_duplicates(tmp_path):
+    conn = make_db(tmp_path)
+    scan.add_finding(conn, "Galleries/1/1.cbz", "a" * 64, "structural", "path_traversal:../evil.exe")
+    scan.add_finding(conn, "Galleries/1/1.cbz", "a" * 64, "structural", "path_traversal:../evil.exe")
+    conn.commit()
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 1
+    conn.close()
+
+
+def test_run_yara_exit1_error_is_scan_error():
+    rules, error = scan.run_yara_with_runner(Path("a.cbz"), Path("rules.yar"), "yr", scan.DEFAULT_LIMITS,
+                                             runner=lambda cmd: SimpleNamespace(returncode=1, stdout='{"rules":[{"identifier":"Zip_Path_Traversal"}]}'))
+    assert rules == []
+    assert error == "yara_error:exit_1"
+
+
+def test_scan_cache_stale_negative_ttl_not_used(tmp_path):
+    conn = make_db(tmp_path)
+    scan.cache_store(conn, "a" * 64, "unknown_to_vt", "virustotal", "", "unknown_to_vt")
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - scan.NEGATIVE_SCAN_CACHE_TTL_SECONDS - 1))
+    conn.execute("UPDATE scan_cache SET cached_at = ? WHERE sha256 = ?", (old, "a" * 64))
+    conn.commit()
+    assert scan.cache_lookup(conn, "a" * 64) == {}
+    conn.close()
+
+
+def test_process_file_uses_transaction_after_external_lookup(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "51" / "51.cbz", {"ok.webp": PNG})
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+    calls = []
+
+    def fetch(url, key):
+        calls.append((url, key))
+        count = conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0]
+        if count != 0:
+            raise AssertionError("external lookup must run before committed findings write")
+        return {"data": {"attributes": {"last_analysis_stats": {"malicious": 1},
+                                        "last_analysis_results": {"E": {"category": "malicious",
+                                                                        "engine_name": "E",
+                                                                        "result": "R"}}}}}, 200
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=fetch)
+    assert status == "hit"
+    assert summary.get("hit") == 1
+    assert calls and calls[0][0].endswith("/files/" + scan.sha256_file(cbz))
+    row = conn.execute("SELECT rule, detail FROM findings WHERE rule = 'virustotal'").fetchone()
+    assert row == ("virustotal", "E: R")
+    assert conn.execute("SELECT COUNT(1) FROM scan_cache").fetchone()[0] == 1
+    conn.close()
+
+
+def test_process_file_negative_vt_cache_avoids_fetch(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "52" / "52.cbz", {"ok.webp": PNG})
+    sha = scan.sha256_file(cbz)
+    scan.cache_store(conn, sha, "unknown_to_vt", "virustotal", "", "unknown_to_vt")
+    conn.commit()
+
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    def fetch(url, key):
+        raise AssertionError("cached negative VT must not fetch")
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=fetch)
+    assert status == "pass"
+    assert summary.get("pass") == 1
+    assert summary.get("cached") == 1
+    row = conn.execute("SELECT rule, detail FROM findings WHERE rule = 'virustotal'").fetchone()
+    assert row == ("virustotal", "unknown_to_vt")
+    source = conn.execute("SELECT scan_source FROM files").fetchone()[0]
+    assert source == "structural+virustotal"
+    conn.close()
+
+
+def test_process_file_yara_exit1_error_is_scan_error(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "53" / "53.cbz", {"ok.webp": PNG})
+    cfg = json.loads(json.dumps(CFG))
+    cfg["yr"] = "tools/yr.exe"
+    cfg["virustotal"]["enabled"] = False
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    runner = lambda cmd: SimpleNamespace(returncode=1, stdout='{"rules":[{"identifier":"Zip_Path_Traversal"}]}')
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {},
+                               runner=runner, yr=cfg["yr"])
+    assert status == "scan_error"
+    assert summary.get("scan_error") == 1
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 0
+    source = conn.execute("SELECT scan_source FROM files").fetchone()[0]
+    assert source == "structural+yara_error"
+    conn.close()
+
+
+def test_process_file_rolls_back_when_record_file_fails(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "54" / "54.cbz", {"../evil.exe": b"MZ\x90\x00", "ok.webp": PNG})
+    conn.execute("DROP TABLE files")
+
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = False
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    with pytest.raises(sqlite3.Error):
+        scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {})
+
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 0
     conn.close()
