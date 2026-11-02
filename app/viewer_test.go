@@ -605,6 +605,9 @@ func TestViewerSearchHandlerReturnsIdsOnlyForLazyCards(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("search initial response should not block on card metadata: got %v", out)
 	}
+	if rec.Header().Get("cache-control") != "no-store" {
+		t.Errorf("search response should be no-store: got %q", rec.Header().Get("cache-control"))
+	}
 }
 
 func TestSearchHandlerIncludesMeasurementShape(t *testing.T) {
@@ -810,7 +813,7 @@ func TestEmbeddedUIIndependentScrollPanels(t *testing.T) {
 	if !strings.Contains(s, `flex: 1; min-height: 0;`) {
 		t.Errorf(".cols should take the remaining viewport height without allowing inner panels to expand the page scroll: got %q", s)
 	}
-	if !strings.Contains(s, `.side { width: 30rem; height: 100%; min-height: 0; overflow-y: auto; }`) || !strings.Contains(s, `.main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }`) {
+	if !strings.Contains(s, `.side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }`) || !strings.Contains(s, `.main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }`) {
 		t.Errorf(".side and .main should fill the viewport height and scroll independently: got %q", s)
 	}
 }
@@ -1311,8 +1314,11 @@ func TestEmbeddedUISearchTagsAreaIsClamped(t *testing.T) {
 	if !strings.Contains(s, "--search-card-height: 130px") {
 		t.Errorf("search card should define --search-card-height: got %q", s)
 	}
-	if !strings.Contains(s, "max-height: var(--search-card-height)") {
-		t.Errorf("search tags area should be limited to thumbnail height: got %q", s)
+	if !strings.Contains(s, "height: var(--search-card-height); overflow: hidden;") {
+		t.Errorf("search card background should be fixed to --search-card-height: got %q", s)
+	}
+	if !strings.Contains(s, "max-height: calc(var(--search-card-height) - 2rem)") {
+		t.Errorf("search tags area should fit inside the fixed card height: got %q", s)
 	}
 	if !strings.Contains(s, "-webkit-line-clamp: 9") {
 		t.Errorf("search tags area should use line-clamp: got %q", s)
@@ -1328,6 +1334,16 @@ func TestEmbeddedUISearchTagsAreaIsClamped(t *testing.T) {
 	}
 	if !strings.Contains(body, "escapeHTML(tags)") {
 		t.Errorf("search card tags should be escaped before display: got %q", body)
+	}
+
+	if !strings.Contains(s, `const api = (p) => fetch(p, { cache: "no-store" }).then(`) {
+		t.Errorf("UI api() should bypass cached API responses: got %q", s)
+	}
+	if !strings.Contains(s, `form id="saved-search"`) {
+		t.Errorf("saved-search form should have a distinct id instead of id=\"query\": got %q", s)
+	}
+	if !strings.Contains(s, `document.getElementById("saved-search").addEventListener("submit"`) {
+		t.Errorf("saved-search submit listener should target the saved-search form: got %q", s)
 	}
 }
 
@@ -1523,6 +1539,22 @@ func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) 
 	}
 	if !strings.Contains(s, `setFullscreenFromGesture();`) || !strings.Contains(s, `fullscreenerror`) {
 		t.Errorf("ui should expose gesture-bound fullscreen toggle and fullscreenerror handling: got %q", s)
+	}
+	if !strings.Contains(s, `--fullscreen-page-height: calc(100vh - var(--fullscreen-page-padding) * 2);`) ||
+		!strings.Contains(s, `--fullscreen-page-width: calc(100vw - var(--fullscreen-page-padding) * 2);`) ||
+		!strings.Contains(s, `body.fullscreen .reader img,`) ||
+		!strings.Contains(s, `width: 100%;`) ||
+		!strings.Contains(s, `height: var(--fullscreen-page-height);`) ||
+		!strings.Contains(s, `object-fit: contain;`) {
+		t.Errorf("fullscreen image display size should use fullscreen variables, full image box, and contain fit: got %q", s)
+	}
+	if !strings.Contains(s, `grid-template-columns: minmax(0, var(--fullscreen-page-width));`) ||
+		!strings.Contains(s, `grid-template-columns: repeat(2, minmax(0, calc(var(--fullscreen-page-width) / 2)));`) {
+		t.Errorf("fullscreen reader grid should split available fullscreen width for double pages and use full width for single pages: got %q", s)
+	}
+	if !strings.Contains(s, `if (e.key === "ArrowLeft") { if (movePage(-1)) await showPage(); }`) ||
+		!strings.Contains(s, `if (e.key === "ArrowRight") { if (movePage(1)) await showPage(); }`) {
+		t.Errorf("fullscreen keyboard page movement should remain handled when target is not input/control: got %q", s)
 	}
 }
 

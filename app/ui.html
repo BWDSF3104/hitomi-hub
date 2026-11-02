@@ -7,7 +7,7 @@
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }
   h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
   .cols { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
-  .side { width: 30rem; height: 100%; min-height: 0; overflow-y: auto; }
+  .side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }
   .main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }
   section { margin-bottom: 1rem; }
   h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
@@ -20,7 +20,8 @@
   .meta { font-size: .9rem; color: #9aa0a6; }
   .note { font-size: .85rem; color: #f0a441; }
   .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
-  .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; }
+  .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; height: var(--search-card-height); overflow: hidden; }
+  .card .text { display: flex; flex-direction: column; min-height: 0; max-height: var(--search-card-height); overflow: hidden; }
   .cover, .search-card-cover, .strip img { object-fit: cover; background: #1d2126; }
   .cover, .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
@@ -28,7 +29,7 @@
   .tags {
     font-size: .9rem;
     line-height: 1.25;
-    max-height: var(--search-card-height);
+    max-height: calc(var(--search-card-height) - 2rem);
     overflow: hidden;
     overflow-wrap: anywhere;
     display: -webkit-box;
@@ -82,11 +83,33 @@
     object-fit: contain;
   }
   body.fullscreen .side { display: none; }
-  body.fullscreen .reader { --reader-page-height: min(90vh, 700px); }
-  body.fullscreen .reader img { height: var(--reader-page-height); }
+  body.fullscreen .reader,
+  body.pseudo-fullscreen .reader {
+    --fullscreen-page-padding: 12px;
+    --fullscreen-page-height: calc(100vh - var(--fullscreen-page-padding) * 2);
+    --fullscreen-page-width: calc(100vw - var(--fullscreen-page-padding) * 2);
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding: var(--fullscreen-page-padding);
+    background: #111;
+    gap: 0;
+    grid-template-columns: minmax(0, var(--fullscreen-page-width));
+  }
+  body.fullscreen .reader.double,
+  body.pseudo-fullscreen .reader.double {
+    grid-template-columns: repeat(2, minmax(0, calc(var(--fullscreen-page-width) / 2)));
+  }
+  body.fullscreen .reader img,
+  body.pseudo-fullscreen .reader img {
+    display: block;
+    width: 100%;
+    height: var(--fullscreen-page-height);
+    background: #1d2126;
+    object-fit: contain;
+  }
   body.pseudo-fullscreen .side { display: none; }
   body.pseudo-fullscreen #reader { position: fixed; inset: 0; z-index: 10; margin: 0; padding: 12px; background: #111; }
-  body.pseudo-fullscreen .reader img { height: calc(100vh - 24px); }
 </style>
 </head>
 <body>
@@ -111,7 +134,7 @@
     </section>
     <section>
       <h2>保存検索</h2>
-      <form id="query">
+      <form id="saved-search">
         <input id="qname" placeholder="name" size="10">
         <input id="qtext" placeholder="female:yuri language:english" size="22">
         <button>save</button>
@@ -173,7 +196,7 @@
   </div>
 </div>
 <script>
-const api = (p) => fetch(p).then(async (r) => {
+const api = (p) => fetch(p, { cache: "no-store" }).then(async (r) => {
   const data = await r.json().catch(() => ({}));
   data._x_cache = r.headers.get("x-cache") || null;
   data._x_search_timing = r.headers.get("x-search-timing") || null;
@@ -1354,7 +1377,7 @@ async function runSearch() {
 document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
 document.getElementById("search-prev").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(-1); });
 document.getElementById("search-next").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(1); });
-document.getElementById("query").addEventListener("submit", async (e) => {
+document.getElementById("saved-search").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = document.getElementById("qname").value.trim();
   const text = document.getElementById("qtext").value.trim();

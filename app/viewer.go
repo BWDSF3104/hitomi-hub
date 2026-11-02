@@ -263,7 +263,8 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	recordMS := int64(time.Since(recordStart) / time.Millisecond)
 	jsonStart := time.Now()
 	jsonMS := int64(time.Since(jsonStart) / time.Millisecond)
-	w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
+	w.Header().Set("cache-control", "no-store");
+  w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
 	jsonOut(w, map[string]any{"query": q, "lang": r.URL.Query().Get("lang"), "page": page,
 		"total": total, "ids": ids, "results": []map[string]any{},
 		"timing": map[string]any{
