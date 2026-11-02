@@ -473,6 +473,43 @@
 - Current `female:big_breasts` UI confirmation showed results `25` and `total 32882`, but current direct API re-run returned `502` because remote fetch failed, so no new `perf-status` number was captured in this confirmation.
 - Therefore the measurement path detects bottlenecks, but the current session did not produce a new bottleneck measurement for `female:big_breasts` due to remote fetch failure. The previously recorded P3 measurements remain valid evidence.
 
+### Search bottleneck three measurements
+
+- Fresh server was started from:
+  - `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_three_measurements_fresh`
+  - port `8735`
+- Query used for meaningful actual server measurements: `furry`, `lang=all`, `page=1`, `limit=25`.
+- Browser fetch in Playwright returned stale `total: 0` for the UI fetch path, so these three measurements were recorded directly from the server API with `curl.exe`.
+- Run 1:
+  - `X-Search-Timing: search=8488;record=959;json=0`
+  - total `32881`
+  - fetch metrics at end of run:
+    - `index`: calls7, gate_wait6027ms, network968ms, decode0ms
+    - `image`: calls1, gate_wait862ms, network146ms, decode340ms
+    - `gg`: calls1, network453ms
+    - `version`: calls1, network136ms
+- Run 2:
+  - `X-Search-Timing: search=7224;record=818;json=0`
+  - total `32881`
+  - incremental fetch metrics for this run:
+    - `index`: +7 calls, +5170ms gate_wait, +958ms network, +0ms decode
+    - `image`: +1 call, +863ms gate_wait, +136ms network, +86ms decode
+    - `gg`: no additional call
+- Run 3:
+  - `X-Search-Timing: search=7215;record=769;json=0`
+  - total `32881`
+  - incremental fetch metrics for this run:
+    - `index`: +7 calls, +5169ms gate_wait, +963ms network, +0ms decode
+    - `image`: +1 call, +862ms gate_wait, +136ms network, +78ms decode
+    - `gg`: no additional call
+
+- Detected bottleneck:
+  - Each `SearchHTML` request performs 7 `index` fetch calls.
+  - The dominant cost is `index gate_wait_ms`, about `5160ms` per run in runs 2 and 3.
+  - `record_ms` is around `800ms`, much smaller than the index gate wait.
+  - The bottleneck is the searchindex rate gate/wait, not raw network transfer.
+- UI card measurement layer is implemented, but UI card timings were not captured in this three-measurement pass because Playwright browser fetch returned stale responses.
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
