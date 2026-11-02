@@ -11,7 +11,7 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 ## コード検証（本プロジェクト）
 
 - **Python 変更後**: `python -m pytest tests/ -v`
-- テストは外部 API を呼ばない（VirusTotal は mock）。公開エンドポイントで認証不要な RSS 以外の外部呼出しは禁止
+- テストの外部 API 呼出し方針: `docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md`
 
 ## Development
 

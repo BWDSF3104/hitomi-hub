@@ -3,7 +3,7 @@
 ## 方針
 
 - 実装開始指示済み。優先度高い順で修正し、各項目で合格条件を満たすまで確認する。
-- 実装開始ゲートクリア済みとして扱える。テストは外部 API を実際に呼ばない。
+- 実装開始ゲートクリア済みとして扱える。テストの外部 API 呼出しは `docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md` に従う。
 - `docs/ai/tasks/2026-11-02-external-code-review-findings.md` に実施記録を追加する。
 
 ## 1. VT `stats` key と未分析 handling

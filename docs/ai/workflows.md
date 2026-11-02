@@ -8,7 +8,7 @@
 
 ## Commit Checklist
 
-1. `python -m pytest tests/ -v`（テストは外部 API を呼ばない）
+1. `python -m pytest tests/ -v`
 2. `git status` / `git diff` で意図しない混入を確認（`*.db`・`tools/*.exe`・scratch/ は非追跡）
 3. 単体 exe はコミットしない。版・digest は `tools/VERSIONS.md`
 4. Memory Bank の変更はコード変更と同じ commit に含める
