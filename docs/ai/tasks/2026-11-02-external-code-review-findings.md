@@ -1,8 +1,8 @@
 # 外部コードレビュー指摘記録
 
-**Status**: 実装完了・確認完了（strict UI blocker 除く）
+**Status**: 前回高項目の実装確認は完了。2026-11-02 外部コードレビュー再読記録と、項目別の現在有効性/対応可能性評価を静的読解で記録済み（実装未開始、推定項目は実機確認必要、strict UI blocker 除く）
 **Date**: 2026-11-02
-**Next Action**: 高項目の実装確認は完了。残りは manual full-image retry の strict UI confirmation blocker。
+**Next Action**: 新規指摘のうち実装済み項目の現状確認は完了。未実装の優先項目は `imageProxy` の `gg.js` 再取得制限、VT 失敗で構造検査 status が壊れる問題、`openGallery` の同 gallery 開き直し問題、A-3、A-7、検索結果キャッシュ化、`recordDiscovered` トランザクション化。残りの strict UI confirmation blocker も継続。
 
 ## 意図 / 背景
 
@@ -509,6 +509,640 @@
   - `record_ms` is around `800ms`, much smaller than the index gate wait.
   - The bottleneck is the searchindex rate gate/wait, not raw network transfer.
 - UI card measurement layer is implemented, but UI card timings were not captured in this three-measurement pass because Playwright browser fetch returned stale responses.
+
+### Canonical `hub.exe` bottleneck three measurements
+
+- Corrected canonical server was started from:
+  - binary: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe`
+  - fresh root: `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh`
+  - address: `http://127.0.0.1:8731/`
+- Query used for meaningful actual server measurements: `furry`, `lang=all`, `page=1`, `limit=25`.
+- Measurements were taken directly from the canonical server API with `curl.exe`.
+- Run 1:
+  - `X-Search-Timing: search=8500;record=892;json=0`
+  - total `32881`
+  - fetch metrics at end of run:
+    - `index`: calls7, gate_wait6012ms, network984ms, decode0ms
+    - `image`: calls1, gate_wait859ms, network150ms, decode348ms
+    - `gg`: calls1, gate_wait0ms, network454ms, decode0ms
+    - `version`: calls1, gate_wait0ms, network140ms, decode0ms
+- Run 2:
+  - `X-Search-Timing: search=7230;record=878;json=0`
+  - total `32881`
+  - incremental fetch metrics for this run:
+    - `index`: +7 calls, +4969ms gate_wait, +1168ms network, +0ms decode
+    - `image`: +1 call, +858ms gate_wait, +140ms network, +88ms decode
+    - `gg`: no additional call
+    - `version`: no additional call
+- Run 3:
+  - `X-Search-Timing: search=7220;record=757;json=0`
+  - total `32881`
+  - incremental fetch metrics for this run:
+    - `index`: +7 calls, +5155ms gate_wait, +980ms network, +0ms decode
+    - `image`: +1 call, +859ms gate_wait, +140ms network, +78ms decode
+    - `gg`: no additional call
+    - `version`: no additional call
+- Detected bottleneck:
+  - Each `SearchHTML` request performs `7` `index` fetch calls.
+  - The dominant cost is `index gate_wait_ms`, about `4969ms` to `5155ms` per run.
+  - `record_ms` is about `757ms` to `892ms`, much smaller than the index gate wait.
+  - The bottleneck is the searchindex rate gate/wait, not raw network transfer.
+  - This result was confirmed on the canonical `hub.exe`, so the earlier non-canonical `go run` measurement path is superseded as a measurement source.
+
+## 外部コードレビュー（2026-11-02 再読）
+
+- 外部レビュー指摘として記録する。実装・実行はしていない。
+- 前回の指摘は現在のコードを読み直して更新した。前回の記述は一部古かった。
+- 推定項目は推定として明記する。
+
+### 前回指摘の状況
+
+- 解消済み:
+  - A-2 検索 term 正規化順序: `strings.Fields` で先に分割し、term ごとに正規化している。`female:big_breasts` は 1 term のまま nozomi path になる。
+  - A-4 既読の巻き戻り: 通常移動では `fully_read` が保たれ、解除は `--clear-complete` のみ。
+  - A-5 scan 記録: export 直下のファイルは NULL になり、既知 id では `galleries` 行を先に作り、DB エラーはログに出る。
+  - A-9 新着追跡: `bookmark_seen` で保存検索ごとに管理している。
+  - A-10 データ競合: `cacheMu` と `infoCacheMu` で保護されている。
+  - SQLite: `WAL`, `busy_timeout`, `user_version` が入っている。
+
+- 部分的に解消:
+  - A-1 `gg.js` と index version の更新:
+    - TTL と storage 404 時の `gg.js` 強制再取得が入った。
+    - ただし index version は 404 時に再取得する経路がなく、更新後の最大 1 時間は壊れたまま。
+  - A-6 VirusTotal の status:
+    - 非 200 を cache しなくなり、TTL と日次カウントの DB 化が入った。
+    - `ThreatName` はまだ誤りの可能性が高い。実 API レスポンスで確認が必要。
+    - `scan_error` と `not_evaluated` の扱いにも問題がある。
+
+- 未解消:
+  - A-3 `orderbydirection:asc`: `SearchHTML` が `applyOrderForInitial` を呼び、さらに最後に `applySearchOrder` を呼ぶため、`asc` は 2 回 reverse されて元に戻ると指摘されている。order term は最初のループで state に入るため、初回適用時点で `asc` が有効とされている。
+  - A-7 YARA 実行失敗:
+    - 失敗が依然 `yara_error:...` という規則名として返り、`hit` になる。
+    - `err != nil` の分岐後にある `ExitCode() > 1` の判定は到達しないコード。
+    - `yr` の相対パスが cwd 依存のまま。
+  - A-8 PDF: Page 辞書は `<<` が 3 つに対し `>>` が 2 つで、閉じが 1 つ足りない。テストは部分文字列検査のため通る。
+
+### 新規問題
+
+1. 強制再取得の無制限な繰り返し（`imageProxy`）
+   - 404 のたびに `EnsureGG(force=true)` が走る。
+   - 再取得に最小間隔も singleflight もなく、bucket が変わっていなくても再試行する。
+   - 古い gallery で本当に窓外の `no_full` を 4 並列 prefetch すると、ページ数ぶん `gg.js` を取りに行く。
+   - `gg.js` 取得は一般データ用の 1000ms ゲート `c.last` を共有し、検索やカード取得まで巻き込んで遅くなる。
+   - 対策候補:
+     - 最後の再取得から N 秒以内ならしない。
+     - 再取得後に bucket が同じなら再試行しない。
+
+2. VT 側の失敗で構造検査の `pass` が壊れる（`processFile`）
+   - VT の結果が `pass`/`hit` 以外のとき、`scan_error` なら status が `scan_error` に、それ以外は `not_evaluated` に上書きされる。
+   - 構造検査で `pass` だった cbz が、VT のレート制限、no_key、ネットワーク失敗だけで `scan_error` や `not_evaluated` になる。
+   - `export` は `scan_error` を skip するため、一時的な VT 障害で書き出し対象から落ちる。
+   - 404 の未登録ハッシュは日常的に起き、そのたびに `virustotal` の finding が 1 行増える。
+   - 対策候補:
+     - 構造検査の status は維持する。
+     - VT の状態は別 finding か別カラムに分ける。
+
+3. VT の `ThreatName`（推定）
+   - 実装は `last_analysis_results` の `entry["name"]` を読んでいる。
+   - VT v3 の実レスポンスでは、検出名は `result`、エンジン名は `engine_name` である可能性が高いと記憶されている。
+   - `name` は無いはずなので、実運用では常に category の `malicious` になる可能性がある。
+   - テスト fixture が `name` を使っているため、このテストでは検出できない。
+   - 実 API レスポンスで確認が必要。
+
+4. 既存 cbz の再スキャンで findings が重複する
+   - `findings` に UNIQUE 制約も既存確認がない。
+   - `scan` 再実行や `download` ごとの `processFile` で同じ行が増える可能性がある。
+
+5. acquisition が新規でも 2 ページ目で上書き確認を出す
+   - 1 ページ目で title フォルダができると、2 ページ目の `overwrite=false` リクエストはサーバー側で「フォルダが存在する」と判定されて `confirm` を返す。
+   - UI は `acquisitionOverwrite=false` で始まるため、新規取得でも 2 ページ目で「既存の同名フォルダがあります」と確認が出る。
+   - テストは 1 ページ分しか見ていない。
+   - 対策候補:
+     - フォルダ存在確認を 1 回だけ、開始時にする。
+     - 同一 run 内の取得は確認済みとして扱う。
+
+6. 同じ gallery を `openGallery` で開き直すと画像が取得されない可能性（推定・実機確認が必要）
+   - `openGallery` は先頭で `backgroundSignal.abort()` を呼ぶ。
+   - 開く gallery が現在と同じ id だと `backgroundGalleryId === current.id` のままで、`ensureBackgroundPrefetch` は reset せず、中断済みの `backgroundSignal.signal` で `runPriority` を呼ぶ可能性がある。
+   - その場合、未キャッシュ画像は fetch が abort され、背景ワーカーも終了したままになる可能性がある。
+   - ストリップのクリック、お気に入りリンク、同 gallery の hash 遷移で再現しうる経路。
+   - 対策候補: `openGallery` で abort した場合に `backgroundGalleryId` も `null` に戻す。
+
+7. 検索の言語指定が plain term に効かない
+   - `termIDs` の plain term は `IndexIDs("galleries", term)` で `lang` を使わない。
+   - UI の `lang` に `japanese` を入れても、`furry` は全言語の結果になる。
+   - colon term では `lang` が効くため挙動が不一致。
+   - hitomi 本家との parity が意図なら仕様どおりの可能性はあるが、UI 上は誤解を生む。
+
+8. `check` の初回が全件「新着」になる
+   - 保存直後の初回実行で、検索結果の全 id が new になる。
+   - 数千〜数万件规模では、それぞれ SELECT 1 回と書き込み 2 回がトランザクションなしで走る可能性がある。
+   - 対策候補:
+     - 初回は baseline として seen に入れるだけにする。
+     - トランザクションにまとめる。
+
+### 非効率
+
+実測根拠のある項目:
+
+- 検索 1 回で index 取得 7 回、gate 待ちが約 5.2 秒。
+- 純粋な通信は約 1 秒。
+- `record_ms` が 770〜2560ms。
+- 25 件の `recordDiscovered` が 1 件ずつ commit されている。
+- カード 25 枚で 24〜26 秒。
+
+改善案:
+
+- 検索結果を `(query, lang)` 単位で TTL キャッシュする。
+- B-tree の上位 node をキャッシュする。
+- `recordDiscovered` を 1 トランザクションにまとめる。
+- `PRAGMA synchronous=NORMAL` を WAL 前提で検討する。
+- `searchCard` での record 書き込みも見直す。
+- ltn の静的ファイルのゲート分離を検討する。ただし API 方針との兼ね合いが必要。
+- `json_ms` は常に 0 であり、実測計測ではなく常に 0 である。実際の encode 時間を測っていない。
+
+前回から変わっていない非効率:
+
+- キャッシュの書き込みは非アトミックで、magic 検査もない。
+- singleflight がない。
+- キャッシュ容量の上限がない。
+- `thumbProxy` が TN 失敗時に full 画像を取りに行く。
+- `serveStoredImage` は全読みで、304 や Range に対応しない。
+- `download` は既存ファイルを確認せず毎回再取得する。
+- `gate`/retry の `time.Sleep` は ctx 非対応。
+- objectURL を 2000 件超で全件 revoke し、表示中の画像も壊す可能性がある。
+- ページ移動のたびに `POST /api/read` と `GET /api/lists` が走る。
+- `renderStrip()` が毎回 50 枚を再構築する。
+- 起動時に `restoreSearchState()` と `runSearch()` でカード取得が重複する。
+- `scan` は毎回全ファイルを SHA256 する。
+- `ScanPDFKeys` は 7 キーそれぞれで `string(data)` を作り直す。
+- PDF の `/AA`, `/JS` は 3 バイトで誤検知源になる。
+- `pdf.go` の `rawRGB` はページごとに全 RGB を保持する。
+- `infoCache` は上限なしで増える。
+
+### 設定・保守・セキュリティ
+
+- `--config` フラグが無いまま、`usage-memo.md` の記述と食い違っている。
+- `MinIntervalMS == 0` のとき `cfg.Hitomi` 全体が上書きされる。
+- `MinIntervalMS` が 0 でなければ、`use_live_gg` を省略すると `false` になり、黙って snapshot に落ちる可能性がある。
+- `Search`, `SearchQuery`, `nozomiURL`, `fileExt`, `imageExts`, `pageSource` は本番経路では未使用。
+- POST 系に Host/Origin 検査がない。
+- スキーマは `CREATE IF NOT EXISTS` のみで、列追加のマイグレーションはないと推定されている。古い DB で `recordFile` が失敗する可能性がある。
+- `pragma` を `db.Exec` で 1 回だけ設定しており、接続が張り直されると失われる可能性がある。`modernc` の DSN の `_pragma=` 指定に寄せるほうが安全。
+
+### 優先して直す順
+
+1. `imageProxy` の `gg.js` 無制限再取得
+2. VT 失敗で構造検査の `pass` が壊れる問題
+3. 同じ gallery を `openGallery` で開き直すと画像が取得されない可能性
+4. A-3 `asc` の二重 reverse
+5. A-7 YARA 失敗が `hit` になる問題
+6. 検索結果のキャッシュ化と `recordDiscovered` のトランザクション化
+
+`openGallery` の問題は静的読解だけの推定であり、ストリップのクリックで再現するか実機確認が必要。
+
+## 項目別 現在有効性（設定・保守・セキュリティ・UI 非効率）
+
+- 判定は静的読解のみ。ファイル変更なし。
+
+### 1. `--config` フラグ欠如と usage-memo 矛盾
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `app/main.go:490-513` の flag set に `config` がない。
+  - `app/main.go:761-765` の `valueFlags` にもない。
+  - `scan --root . --config config.json` は `flag provided but not defined: -config` で exit(2)。
+  - `docs/ai/usage-memo.md:23` のように `--config` をサブコマンド前へ置くと、`findCommand`（`app/main.go:768-785`）が `config.json` をサブコマンドとして誤読する。
+  - 設定は常に `dataDir/config.example.json` 固定（`app/main.go:519`）。
+- **適切な対応**:
+  - `usage-memo.md` から `--config` の記載を削除し、`--data-dir` フォルダ内の正典ファイルのみと明記する。
+  - または `--config` flag を追加し、`valueFlags` に登録し、`findCommand` との互換を守る。
+  - どちらにするかは方針選択が必要。
+
+### 2. `MinIntervalMS == 0` 上書き / `use_live_gg` 省略時の snapshot
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `app/main.go:121-123` が `MinIntervalMS == 0` のとき `cfg.Hitomi` を `defaultHitomiConfig()` で全体置換する。明示した `user_agent`, `image_format`, `max_retries` も消失し得る。
+  - `MinIntervalMS != 0` の場合、`ImageMinIntervalMS` 以外の per-field 補完がない（`app/main.go:124-126`）。
+  - `UseLiveGG` は bool で JSON 省略時 `false`（`app/hitomi.go:23-31`）。
+  - `defaultHitomiConfig()` の既定は true（`app/hitomi.go:51-54`）で、`docs/ai/usage-memo.md:115` の「既定 true」と食い違う。
+  - `EnsureGG` は `false` のとき live fetch せず snapshot を使う（`app/gg.go:74-84`）。
+- **適切な対応**:
+  - JSON の bool を sentinel で区別し、省略時のみ default を適用する。
+  - または `*bool` にして省略と false を区別する。
+
+### 3. Schema `CREATE IF NOT EXISTS` のみ / 列追加 migration なし
+
+- **現在有効性**: 有効（設計ギャップ確定）
+- **根拠**:
+  - `schema.sql:1-80` が全面 `CREATE IF NOT EXISTS`。
+  - `app/main.go:175-195` の `ensureSchema` は `user_version` を `schemaVersion = 2`（`app/main.go:154`）へ上げるだけ。version 別 ALTER 経路がない。
+  - `bookmark_seen`, `vt_rate_state` は古い DB でも作られる。
+  - v2 後の列追加は skip され反映されない。例として `verifyMissing` の `missing_at_verify`（`app/main.go:274`）で列欠如によりエラーし得る。
+- **適切な対応**:
+  - `user_version` に基づく段階 migration を追加する。
+  - または「正典最小構成＝現 `schema.sql`、古い DB は再生成」と運用明文化する。
+
+### 4. pragma を `db.Exec` 1 回で設定する脆さ
+
+- **現在有効性**: 実用上は単一接続固定で持続するが脆い
+- **根拠**:
+  - `openDB` は `foreign_keys`, `journal_mode=WAL`, `busy_timeout` を 1 回 `db.Exec` する（`app/main.go:156-173`）。
+  - `journal_mode=WAL` はファイル側永続。
+  - `foreign_keys`, `busy_timeout` は per-connection。`SetMaxOpenConns(1)`（`app/main.go:171`）で単一接続固定されている限り持続するが、pool 化や接続張り直で失われる。
+- **適切な対応**:
+  - `modernc` の DSN に `_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)` を寄せる。
+
+### 5. POST の Host/Origin 検査なし
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `app/viewer.go:46-62` の handler に middleware がない。
+  - `POST /api/read`, `/api/fav`, `/api/query`（`app/viewer.go:546-614`）、`POST /api/cache/acquire`（`app/acquisition.go:75-210`）は Content-Type, Host, Origin を見ていない。
+  - bind が可変（`app/main.go:133-135`）。
+  - `text/plain` simple POST や DNS rebinding 経由で read_state, favorite, queries, acquisition を書き換えられる。
+- **適切な対応**:
+  - Host を `127.0.0.1:<port>` / localhost 限定。
+  - Origin が存在する場合は same-origin のみ許可。
+  - Content-Type を JSON に限定する middleware。
+
+### 6. UI / 非効率項目
+
+- `objectURL` 2000 超で全件 revoke: 有効（`app/ui.html:219,782-784,823-833`）。表示中の参照も壊れる。対応: LRU、active/表示中除外。
+- ページ移動ごとに `POST /api/read` と `GET /api/lists`: 有効（`app/ui.html:1060-1071,1094,1176-1186`）。debounce 決定記録は未実装。対応: debounce。
+- `renderStrip()` が毎回 50 枚を再構築: 有効（`app/ui.html:1096-1125`）。対応: group/data 変化時のみ更新。
+- 起動時に `restoreSearchState()` と `runSearch()` でカード取得重複: 有効（`app/ui.html:1289-1308,1349-1376,1630-1645`）。対応: hash 一致で skip、searchCard cache 再利用。
+- `scan` が毎回 full SHA256: 有効（`app/main.go:361`, `app/scan.go:100-111`）。対応: size+mtime 不变で skip。
+- `ScanPDFKeys` が 7 キーごとに `string(data)` を作る: 有効（`app/scan.go:152-168`）。対応: `bytes.Contains`。
+- PDF `/AA`, `/JS` が 3 バイト substring で誤検知源: 有効（`app/scan.go:37,164`）。圧縮 stream 偶然列で誤検知し、圧縮 key は false negative になり得る。対応: object dictionary 範囲限定、または known-issues 正典化＋YARA 役割分担。
+- `pdf.go` の `rawRGB` がページごとに全 RGB を保持: 有効（`app/pdf.go:47-58,112`）。対応: ページ単位 file 書き出し、JPEG DCTDecode 直接 embed。
+- `infoCache` 上限なし: 有効（`app/viewer.go:29,42,616-631`）。mutex 済みで race は解消、容量のみ。対応: LRU/cap or SQLite 永続。
+- cache 書き込み non-atomic: 有効（`app/viewer.go:445-448,477-492,489-492`, `app/acquisition.go:171`, `app/main.go:343`）。対応: temp+rename。
+- cache 書き込み magic 検査なし: 有効（proxy path で `DetectMagic` 未適用、`app/scan.go:47-80`）。対応: 書き込み前 magic prefix check。
+- singleflight なし: 有効（`app/viewer.go:457-506`, `app/viewer.go:423-455`, UI prefetch 4 並列）。対応: per-key singleflight。
+- cache 容量上限なし: 有効（`app/viewer.go:39`）。対応: quota+LRU or 明文化。
+- `thumbProxy` TN 失敗時 full fetch: 有効（`app/viewer.go:451-454`）。TN display fallback 禁止方針と server 挙動が衝突。対応: 失敗時 `no_full` 返却、方針確認要。
+- `serveStoredImage` 304/Range なし・全読み: 有効（`app/viewer.go:177-184`）。対応: `http.ServeContent`, ETag。
+- `download` 既存ファイル確認なし: 有効（`app/main.go:337-346`）。対応: 既存 skip（`--force`）。
+- `gate`/retry `time.Sleep` ctx 非対応: 有効（`app/hitomi.go:71,114,133,147,165`）。対応: `select ctx.Done()`。
+- `recordDiscovered` tx なし: 有効（`app/viewer.go:262-264`, `app/main.go:594-598`, `app/check.go:59-64`）。実測 `record_ms 770〜2560ms`。対応: 1 tx batch。
+
+### 7. 本スコープ優先度
+
+- P2:
+  - 検索結果 cache
+  - B-tree node cache
+  - `recordDiscovered` tx
+  - ctx-aware sleep
+  - cache atomic + singleflight
+  - 起動時重複カード fetch
+  - `thumbProxy` full fetch
+  - PDF `/AA`, `/JS` 誤検知
+  - `use_live_gg` default
+  - POST Host/Origin
+- P3:
+  - `--config` docs
+  - pragma DSN
+  - schema migration
+  - dead code
+  - objectURL LRU
+  - renderStrip incremental
+  - showLists debounce
+  - download skip
+  - 304
+  - cache capacity
+  - infoCache cap
+  - rawRGB
+  - SHA skip
+
+## 項目別 現在有効性（VirusTotal）
+
+- 静的読解と公式ドキュメント参照による評価。ファイル変更なし、実装なし。
+
+### VT HTTP status / 非 200 キャッシュ
+
+- **現在有効性**: 解消済み。前回の「非 200 を cache しない」は現コードで有効。
+- **根拠**:
+  - `defaultFetch` が HTTP status を返す（`app/vt.go:30-49`）。decode 失敗時も `resp.StatusCode` を返す。
+  - `VTLookup` は非 200 を cache しない。401 は `auth_error`, 429 は `rate_limited`, その他は `not_evaluated`（`app/vt.go:105-114`）。
+  - cache 書き込みは `pass`/`hit` のときだけ（`app/main.go:426-431`）。
+  - `scanCacheTTL` は 30 日（`app/main.go:197`）。
+  - VT 日次カウントは DB 化済み（`app/vt.go:74-82`, `app/vt.go:156-168`, `schema.sql:73-76`）。
+- **対応**: 追加対応不要。残る問題は `stats` キーと未分析 handling。
+
+### VT 失敗で構造検査 `pass` が壊れる
+
+- **現在有効性**: 有効。重大度: 中〜高。
+- **根拠**:
+  - `app/main.go:439-451` で `result.Status == "scan_error"` のとき `status = "scan_error"`, `result.Status != "skipped"` のとき `status = "not_evaluated"` に上書きする。
+  - 構造検査で `pass` だった cbz が、VT のレート制限、no_key、ネットワーク失敗、DB 書き込み失敗だけで `scan_error` / `not_evaluated` になる。
+  - `export` と `pdf` は `hit` / `scan_error` を skip する（`app/export.go:127`, `app/pdf.go:98`）。一時的な VT 障害で書き出し対象から落ちる。
+  - `usage-memo.md:199-202` の語彙定義では `scan_error` は「解読不能」だが、VT 障害まで `scan_error` になるのは意味と矛盾。
+  - Python 参照実装は上書きしない（`src/scan.py:392-393`）。parity 乖離。
+- **適切な対応**:
+  - 構造検査 status を維持する。`files` に `structural_status` / `vt_status` を分離、または findings に VT 状態のみ記録する。
+  - `scan_error` はファイル解読不能の意味に限定し、VT 障害は `api_error` など別語彙にする。
+  - export skip 条件を構造 `scan_error` だけにする。
+- **リスク**: 意味の再定義なしに修正すると、既存 DB 行と usage-memo 語彙の再整理が必要。
+
+### `findings` 重複
+
+- **現在有効性**: 有効。重大度: 中。
+- **根拠**:
+  - `schema.sql:40-47` の `findings` に UNIQUE 制約がない。`id INTEGER PRIMARY KEY` だけ。
+  - `addFinding` は `INSERT INTO findings ... VALUES`（`INSERT OR IGNORE` ではなく、既存行確認なし）（`app/main.go:227-231`）。
+  - `scan` 再実行で構造 findings が毎回増える（`app/main.go:373-378`）。
+  - `download` ごとの `processFile` でも同じ検知が増える。
+  - cached pass の `cache_hit` 行が毎回増える（`app/main.go:418-421`）。
+  - VT status 行、特に 404 未登録ハッシュで毎回増える（`app/main.go:446-450`）。
+- **適切な対応**:
+  - `UNIQUE(sha256, rule, detail)` を追加し、`INSERT OR IGNORE` にする。
+  - 既存 DB に重複がある場合、制約追加前に重複行 cleanup が必要。
+  - `user_version` 3 の migration で既存表へ制約追加するか、新規 DB で schema.sql に UNIQUE を入れる。
+
+### VT `stats` key — 追加問題（重大）
+
+- **現在有効性**: 実 API では無効。重大度: 高。
+- **根拠**:
+  - `app/vt.go:116-123` は `attrs["stats"]` を読む。正しくは File object の `last_analysis_stats`。
+  - `stats` は Analysis object のサブフィールド名であり、File object の属性として公式リファレンスに列挙されていない。
+  - フォールバックがないため、実 API では `positives = 0` になり、status が `pass` として scan cache に 30 日永続化される。
+  - `last_analysis_results` が無い、分析未完了、`analysis-in-progress` でも positives = 0 で pass になる。意味的には `not_evaluated` であるべき。
+- **適切な対応**:
+  - `last_analysis_stats` を読む。必要なら `stats` と `last_analysis_stats` の両方を読む。
+  - analysis status / last analysis date を見て未分析を `not_evaluated` にする。
+  - 誤 clean の 30 日固定を短縮または status 別管理にする。
+
+### VT `ThreatName` field
+
+- **現在有効性**: 実 API では無効。重大度: 高。
+- **根拠**:
+  - `app/vt.go:124-149` は `last_analysis_results` entry の `entry["name"]` を読み、空なら `category` にフォールバックする。
+  - VT v3 File/Analysis object の entry field は `category`, `engine_name`, `engine_update`, `engine_version`, `method`, `result` と公式リファレンスに記載されている。`name` は存在しない。
+  - 実運用では `entry["name"]` が空になり、`category` の `malicious` が ThreatName になる。検出名が DB に出ない。
+- **適切な対応**:
+  - `result` を優先し、`engine_name` を併記する。例: `engine_name: result`。
+  - `category` は最終フォールバックにする。
+  - テスト fixture を v3 実レスポンス形状へ修正する。
+  - known-good / known-bad hash で最小 1 回の実 API 確認を行い、mock fixture に固定する。
+
+### `processFile` トランザクション
+
+- **現在有効性**: 有効。重大度: 中。
+- **根拠**:
+  - Go code に `BeginTx`, `BEGIN`, `Rollback` が grep 0 件。
+  - `addFinding`（`app/main.go:227-231`）、`cacheStore`（`app/main.go:218-225`）、`recordScanFile` / `recordFile`（`app/main.go:233-260`）が autocommit。
+  - findings committed 後に `recordScanFile` 失敗すると `files` 行なしで findings だけ残る（`app/main.go:455-457`）。
+  - `scan_error` 早期 return も findings committed 後に file 行を書く順序（`app/main.go:380-387`）。
+- **適切な対応**:
+  - `processFile` を 1 トランザクション化する。findings, file row, cacheStore, vt_rate_state を同一 tx 内で決める。
+  - `incrementVTUsage` は実 API 呼出し後の計上なので commit 外に残す意味を明確化する。実呼出しは戻せない。
+
+### VT test fixture
+
+- **現在有効性**: 有効。テストが実 API 不一致を検出できない。
+- **根拠**:
+  - `app/scan_test.go:143-145`, `app/scan_test.go:203` が `stats` を fixture に使っている。
+  - `TestVTThreatNameUsesEngineResultName`（`app/scan_test.go:225-230`）は fixture に `name` を使っている。テスト名は engine result name をうたうが、実際の v3 field `result`/`engine_name` を検証していない。
+  - `TestVTDailyQuotaIsStoredInDB`（`app/scan_test.go:240-261`）と `TestScanCacheTTLStalePassIsNotUsed`（`app/scan_test.go:263-278`）は TTL / DB 化を検証済み。
+- **適切な対応**:
+  - fixture を `data.attributes.last_analysis_stats`, `last_analysis_results.<engine>` の `category`/`engine_name`/`result` 形状へ置換。
+  - 追加検証:
+    - `stats` key が無くて `last_analysis_stats` があり、`result` あり → hit。
+    - analysis in progress / results 欠如 → `not_evaluated`。
+    - `last_analysis_stats` が正しく read される。
+    - 実 API 1 回確認を fixtures に固定し、常時 external call はしない。
+
+### VT 軽微項目
+
+- 403 が VT の日次 quota 超過として一般に返る可能性があり、現行 switch は 401/429 のみで 403 は `not_evaluated` に混在する。実レスポンス確認が必要。
+- per-minute gate は process 内 `RateState.window`（`app/vt.go:59-70`）のみ。跨プロセスでは共有されない。単一 process 運用では問題なし。
+- `incrementVTUsage` は実 fetch 後に呼ばれる（`app/vt.go:98-104`）。非 200 でも計上されるが cache hit は計上しない。
+- `app/main.go:442` と `app/main.go:445` の `result.Status == "skipped"` 分岐は `cfg.VirusTotal.Enabled` gate 通過後なので到達不可。
+
+## 項目別 現在有効性（YARA / PDF / acquisition / openGallery）
+
+- 静的読解による評価。ファイル変更なし。
+
+### A-7 YARA 実行失敗が `hit` になる
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `app/vt.go:215-235` の `RunYara` は `cmd.Output()` が error を返すと `[]string{"yara_error:" + err.Error()}` を返す（`app/vt.go:227-229`）。
+  - `app/main.go:390-401` は返された文字列を `addFinding(db, rel, sha, "yara", rule)` に使い、`len(findings) > 0` で `status = "hit"` にする。
+  - `export` と `pdf` は `hit` / `scan_error` を skip する（`app/export.go:127`, `app/pdf.go:98`）。YARA 呼出し失敗だけで書き出し対象から落ちる。
+  - `cmd.Output()` は非 0 終了コードで必ず error を返す。`err == nil` の場合 `ProcessState.ExitCode()` は 0 なので、`app/vt.go:231` の `ExitCode() > 1` は到達不可。
+  - `cfg.Yr` が相対パスの場合、`exec.CommandContext` にそのまま渡される（`app/vt.go:225`）。規則ファイルは `rulesFile()`（`app/main.go:831-837`）で root/dataDir に解決されるが、`yr` だけが cwd 依存。
+  - YARA-X の exit code 1 = match 説は成立しない。YARA-X v1.22.1 の `tools/VERSIONS.md:7-12` では `EXIT_ERROR = 1` は error 時のみ。
+- **適切な対応**:
+  - `RunYara` を `(rules []string, err error)` または `(rules, status)` に分離する。
+  - 実行失敗は finding ではなく `scan_error` または warning として扱う。
+  - `processFile` は YARA 失敗時に status を `scan_error` にし summary へ反映する。
+  - `yr` は dataDir 基準または絶対 path にする。
+  - Python 参照実装側も `returncode not in (0,1)` を error 扱いに揃える。
+
+### A-8 PDF page dictionary 閉じ不足
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `app/pdf.go:140-143` の page dictionary は `<<` が 3、`>>` が 2 で、page dictionary の閉じ `>>` が不足。
+  - xref offsets は object 単位で正しく書かれるため xref 自体は壊れない。影響は object 構文のみ。
+  - `app/export_test.go:169-182` は部分文字列検査だけなので、この欠陥を検出できない。
+- **適切な対応**:
+  - page object を `/Contents N 0 R >>` で閉じ、辞書ネストの `>>` 対応を揃える。
+  - page object body を抽出し `strings.Count(body, "<<") == strings.Count(body, ">>")` を確認するテストを追加する。
+  - `go vet .`, `go test -count=1 .` で検証する。
+
+### acquisition の新規 run でも 2 ページ目 confirm
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `app/acquisition.go:132-144` は `overwrite=false` のとき `os.Stat(titlePath)` が dir で `confirm` を返す。
+  - `titlePath` は page 1 の `os.MkdirAll(filepath.Dir(dest), ...)`（`app/acquisition.go:167`）で作られる。同一 run の page 2 以降は run 自身が作成した folder に対して `confirm` を返す。
+  - handler は stateless で run identity がない。
+  - UI は `app/ui.html:1544` で `acquisitionOverwrite = false` に初期化し、`runAcquisition()`（`1568-1605`）で run 開始時に false にリセットし、page ごとに `overwrite: acquisitionOverwrite` を送る。`confirm` で `window.confirm(...)` を表示する。
+  - 追加影響:
+    - 承認すると `acquisitionOverwrite = true`（`app/ui.html:1592`）が run 全体に引き継がれ、残りの全ページで per-file overwrite 保護が効かなくなる。
+    - 拒否すると folder が存在し続けるため、以降の各ページで confirm が毎回再発する。
+  - テストは 1 request = 1 page のみ（`app/viewer_test.go:1910-2055`）。UI string test（`2057-2101`）だけ。
+- **適切な対応**:
+  - run 開始時に folder 存在確認を 1 回だけ行い、run 単位で上書き可否を確定する。
+  - サーバーに `run_id` / `confirmed` を持たせ、同一 run 内は folder check を skip する。
+  - または UI 側で run 開始時に folder check を行い、server は per-file 判定だけ残す。
+  - 現行挙動を正典化するなら、UI 確認文言を「この run で作成した folder」と区別できる文言にする。
+
+### openGallery で同 gallery 開き直し時画像取得失敗
+
+- **現在有効性**: 静的読解では有効。実機確認が必要。
+- **根拠**:
+  - `app/ui.html:1132-1137` の `openGallery` は冒頭で `prefetchAbort.abort()` と `backgroundSignal.abort()` を行うが、`backgroundGalleryId` をリセットしない。
+  - `backgroundGalleryId` は `resetBackgroundPrefetch`（`app/ui.html:956-993`）でのみ設定される。
+  - `ensureBackgroundPrefetch`（`app/ui.html:995-1003`）は `backgroundGalleryId !== current.id` のときだけ reset する。同 gallery 開き直しでは条件 false であり、abort済み signal で `runPriority(displayed, signal)` を呼ぶ。
+  - `runPriority`（`app/ui.html:942-954`）は `signal.aborted` で即 return し、未キャッシュ表示画像が fetch されない。
+  - `startBackgroundWorkers`（`app/ui.html:1041-1058`）は `resetBackgroundPrefetch` から呼ばれ、worker は `signal.aborted` で終了したままになる。
+  - `manualRetryFailedFullImages`（`app/ui.html:1010-1039`）も `backgroundSignal.signal` を使い、abort済み signal で fetch すると AbortError。この関数に per-item `catch` がないため rejection が外に出る。
+  - 再現経路: strip click（`app/ui.html:1496-1501`）、`#results` card click（`1490-1495`）、favorites/unread hash navigation（`1182-1185`, `1613-1615`）で同 gallery 開き直しがあり得る。
+- **適切な対応**:
+  - `openGallery` で abort したら `backgroundGalleryId = null` または `backgroundSignal = null` にして、`ensureBackgroundPrefetch` が新 controller を作る。
+  - `manualRetryFailedFullImages` に `catch` を追加し、aborted signal を error として記録せず、または明示的に新しい signal を使う。
+  - 同 gallery 開き直しを cancel 不要な no-op として扱う設計も可。
+- **検証**:
+  - UI string test: `openGallery` に `backgroundGalleryId = null` または signal 再生成があることを assert。
+  - Playwright 実機: cache-less root で同一 gallery 内 strip click、`/api/image` 呼出し継続、`fullDone` 進行、`naturalWidth > 0` 増加分を確認。`backgroundSignal.signal.aborted` が abort 済みまま残るか page.evaluate で確認。対照実験で別 gallery から戻ると回復する経路を確認。
+  - `ui.html` は `//go:embed` のため exe 再ビルド必須。
+
+## 項目別 現在有効性（search / gg / order / 検索非効率）
+
+- 静的読解による評価。ファイル変更なし。
+
+### A-1 `gg.js` / index version
+
+- **現在有効性**: TTL と force refresh は実装済み。指摘は部分解消。ただし `imageProxy` の 404 経路で force refresh が無制限に繰り返す問題は有効。
+- **根拠**:
+  - `EnsureGG(ctx, force)` の force 判定は `!force && source == "live" && age < ggCacheTTL`（`app/gg.go:85`）。`force=true` は TTL を無条件で bypass する。
+  - `imageProxy` は storage 404 で `EnsureGG(ctx, true)` を呼ぶ。live 確認時のみ 1 回 retry（`app/viewer.go:484-504`）。1 リクエスト内は 1 回だが、リクエスト跨ぎの限制がない。
+  - `Client` に force 用最終取得時刻がない。`ggLoadedAt` は TTL 用だけ（`app/hitomi.go:47`）。最小間隔なし。
+  - `EnsureGG` fetch 前に `cacheMu` を release するため concurrent force 呼出はそれぞれ fetch（`app/gg.go:92`）。singleflight なし。
+  - `parseGG` 後の bucket/CaseSet を旧値と比較しない。bucket が変わっていなくても retry する（`app/viewer.go:486`）。
+  - `EnsureGG` は `c.get` を使う。一般 1000ms 共有 `c.last`（`app/gg.go:91`, `app/hitomi.go:78-80`）。gate は `MinIntervalMS` と `ImageMinIntervalMS` の 2 本（`app/hitomi.go:56-84`）。
+  - UI prefetch concurrency は 4（`app/ui.html:217`）。server 側に `no_full` 負キャッシュがない（`app/viewer.go:508-513`）。UI の `no_full` は display source 判定除外（`app/ui.html:336-338`）で `prefetchPageImage` の guard を通らず再 fetch（`app/ui.html:787-801`, `864-871`）。
+  - index version の `ensureIndexVersion(field, force)` force は本番経路で未使用。呼出は `indexVersion` の `false`（`app/searchindex.go:156`, `IndexIDs` `app/searchindex.go:216`）のみ、`true` はテストのみ。`indexNode`/`indexData` の 404 に version 再取得経路がない（`app/searchindex.go:197-212`）。
+- **適切な対応**:
+  - `Client` に `ggForceAt` と `ggForceMinInterval` を追加し、force 要求は mutex 内で「最後の force から N 秒以内なら skip、cache を返す」。
+  - `imageProxy` で `ggBefore := GG()` を保持し、refresh 後の `Bucket`/`CaseSet` が同一なら retry せず `writeNoFull` にする。
+  - singleflight は `golang.org/x/sync` を `app/go.mod` に追加しない限り、手書き `map[string]*call` + `sync.Mutex` を `Client` に追加する。依存追加は単体静的バイナリ方針で判断が必要。
+  - `IndexIDs` が 404 を検知して `ensureIndexVersion(field, true)` を 1 回だけ呼ぶ。同一 minimum-interval guard を共有する。
+- **テスト影響**:
+  - `TestEnsureGGUsesTTLAndForceRefresh`（`app/hitomi_test.go:118-123`）は force 常時再取得を期待している。最小間隔導入ならテスト更新が必要。
+  - `TestViewerImageProxyRefreshesGGOnceOnStorage404`（`app/viewer_test.go:332-359`）は per-request 検証のみ。跨リクエスト throttle、singleflight、bucket guard のテストがない。追加が必要。
+
+### A-3 `orderbydirection:asc` 二重 reverse
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `applyOrderForInitial`（`app/searchhtml.go:302-311`）を `app/searchhtml.go:245` で適用し、`applySearchOrder`（`app/searchhtml.go:149-158`）を `app/searchhtml.go:297` で再適用する。
+  - `asc` は reverse 2 回で元順に戻る。
+  - `intersectIDs`, `excludeIDs`, `unionIDs`（`app/searchhtml.go:97-137`）は順序保存なので、二重 reverse は結果に observable。
+  - `or` のみの経路（`app/searchhtml.go:246-256`）は initial apply がなく、経路によって挙動がずれる。
+  - `isOrderTerm`（`app/searchhtml.go:25-30`）と `applyOrderTerm` の `sortbydirection|orderbydirection` → `state.orderbydir = right`（`app/searchhtml.go:55-56`）。既定は `desc`（`app/searchhtml.go:191`）。
+  - `app/searchhtml_test.go` に order/asc 系テストがない。
+- **適切な対応**:
+  - `app/searchhtml.go:245` の call と `applyOrderForInitial`（`app/searchhtml.go:302-311`）を削除し、末尾 `applySearchOrder` だけ残す。
+  - hitomi は末尾適用であり、`or` 経路も覆盖されるため末尾だけ残す案が正しい。initial だけ残す案は `or` 経路で順序が失われて誤り。
+  - 単一 term + `orderbydirection:asc` で reverse されること、`or` 経路でも適用されることを検証するテストを追加する。
+
+### 検索結果 cache
+
+- **現在有効性**: 有効
+- **根拠**:
+  - `SearchHTML` に cache がない（`app/searchhtml.go:182-300`）。
+  - `searchPageSlice`（`app/searchhtml.go:160-177`, `app/searchhtml.go:299`）が末尾 slice。ページ移動で全 term 再 fetch。
+  - UI の `SEARCH_STORAGE_KEY` に ids だけ保存（`app/ui.html:1378-1408`）。card metadata は `searchCardCache` Map のみ。
+- **適切な対応**:
+  - `(area, tag, lang)` 単位の TTL cache。nozomi 成功結果のみ cache する。full ids を保持し、page slice は cache から取る。
+  - call 数削減は 1000ms 方針と冲突しない。UI の localStorage/Map 併用可。
+
+### B-tree node cache
+
+- **現在有効性**: 有効
+- **根拠**:
+  - `IndexIDs` は term ごとに root（addr 0）から降下し、node cache がない（`app/searchindex.go:215-253`）。
+  - `indexNode` は hop ごとに fetch（`app/searchindex.go:197-204`）。version cache 済み（`app/searchindex.go:155-195`）。
+- **適切な対応**:
+  - `map[string]*bnode` cache、key `field|version|addr`、TTL。root/internal node を cache する。leaf data は 1 term 1 回なので cache を必須としない。既存 `cacheMu` を使うか新 mutex。
+
+### `recordDiscovered`
+
+- **現在有効性**: 有効
+- **根拠**:
+  - `app/viewer.go:262-264` が 25 件 loop で `recordDiscovered` を呼ぶ。
+  - `recordDiscovered` 定義（`app/main.go:839-845`）は単独 `db.Exec`。
+  - `db.SetMaxOpenConns(1)`（`app/main.go:171`）で単一接続固定。
+  - `BeginTx`/`BEGIN` は app 全体 0 件。
+  - `searchCard` でも単独 write（`app/viewer.go:296`）。
+- **適切な対応**:
+  - `BeginTx` + prepared statement で 1 commit に束ねる。
+  - `searchCard` の単独 write も同じ tx 内にするか、既存行なら skip。
+
+### `json_ms`
+
+- **現在有効性**: 有効（確定）
+- **根拠**:
+  - `jsonStart := time.Now()` 直後に `time.Since(jsonStart)`（`app/viewer.go:266-267`）。
+  - 実際の `jsonOut` encode は `app/viewer.go:270` / `659-661` で行われるが測っていない。
+  - `app/viewer_test.go:694-702` は key 存在確認だけ。
+- **適切な対応**:
+  - `jsonOut` の前後で実 encode を測る。buffer encode してから write するか、フィールドを削除する。
+
+### ltn static gate
+
+- **現在有効性**: 有効（ただし設計方針制約あり）
+- **根拠**:
+  - 静的 ltn 呼出（version/index/nozomi）は `c.get` を使い、一般 1000ms 共有 `c.last`（`app/hitomi.go:78-80`）。
+  - 静的用 relaxed gate は未実装。
+- **適切な対応**:
+  - 1000ms を一律にかける緩和は API 方針更新が必要。`docs/ai/decisions/2026-11-01-hitomi-client-endpoints.md` と `docs/ai/decisions/2026-11-01-image-rate-and-prefetch-concurrency.md` L5 が 1000ms 維持を規定している。
+  - 無依存で安全な対応は call 数削減（search cache, node cache）と ctx-aware sleep。
+
+### `record_ms`
+
+- **現在有効性**: 有効（計測自体は正しい）
+- **根拠**:
+  - `app/viewer.go:261-265` は実測。canonical exe 記録で `757〜892ms`、過去 `2425〜2559ms`。
+  - 瓶颈は index gate wait（約 5.2s）。`record_ms` は副次要。
+
+### gate / retry sleep ctx
+
+- **現在有効性**: 有効
+- **根拠**:
+  - `time.Sleep` に `ctx.Done()` 分岐がない（`app/hitomi.go:71,114,133,147,165`）。
+- **適切な対応**:
+  - `select ctx.Done()` を使う。
+
+### `PRAGMA synchronous`
+
+- **現在有効性**: 有効（設定なし）
+- **根拠**:
+  - `openDB` に `synchronous` 設定がない（`app/main.go:156-173`）。WAL/busy_timeout/user_version は設定済み。
+- **適切な対応**:
+  - WAL 前提で `synchronous=NORMAL` を検討する。
+
+### 検索言語指定が plain term に効かない
+
+- **現在有効性**: 有効。ただし hitomi parity は仕様どおりの可能性。
+- **根拠**:
+  - `termIDs` plain term は `IndexIDs("galleries", term)`（`app/searchhtml.go:94`）で `state.language` を使わない。
+  - colon term は `state.language` を set（`app/searchhtml.go:87`）→ `SearchNozomiParts(state.area, state.tag, state.language)`（`app/searchhtml.go:92`）で効く。
+  - UI は lang を送る（`app/ui.html:110`, `1378-1394`）。server は `lang` を `SearchHTML` に渡す（`app/viewer.go:255`）。既定 `all`（`app/searchhtml.go:191`）。
+  - `app/searchhtml.go:179-180` のコメントは `language:` term のみと明示。`galleriesindex` は言語非依存。
+- **適切な対応**:
+  - 最小・挙動不変案: UI と `docs/ai/usage-memo.md` の分区規則（`docs/ai/usage-memo.md:132-136`）に「lang は colon term / `language:` term にのみ効く。plain term は全言語」と 1 行明記する。
+  - 一貫性重視案: plain term で `state.language != "all"` のとき `SearchNozomiParts("", "index", lang)`（既存 `language:` term 相当）と intersection する。+1 fetch / +1 gate wait。方針判断が必要。既存 `TestSearchHTMLPlainTermUsesIndexExactTerm`（`lang="all"`）は影響なし。新テスト 1 件が必要。
+  - DB lang filter は非推奨。`recordDiscovered` は `title, lang` を NULL で insert（`app/main.go:840-843`）なので言語情報がない。
+
+## 項目別 統合済み優先度
+
+1. `imageProxy` の `gg.js` 無制限 force refresh
+   - 根拠: `EnsureGG(force)` が TTL bypass、最小間隔/singleflight/bucket guard なし、共有 1000ms gate。
+2. VT `last_analysis_stats` key と未分析 handling
+   - 根拠: 実 API で positives が 0 になり誤 `pass` が 30 日 cache される。重大。
+3. VT `result`/`engine_name` を基準にした `ThreatName`
+   - 根拠: `entry["name"]` は VT v3 に存在しない。
+4. VT 失敗で構造 `pass` を上書き
+   - 根拠: export skip に直結し、Python parity と usage-memo 語彙に矛盾。
+5. `openGallery` の同 gallery 開き直しが abort済み signal を使う
+   - 根拠: 静的には有効、実機確認が必要。
+6. A-3 `asc` 二重 reverse
+   - 根拠: 単一 call削除で修正可能、テスト追加で確認可能。
+7. YARA 実行失敗が `hit` になる
+   - 根拠: `RunYara` error を rule として返す。テスト・status 語彙が必要。
+8. 検索結果 cache / B-tree node cache / `recordDiscovered` tx
+   - 根拠: 実測 bottleneck に直結。方針変更なしで call 数削減可能。
+9. acquisition run 内 folder confirm 反復
+   - 根拠: page 1 で作成した folder を page 2 以降で別 run として再確認する。設計選択が必要。
+10. settings/security/schema の静かな default 化・schema migration・POST Host/Origin
+   - 根拠: `use_live_gg` silent snapshot, `--config` docs contradiction, pragma connection persistence, schema migration, Origin-less POST。
 
 ## 完了時 Memory Bank 操作
 
