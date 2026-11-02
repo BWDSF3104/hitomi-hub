@@ -1,8 +1,8 @@
 # imageProxy cache atomic write
 
-**Status**: 提案（実装開始指示待ち）
+**Status**: 完了
 **Date**: 2026-11-02
-**Next Action**: 実装開始指示が出るまで実装しない
+**Next Action**: commit は変更内容のユーザー事前承認後に実施（現状未コミット）
 **Decision**: `docs/ai/decisions/2026-11-02-imageproxy-cache-atomic-write-scope-correction.md`
 
 ## 意図 / 背景
@@ -207,28 +207,79 @@
 3. `python -m pytest tests/ -v`
 4. canonical server 実機確認。
 
+## 実装前記録（2026-11-02 goal run）
+
+作業前チェック（フル画像・viewer タスクの必須）として読了を確認し、ファイル名を記録する:
+
+- `docs/ai/decisions/2026-11-02-imageproxy-cache-atomic-write-scope-correction.md`
+- `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`
+- `docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`
+- `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`
+
+実装開始指示: この goal run の指示（修正・実装・検証を一任）をもって実装開始指示とする。
+
+処理項目（優先順位順・逐次）:
+
+1. 項目A — atomic write helper（temp を cachePath と同一ディレクトリ＝ `cacheRoot` 内のみ。write / close / rename 失敗時に temp cleanup。existing target 上書き skip。close 完了前に rename しない）
+   - 影響範囲: `app/viewer.go` の `imageProxy` full cache write 2 箇所のみ。`thumbProxy` TN write・`acquisition.go`・`main.go`・cache root・DB は不変。
+   - 合格条件: helper 経由で final file が fetch bytes と一致、失敗経路で target partial なし・`.tmp` 残物なし、`x-cache` の意味は不変（miss / cache）。
+   - 検証方法: `TestImageProxyCacheMissWritesAtomically`、`go vet . && go test -count=1 -timeout 300s .`。
+2. 項目B — singleflight（write のみ、key は `cachePath`、外部 package 不使用、local implementation）
+   - 合格条件: 同 `cachePath` の concurrent call で actual write attempt 1、rename success 1、waiting side が失敗 first attempt を success と誤判定しない。existing-target skip は actual attempt に数えない。
+   - 検証方法: `TestImageProxyCacheConcurrentWriteSingleflight`、`TestImageProxyCacheSingleflightFailureDoesNotReportSuccess`。
+3. 項目C — full / TN 判別規則の維持（file magic 不使用、`x-cache` と galleryinfo 実寸で判別、`tn` / `tn-cache` を full cache pass に混ぜない）
+   - 合格条件: full cache path と TN cache path が別である既存規則をテストで維持。reader display pass を TN で成功扱いしない。
+   - 検証方法: `TestImageProxyCacheStateIsNotTN`。UI 変更はないため画面操作確認は該当なし（UI 非変更項目）。
+4. 項目D — canonical build + commit checklist（`python -m pytest tests/ -v` に `tests/test_canonical_build_freshness.py` を含む）
+5. 項目E — canonical server 実機確認（製品 root。hash は確認開始時点で cache 不在かつ live shard 窓内）
+
 ## Verification
 
-このタスクで実施後に以下を記録する:
+実施結果（2026-11-02 goal run）:
 
-- `go vet . && go test -count=1 -timeout 300s .` の結果と経過時間。
-- `python -m pytest tests/ -v` の結果と経過時間。
-- canonical build 後の server 実機確認:
-  - first request: `200`, `x-cache: miss`
-  - restart
-  - same hash second request: `200`, `x-cache: cache`
-- test seam counts:
-  - helper call count
-  - `cacheWriteAttemptCount`
-  - `cacheRenameSuccessCount`
-- failure cleanup test results:
-  - write failure: no `.tmp`, error result, no success false-positive
-  - close failure: no `.tmp`, error result, no success false-positive
-  - rename failure: no `.tmp`, error result, no success false-positive
-- commit/push は変更内容の事前承認が必要。commit exclusions は `app/docs/`, `hitomi.db-shm`, `hitomi.db-wal`, `docs/ai/tmp/` を維持。
+静的解析・テスト:
+
+- `app` で `go vet .` → clean。
+- `app` で `go test -count=1 -timeout 300s .` → `ok hitomi-hub/app 35.207s`（全件 pass）。
+- 新規テスト個別: `TestImageProxyCacheMissWritesAtomically` PASS 0.22s、`TestImageProxyCacheConcurrentWriteSingleflight` PASS 0.04s、`TestImageProxyCacheSingleflightFailureDoesNotReportSuccess` PASS 0.11s、`TestImageProxyCacheStateIsNotTN` PASS 0.29s。
+- canonical build 後の `python -m pytest tests/ -v` → 25 passed in 2.04s。`tests/test_canonical_build_freshness.py`（`hub.exe` が現行 `app/ui.html` のバイトを含む）pass。build 前 baseline は 25 passed in 5.19s。
+
+Test seam counts:
+
+- existing-target skip: helper call 1、`cacheWriteAttemptCount` 0、`cacheRenameSuccessCount` 0、既存内容 unchanged。
+- concurrent（同 `cachePath`）: helper call count 2、`cacheWriteAttemptCount` 1、`cacheRenameSuccessCount` 1、waiting side は first actual attempt の result を共有（両側 nil）、duplicate actual write なし、group は完了後 empty、final file は正しい単一内容、`.tmp` なし。
+- failure injection（write / close / rename 各自）: helper は error を返し、waiting side も同じ error を受け取る（success 誤判定なし）、target 作成なし、`cacheWriteAttemptCount` 1、`cacheRenameSuccessCount` 0、`.tmp` 残物なし。group 完了後、target 不在のため new attempt が実行できる（attempt 2、rename success 1）。
+- join 検出のため `cacheSingleflightJoinHook` を internal test seam として追加（production は nil）。write / close / rename failure hook と 2 counts の条件は維持。
+
+実機確認（canonical server・製品 root）:
+
+- product root（server cwd）: `S:\Documents\Kilo_Commons\hitomi-hub`、cache root: `S:\Documents\Kilo_Commons\hitomi-hub\cache\images`
+- server: canonical `output\hitomi-hub\hub.exe view`（pid 12424、background id `bgp_19ce0e4b2001NSfjednFbVbVqD`）
+- gallery id 4299649、hash `a75177974fe57f71d2d3e005ea7d77225aac6068bc2a40b3dadab36e91047cb1`、format `webp`
+- cache path initial absence: `cache\images\a75177974fe57f71d2d3e005ea7d77225aac6068bc2a40b3dadab36e91047cb1.webp` → 確認開始時 不在
+- live shard window（確認時 live `gg.js`）: `b = 1793631601/`（2026-11-02T15:00:01Z の窓）。hash の `s(hash)`=459。1 回目 200 が窓内の証拠
+- 1 回目 `GET /api/image/<hash>?format=webp` → `200`、`x-cache: miss`、426626 bytes。final file 存在 426626 bytes、`.tmp` 残物 0、経過 2.77s
+- server を canonical exe から再起動
+- 2 回目 同 hash / format → `200`、`x-cache: cache`、426626 bytes、cache file と response の SHA256 一致（`23D5832FEE19F200978C2FF0654B594C3D29A46EA262395E9597943B450E69ED`）、経過 0.17s、`.tmp` 残物 0
+- `x-cache: tn` / `tn-cache` hit は full persistence pass として報告していない（full pass は full cache path の `x-cache: cache` のみ）
+
+画面確認（canonical server が提供する UI。UI ファイル変更はないが full 表示経路の確認として実施）:
+
+- 実際の DOM 判定: `#reader` の img が `sourceType=objectURL`（full 経路 `/api/image/<hash>`）で `naturalWidth > 0`。page1 hash `a7517797…` → 2400x8000、page2 hash `7630f33e…` → 1405x2880。`x-cache` 判定は full 経路のみ使用。
+- UI 表示状態: `actual pixels 36/425 | local direct 0/425 | objectURL cache 207/425 | no full 0/425 | TN display fallback disabled`
+- 保存先: `I:\マイドライブ\kilo\2026-11-02-imageproxy-cache-atomic-write\actual-ui-reader-full-pixels-20261102.png`
+- 確認結果: reader に actual full pixels 表示、TN display fallback disabled、no full 0 → 合格。
+
+commit/push は変更内容の事前承認が必要（未コミット）。commit exclusions は `app/docs/`, `hitomi.db-shm`, `hitomi.db-wal`, `docs/ai/tmp/` を維持。
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（正典 `task_manager.py end` で実施）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし）
+- [x] `backlog.md` の完了項目を削除（該当なし）
+
+## 変更ファイル
+
+- `app/viewer.go`: `writeImageCacheAtomically` / `writeCacheFileOnce` 追加、`imageProxy` の 2 箇所（remote full success、GG force refresh 後の再試成）を同一 helper 経由へ変更。TN write・acquisition・download・cache root・DB は未変更。
+- `app/viewer_test.go`: 4 テスト追加（atomic write、concurrent singleflight、singleflight failure、full/TN 判別）と `assertNoCacheTempResidue` helper。
+- `docs/ai/tasks/2026-11-02-imageproxy-cache-atomic-write.md`: 実装前記録と Verification。

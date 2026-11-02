@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-
 func TestSafeGalleryPathStaysInsideGalleryDir(t *testing.T) {
 	root := filepath.Join("Galleries")
 	cases := []string{"4252697/899dc.webp", "4252697/../secret", "/hitomi.db",
@@ -42,9 +41,9 @@ func viewerFixtureGG() GG {
 	// live `gg.js` の switch values は回転する。Viewer tests は snapshot の実値ではなく
 	// fixture で規則を検証する。sampleHash の value（2488）を case に含め、zeroHash（1184）を case 外にする。
 	return GG{
-		Bucket:   "1793494802/",
-		CaseSet:  map[int]bool{2488: true},
-		Source:   "live",
+		Bucket:  "1793494802/",
+		CaseSet: map[int]bool{2488: true},
+		Source:  "live",
 	}
 }
 
@@ -1807,7 +1806,7 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 	}
 	renderButtonBody := s[renderButtonStart:strings.Index(s, "\nfunction renderPrefetchStatus() {")]
 	if !strings.Contains(renderButtonBody, `const button = document.getElementById("retry-failed");`) || !strings.Contains(renderButtonBody, `button.disabled = manualRetryRunning || !current.id || !(Number(counts.errorDone) > 0 || Number(counts.noFullDone) > 0);`) {
-		t.Errorf("retry button should be enabled only for errors or no_full entries, require a current gallery, and remain disabled while manual retry is running: got %q", renderButtonBody);
+		t.Errorf("retry button should be enabled only for errors or no_full entries, require a current gallery, and remain disabled while manual retry is running: got %q", renderButtonBody)
 	}
 
 	renderStatusStart := strings.Index(s, "function renderPrefetchStatus() {")
@@ -2421,3 +2420,270 @@ func TestViewerIndexServesEmbeddedPage(t *testing.T) {
 	}
 }
 
+func assertNoCacheTempResidue(t *testing.T, cacheRoot string) {
+	t.Helper()
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		t.Fatalf("read cache root: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("temp residue in cache root: %s", e.Name())
+		}
+	}
+}
+
+func TestImageProxyCacheMissWritesAtomically(t *testing.T) {
+	payload := "RIFF full payload"
+	v, _ := newTestViewer(t, "")
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte(payload), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "miss" || rec.Body.String() != payload {
+		t.Fatalf("atomic cache miss: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+	cachePath := filepath.Join(v.cacheRoot, sampleHash+".webp")
+	data, err := os.ReadFile(cachePath)
+	if err != nil || string(data) != payload {
+		t.Fatalf("final cache file: err %v data %q", err, string(data))
+	}
+	assertNoCacheTempResidue(t, v.cacheRoot)
+	if v.cacheWriteAttemptCount != 1 || v.cacheRenameSuccessCount != 1 {
+		t.Errorf("atomic write counts: attempt %d rename %d", v.cacheWriteAttemptCount, v.cacheRenameSuccessCount)
+	}
+
+	for _, stage := range []string{"write", "close", "rename"} {
+		f, _ := newTestViewer(t, "")
+		p, err := safeCachePath(f.cacheRoot, sampleHash, "webp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		hook := func(path string) error { return errors.New("inject " + stage) }
+		switch stage {
+		case "write":
+			f.cacheWriteFailureHook = hook
+		case "close":
+			f.cacheCloseFailureHook = hook
+		case "rename":
+			f.cacheRenameFailureHook = hook
+		}
+		if err := f.writeImageCacheAtomically(p, []byte(payload)); err == nil {
+			t.Fatalf("%s failure must return error", stage)
+		}
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s failure must not create partial target: %s", stage, p)
+		}
+		assertNoCacheTempResidue(t, f.cacheRoot)
+		if f.cacheWriteAttemptCount != 1 || f.cacheRenameSuccessCount != 0 {
+			t.Errorf("%s failure counts: attempt %d rename %d", stage, f.cacheWriteAttemptCount, f.cacheRenameSuccessCount)
+		}
+	}
+
+	s, _ := newTestViewer(t, "")
+	p, err := safeCachePath(s.cacheRoot, sampleHash, "webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(s.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeImageCacheAtomically(p, []byte(payload)); err != nil {
+		t.Fatalf("existing target should skip without error: %v", err)
+	}
+	if got, err := os.ReadFile(p); err != nil || string(got) != "existing" {
+		t.Errorf("existing target must not be overwritten: %q err %v", string(got), err)
+	}
+	if s.cacheWriteAttemptCount != 0 || s.cacheRenameSuccessCount != 0 {
+		t.Errorf("existing-target skip must not count as actual attempt: attempt %d rename %d", s.cacheWriteAttemptCount, s.cacheRenameSuccessCount)
+	}
+	assertNoCacheTempResidue(t, s.cacheRoot)
+}
+
+func TestImageProxyCacheConcurrentWriteSingleflight(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	p, err := safeCachePath(v.cacheRoot, sampleHash, "webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := "singleflight payload"
+
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	joined := make(chan struct{})
+	// write hook を gate として使用し、first actual attempt を join まで保持する
+	v.cacheWriteFailureHook = func(path string) error {
+		close(started)
+		<-gate
+		return nil
+	}
+	v.cacheSingleflightJoinHook = func(key string) { close(joined) }
+
+	calls := 0
+	results := make(chan error, 2)
+	call := func() {
+		calls++
+		results <- v.writeImageCacheAtomically(p, []byte(payload))
+	}
+	go call()
+	<-started
+	go call()
+	<-joined
+	close(gate)
+
+	r1, r2 := <-results, <-results
+	if calls != 2 {
+		t.Errorf("helper call count: got %d want 2", calls)
+	}
+	if r1 != nil || r2 != nil {
+		t.Errorf("singleflight results: %v %v", r1, r2)
+	}
+	if v.cacheWriteAttemptCount != 1 {
+		t.Errorf("actual write attempt: got %d want 1", v.cacheWriteAttemptCount)
+	}
+	if v.cacheRenameSuccessCount != 1 {
+		t.Errorf("rename success: got %d want 1", v.cacheRenameSuccessCount)
+	}
+	if got, err := os.ReadFile(p); err != nil || string(got) != payload {
+		t.Errorf("final file: err %v data %q", err, string(got))
+	}
+	assertNoCacheTempResidue(t, v.cacheRoot)
+	v.cacheWriteMu.Lock()
+	groupSize := len(v.cacheWriteGroup)
+	v.cacheWriteMu.Unlock()
+	if groupSize != 0 {
+		t.Errorf("singleflight group must be empty after completion: %d", groupSize)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "cache" {
+		t.Errorf("single cachePath write result: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
+	}
+}
+
+func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
+	for _, stage := range []string{"write", "close", "rename"} {
+		v, _ := newTestViewer(t, "")
+		p, err := safeCachePath(v.cacheRoot, sampleHash, "webp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		injected := errors.New("inject " + stage)
+		started := make(chan struct{})
+		gate := make(chan struct{})
+		joined := make(chan struct{})
+		// gate は first actual attempt を join まで保持する
+		v.cacheWriteFailureHook = func(path string) error {
+			close(started)
+			<-gate
+			if stage == "write" {
+				return injected
+			}
+			return nil
+		}
+		if stage == "close" {
+			v.cacheCloseFailureHook = func(path string) error { return injected }
+		}
+		if stage == "rename" {
+			v.cacheRenameFailureHook = func(path string) error { return injected }
+		}
+		v.cacheSingleflightJoinHook = func(key string) { close(joined) }
+
+		first := make(chan error, 1)
+		second := make(chan error, 1)
+		go func() { first <- v.writeImageCacheAtomically(p, []byte("payload")) }()
+		<-started
+		go func() { second <- v.writeImageCacheAtomically(p, []byte("payload")) }()
+		<-joined
+		close(gate)
+
+		r1, r2 := <-first, <-second
+		if r1 == nil || r2 == nil {
+			t.Fatalf("%s failure must report error to both sides: first %v waiting %v", stage, r1, r2)
+		}
+		if r2 != r1 {
+			t.Errorf("waiting side must share first attempt result: first %v waiting %v", r1, r2)
+		}
+		if !errors.Is(r1, injected) {
+			t.Errorf("first result: got %v want %v", r1, injected)
+		}
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s failure must not create target: %s", stage, p)
+		}
+		if v.cacheWriteAttemptCount != 1 || v.cacheRenameSuccessCount != 0 {
+			t.Errorf("%s failure counts: attempt %d rename %d", stage, v.cacheWriteAttemptCount, v.cacheRenameSuccessCount)
+		}
+		assertNoCacheTempResidue(t, v.cacheRoot)
+
+		// group 完了後、target がまだ存在しなければ new attempt が実行できる
+		v.cacheWriteFailureHook = nil
+		v.cacheCloseFailureHook = nil
+		v.cacheRenameFailureHook = nil
+		if err := v.writeImageCacheAtomically(p, []byte("payload")); err != nil {
+			t.Fatalf("%s recovery attempt: %v", stage, err)
+		}
+		if v.cacheWriteAttemptCount != 2 || v.cacheRenameSuccessCount != 1 {
+			t.Errorf("%s recovery counts: attempt %d rename %d", stage, v.cacheWriteAttemptCount, v.cacheRenameSuccessCount)
+		}
+		assertNoCacheTempResidue(t, v.cacheRoot)
+	}
+}
+
+func TestImageProxyCacheStateIsNotTN(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
+	v.client.cfg.UseLiveGG = false
+	fullPath, err := safeCachePath(v.cacheRoot, sampleHash, "webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tnPath, err := safeThumbnailCachePath(v.cacheRoot, sampleHash, "webp", "bigtn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fullPath == tnPath {
+		t.Fatal("TN cache path must stay distinct from full cache path")
+	}
+	if tnPath == filepath.Join(v.cacheRoot, sampleHash+".webp") {
+		t.Fatalf("TN cache path escaped thumbs: %s", tnPath)
+	}
+
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if strings.Contains(rawurl, "tn.") {
+			return []byte("tn bytes"), nil
+		}
+		return nil, errors.New("status 404 for " + rawurl)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn bytes" || rec.Header().Get("x-cache") != "tn" {
+		t.Fatalf("TN state must stay tn: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+	if _, err := os.Stat(tnPath); err != nil {
+		t.Errorf("TN should persist only under thumbs: err %v path %s", err, tnPath)
+	}
+	if _, err := os.Stat(fullPath); err == nil {
+		t.Errorf("TN bytes must not become full cache: %s", fullPath)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" {
+		t.Errorf("display pass must not be satisfied by TN: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
+	}
+
+	if err := os.WriteFile(fullPath, []byte("full bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "full bytes" || rec.Header().Get("x-cache") != "cache" {
+		t.Errorf("full cache pass is x-cache: cache only: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+}

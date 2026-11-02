@@ -21,27 +21,41 @@ import (
 var uiPage embed.FS
 
 type viewer struct {
-	db             *sql.DB
-	cfg            Config
-	client         *Client
-	root           string
-	galleryRoot    string
-	cacheRoot      string
+	db              *sql.DB
+	cfg             Config
+	client          *Client
+	root            string
+	galleryRoot     string
+	cacheRoot       string
 	acquisitionRoot string
-	infoCache      map[int]*GalleryInfo
-	infoCacheMu    sync.Mutex
+	infoCache       map[int]*GalleryInfo
+	infoCacheMu     sync.Mutex
+
+	cacheWriteMu              sync.Mutex
+	cacheWriteGroup           map[string]*cacheWriteCall
+	cacheWriteAttemptCount    int
+	cacheRenameSuccessCount   int
+	cacheWriteFailureHook     func(path string) error
+	cacheCloseFailureHook     func(path string) error
+	cacheRenameFailureHook    func(path string) error
+	cacheSingleflightJoinHook func(key string)
+}
+
+type cacheWriteCall struct {
+	done   chan struct{}
+	result error
 }
 
 func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 	return &viewer{
-		db:          db,
-		cfg:         cfg,
-		root:        root,
-		galleryRoot: filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries")),
+		db:              db,
+		cfg:             cfg,
+		root:            root,
+		galleryRoot:     filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries")),
 		cacheRoot:       filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
 		acquisitionRoot: filepath.Join(root, orDefault(cfg.AcquisitionDir, "acquisition")),
 		client:          &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
-		infoCache:   map[int]*GalleryInfo{},
+		infoCache:       map[int]*GalleryInfo{},
 	}
 }
 
@@ -242,14 +256,14 @@ func safeThumbnailCachePath(cacheRoot, hash, format, variant string) (string, er
 }
 
 func writeImage(w http.ResponseWriter, format string, data []byte, cacheState string) {
-	setImageHeaders(w, format);
+	setImageHeaders(w, format)
 	if cacheState == "tn" {
-		w.Header().Set("cache-control", "no-store");
+		w.Header().Set("cache-control", "no-store")
 	} else {
-		w.Header().Set("cache-control", "private, max-age=604800");
+		w.Header().Set("cache-control", "private, max-age=604800")
 	}
-	w.Header().Set("x-cache", cacheState);
-	w.Write(data);
+	w.Header().Set("x-cache", cacheState)
+	w.Write(data)
 }
 
 func (v *viewer) serveStoredImage(w http.ResponseWriter, format string, path string, cacheState string) bool {
@@ -260,6 +274,102 @@ func (v *viewer) serveStoredImage(w http.ResponseWriter, format string, path str
 	writeImage(w, format, data, cacheState)
 	return true
 }
+
+// writeImageCacheAtomically は full image cache を temp write + close + rename で書く。
+// temp は cachePath と同一ディレクトリ（cacheRoot）内のみ。OS temp dir・scratch/・output/ は使わない。
+// existing target は skip、close 完了前に rename しない。write / close / rename 失敗時は temp を cleanup する。
+// singleflight の対象は write のみ。key は cachePath。waiting side は first actual attempt の result を共有する。
+func (v *viewer) writeImageCacheAtomically(cachePath string, data []byte) error {
+	if _, err := os.Stat(cachePath); err == nil {
+		return nil
+	}
+
+	v.cacheWriteMu.Lock()
+	if call := v.cacheWriteGroup[cachePath]; call != nil {
+		v.cacheWriteMu.Unlock()
+		if v.cacheSingleflightJoinHook != nil {
+			v.cacheSingleflightJoinHook(cachePath)
+		}
+		<-call.done
+		return call.result
+	}
+	if v.cacheWriteGroup == nil {
+		v.cacheWriteGroup = map[string]*cacheWriteCall{}
+	}
+	call := &cacheWriteCall{done: make(chan struct{})}
+	v.cacheWriteGroup[cachePath] = call
+	v.cacheWriteMu.Unlock()
+
+	err := v.writeCacheFileOnce(cachePath, data)
+
+	v.cacheWriteMu.Lock()
+	if v.cacheWriteGroup[cachePath] == call {
+		delete(v.cacheWriteGroup, cachePath)
+	}
+	call.result = err
+	v.cacheWriteMu.Unlock()
+	close(call.done)
+	return err
+}
+
+func (v *viewer) writeCacheFileOnce(cachePath string, data []byte) error {
+	dir := filepath.Dir(cachePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	v.cacheWriteMu.Lock()
+	v.cacheWriteAttemptCount++
+	v.cacheWriteMu.Unlock()
+
+	tmp, err := os.CreateTemp(dir, ".cache-*.tmp")
+	if err != nil {
+		return err
+	}
+	cleanupTemp := func() {
+		_ = os.Remove(tmp.Name())
+	}
+
+	if v.cacheWriteFailureHook != nil {
+		if hookErr := v.cacheWriteFailureHook(tmp.Name()); hookErr != nil {
+			_ = tmp.Close()
+			cleanupTemp()
+			return hookErr
+		}
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanupTemp()
+		return err
+	}
+	if v.cacheCloseFailureHook != nil {
+		if hookErr := v.cacheCloseFailureHook(tmp.Name()); hookErr != nil {
+			_ = tmp.Close()
+			cleanupTemp()
+			return hookErr
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		cleanupTemp()
+		return err
+	}
+	if v.cacheRenameFailureHook != nil {
+		if hookErr := v.cacheRenameFailureHook(tmp.Name()); hookErr != nil {
+			cleanupTemp()
+			return hookErr
+		}
+	}
+	if err := os.Rename(tmp.Name(), cachePath); err != nil {
+		cleanupTemp()
+		return err
+	}
+
+	v.cacheWriteMu.Lock()
+	v.cacheRenameSuccessCount++
+	v.cacheWriteMu.Unlock()
+	return nil
+}
+
 // safeGalleryPath は完成フォルダ内の gallery dir に閉じた路径解決（`..` と絶対路径を拒否）
 func safeGalleryPath(galleryRoot, rel string) (string, error) {
 	if rel == "" {
@@ -343,15 +453,15 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	recordMS := int64(time.Since(recordStart) / time.Millisecond)
 	jsonStart := time.Now()
 	jsonMS := int64(time.Since(jsonStart) / time.Millisecond)
-	w.Header().Set("cache-control", "no-store");
-  w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
+	w.Header().Set("cache-control", "no-store")
+	w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
 	jsonOut(w, map[string]any{"query": q, "lang": r.URL.Query().Get("lang"), "page": page,
 		"total": total, "ids": ids, "results": []map[string]any{},
 		"timing": map[string]any{
-			"search_ms":  searchMS,
-			"record_ms":  recordMS,
-			"json_ms":    jsonMS,
-			"metrics":    v.client.metricsSnapshot(),
+			"search_ms": searchMS,
+			"record_ms": recordMS,
+			"json_ms":   jsonMS,
+			"metrics":   v.client.metricsSnapshot(),
 		},
 		"metrics": v.client.metricsSnapshot()})
 }
@@ -553,8 +663,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		writeImage(w, format, body, "miss")
 		if cacheErr == nil && len(body) > 0 {
-			_ = os.MkdirAll(v.cacheRoot, 0o755)
-			_ = os.WriteFile(cachePath, body, 0o644)
+			_ = v.writeImageCacheAtomically(cachePath, body)
 		}
 		return
 	}
@@ -566,8 +675,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				writeImage(w, format, body, "miss")
 				if cacheErr == nil && len(body) > 0 {
-					_ = os.MkdirAll(v.cacheRoot, 0o755)
-					_ = os.WriteFile(cachePath, body, 0o644)
+					_ = v.writeImageCacheAtomically(cachePath, body)
 				}
 				return
 			}
