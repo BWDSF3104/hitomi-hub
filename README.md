@@ -72,4 +72,4 @@ exe はコミットしない。版固定 + GitHub の SHA-256 digest 検証済�
 python -m pytest tests/ -v
 ```
 
-テストは外部 API を呼ばない（VirusTotal は mock）。
+テストの外部 API 呼出し可否はプロジェクト決定（`docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md`）に従う。既存テストは mock（VirusTotal は mock）。
