@@ -1638,6 +1638,10 @@ func TestEmbeddedUIHasSpreadDirectionToggle(t *testing.T) {
 	if !strings.Contains(keyBody, `if (e.key === "r") setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");`) {
 		t.Errorf("keydown should toggle RTL/LTR with r: got %q", keyBody)
 	}
+	if !strings.Contains(keyBody, `if (e.key === "ArrowLeft") { if (movePage(spreadDirection === "rtl" ? 1 : -1)) await showPage(); }`) ||
+		!strings.Contains(keyBody, `if (e.key === "ArrowRight") { if (movePage(spreadDirection === "rtl" ? -1 : 1)) await showPage(); }`) {
+		t.Errorf("keydown arrow keys must map to reading direction per spreadDirection so RTL ArrowLeft advances and ArrowRight goes back: got %q", keyBody)
+	}
 	if !strings.Contains(s, `function route(id, page, second) {`) || !strings.Contains(s, `function parseReaderHash(hash) {`) || !strings.Contains(s, `"/page/" + page + "-" + second`) || !strings.Contains(s, `page + "-" + second`) {
 		t.Errorf("route/hash logical order must remain #2-3-like page-second: got %q", s)
 	}
@@ -1768,9 +1772,9 @@ func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) 
 		!strings.Contains(s, `html.fullscreen .reader.double img:nth-child(2), body.fullscreen .reader.double img:nth-child(2), body.pseudo-fullscreen .reader.double img:nth-child(2) { object-position: left center; }`) {
 		t.Errorf("fullscreen double images must align to the center seam without extra gap: got %q", s)
 	}
-	if !strings.Contains(s, `if (e.key === "ArrowLeft") { if (movePage(-1)) await showPage(); }`) ||
-		!strings.Contains(s, `if (e.key === "ArrowRight") { if (movePage(1)) await showPage(); }`) {
-		t.Errorf("fullscreen keyboard page movement should remain handled when target is not input/control: got %q", s)
+	if !strings.Contains(s, `if (e.key === "ArrowLeft") { if (movePage(spreadDirection === "rtl" ? 1 : -1)) await showPage(); }`) ||
+		!strings.Contains(s, `if (e.key === "ArrowRight") { if (movePage(spreadDirection === "rtl" ? -1 : 1)) await showPage(); }`) {
+		t.Errorf("fullscreen keyboard page movement should follow spread direction, ArrowLeft advancing in RTL, and remain handled when target is not input/control: got %q", s)
 	}
 
 	keyStart := strings.Index(s, "window.addEventListener(\"keydown\", async (e) => {")
