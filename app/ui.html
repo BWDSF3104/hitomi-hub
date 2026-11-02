@@ -82,34 +82,21 @@
     background: #1d2126;
     object-fit: contain;
   }
-  body.fullscreen .side { display: none; }
-  body.fullscreen .reader,
-  body.pseudo-fullscreen .reader {
+  html.fullscreen h1, body.fullscreen h1, html.fullscreen .side, body.fullscreen .side, body.pseudo-fullscreen .side, html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta, html.fullscreen section h2, body.fullscreen section h2, body.pseudo-fullscreen section h2 { display: none; }
+  html.fullscreen .reader, body.fullscreen .reader, body.pseudo-fullscreen .reader {
     --fullscreen-page-padding: 12px;
     --fullscreen-page-height: calc(100vh - var(--fullscreen-page-padding) * 2);
     --fullscreen-page-width: calc(100vw - var(--fullscreen-page-padding) * 2);
-    box-sizing: border-box;
-    width: 100%;
-    height: 100%;
-    padding: var(--fullscreen-page-padding);
-    background: #111;
-    gap: 0;
-    grid-template-columns: minmax(0, var(--fullscreen-page-width));
+    box-sizing: border-box; position: fixed; inset: 0; z-index: 10; margin: 0; width: 100%; height: 100%; padding: var(--fullscreen-page-padding); background: #111; gap: 0; grid-template-columns: minmax(0, var(--fullscreen-page-width));
   }
-  body.fullscreen .reader.double,
-  body.pseudo-fullscreen .reader.double {
+  html.fullscreen .reader.double, body.fullscreen .reader.double, body.pseudo-fullscreen .reader.double {
     grid-template-columns: repeat(2, minmax(0, calc(var(--fullscreen-page-width) / 2)));
   }
-  body.fullscreen .reader img,
-  body.pseudo-fullscreen .reader img {
-    display: block;
-    width: 100%;
-    height: var(--fullscreen-page-height);
-    background: #1d2126;
-    object-fit: contain;
+  html.fullscreen .reader img, body.fullscreen .reader img, body.pseudo-fullscreen .reader img {
+    display: block; width: 100%; height: var(--fullscreen-page-height); background: #1d2126; object-fit: contain;
   }
-  body.pseudo-fullscreen .side { display: none; }
-  body.pseudo-fullscreen #reader { position: fixed; inset: 0; z-index: 10; margin: 0; padding: 12px; background: #111; }
+  html.fullscreen .reader.double img:nth-child(1), body.fullscreen .reader.double img:nth-child(1), body.pseudo-fullscreen .reader.double img:nth-child(1) { object-position: right center; }
+  html.fullscreen .reader.double img:nth-child(2), body.fullscreen .reader.double img:nth-child(2), body.pseudo-fullscreen .reader.double img:nth-child(2) { object-position: left center; }
 </style>
 </head>
 <body>
@@ -175,6 +162,7 @@
       <div id="reader-position" class="meta"></div>
       <div id="note" class="note"></div>
       <div id="prefetch-status" class="status"></div>
+      <div id="retry-controls" class="meta"><button id="retry-failed" type="button" disabled>retry failed</button></div>
       <div id="reader" class="reader double"></div>
       <form id="nav">
         <button id="prev">前</button>
@@ -237,6 +225,8 @@ const displayPassByEntry = new Map();
 const sourceStatusByEntry = new Map();
 const sourceTypeByEntry = new Map();
 const activeObjectUrlKeys = new Set();
+const manualRetryingKeys = new Set();
+let manualRetryRunning = false;
 const galleryCache = new Map();
 const searchCardCache = new Map();
 const titleGroups = new Map();
@@ -397,6 +387,12 @@ function getGalleryCounts(galleryId) {
   }
   return countsByGallery.get(galleryId);
 }
+function renderRetryButtonState() {
+  const button = document.getElementById("retry-failed");
+  if (!button) return;
+  const counts = getGalleryCounts(current.id);
+  button.disabled = manualRetryRunning || !current.id || Number(counts.errorDone) <= 0;
+}
 function renderPrefetchStatus() {
   const counts = getGalleryCounts(current.id);
   const total = counts.total || prefetchTotal || (current.files ? current.files.length : 0);
@@ -422,6 +418,7 @@ function renderPrefetchStatus() {
   tnDone = counts.tnDone;
   errorDone = counts.errorDone;
   setPrefetchStatus(text);
+  renderRetryButtonState();
 }
 function stripItems() {
   if (current.sceneIndexes && current.sceneIndexes.length) {
@@ -521,16 +518,24 @@ function movePage(delta) {
   return true;
 }
 
-function fullscreenTarget() {
-  return document.getElementById("reader") || document.documentElement;
-}
+function fullscreenTarget() { return document.documentElement; }
 
-function fullscreenElement() {
-  return document.fullscreenElement || document.webkitFullscreenElement || document.webkitFullScreenElement || null;
+function fullscreenElement() { return document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || null; }
+
+function isActualFullscreen() { return fullscreenElement() === fullscreenTarget(); }
+
+function syncFullscreenState() {
+  if (isActualFullscreen()) {
+    fullscreenState = "on";
+  } else if (fullscreenState !== "fallback") {
+    fullscreenState = "off";
+  }
 }
 
 function applyFullscreenPresentation() {
-  document.body.classList.toggle("fullscreen", fullscreenState !== "off");
+  syncFullscreenState();
+  document.body.classList.toggle("fullscreen", fullscreenState === "on");
+  document.documentElement.classList.toggle("fullscreen", fullscreenState === "on");
   document.body.classList.toggle("pseudo-fullscreen", fullscreenState === "fallback");
 }
 
@@ -544,18 +549,26 @@ function updateAfterFullscreenChange() {
 
 function requestFullscreenWithFallback() {
   const target = fullscreenTarget();
-  const api = target.requestFullscreen || target.webkitRequestFullscreen;
+  const api = target.requestFullscreen || target.webkitRequestFullscreen || target.mozRequestFullScreen || target.msRequestFullscreen;
   if (!api) {
     fullscreenState = "fallback";
     updateAfterFullscreenChange();
     return;
   }
   try {
-    const result = api.call(target);
-    if (result && result.catch) {
+    const result = api.call(target, { navigationUI: "hide" });
+    if (result && typeof result.catch === "function") {
       result.catch(() => {
         fullscreenState = "fallback";
         updateAfterFullscreenChange();
+      });
+    }
+    if (result && typeof result.then === "function") {
+      result.then(() => {
+        if (isActualFullscreen()) {
+          fullscreenState = "on";
+          updateAfterFullscreenChange();
+        }
       });
     }
   } catch (err) {
@@ -566,9 +579,9 @@ function requestFullscreenWithFallback() {
 
 function enterFullscreenFromGesture() {
   lastViewMode = viewMode || lastViewMode || "double";
-  fullscreenState = "fallback";
+  fullscreenState = "off";
   requestFullscreenWithFallback();
-  if (fullscreenElement()) {
+  if (isActualFullscreen()) {
     fullscreenState = "on";
     updateAfterFullscreenChange();
   }
@@ -576,29 +589,18 @@ function enterFullscreenFromGesture() {
 
 function exitFullscreenFromGesture() {
   fullscreenState = "off";
-  const target = fullscreenTarget();
-  if (target.exitFullscreen) {
+  viewMode = lastViewMode || viewMode;
+  const api = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+  if (api) {
     try {
-      target.exitFullscreen();
-    } catch (err) {}
-  } else if (target.webkitExitFullscreen) {
-    try {
-      target.webkitExitFullscreen();
-    } catch (err) {}
-  } else if (document.exitFullscreen) {
-    try {
-      document.exitFullscreen();
-    } catch (err) {}
-  } else if (document.webkitExitFullscreen) {
-    try {
-      document.webkitExitFullscreen();
+      api.call(document);
     } catch (err) {}
   }
   updateAfterFullscreenChange();
 }
 
 function setFullscreenFromGesture() {
-  if (fullscreenState !== "off") {
+  if (isActualFullscreen() || fullscreenState !== "off") {
     exitFullscreenFromGesture();
   } else {
     enterFullscreenFromGesture();
@@ -725,16 +727,30 @@ function renderGalleryLoading(id, page, second) {
   updateTabTitle((card && card.japanese_title) || title || id);
 }
 
-function updatePrefetchCounts(status, entry, galleryId = current.id) {
+function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return;
   const key = fullCacheKey(entry, galleryId);
   setSourceStatus(entry, status, galleryId);
+  const counts = getGalleryCounts(galleryId);
+  if (allowRecount && prefetchedEntries.has(key)) {
+    const oldStatus = prefetchedEntries.get(key);
+    if (oldStatus === "tn") counts.tnDone--;
+    else if (oldStatus === "no_full") counts.noFullDone--;
+    else if (oldStatus === "error") counts.errorDone--;
+    else counts.fullDone--;
+    prefetchedEntries.set(key, status);
+    if (status === "tn") counts.tnDone++;
+    else if (status === "no_full") counts.noFullDone++;
+    else if (status === "error") counts.errorDone++;
+    else counts.fullDone++;
+    renderPrefetchStatus();
+    return;
+  }
   if (prefetchedEntries.has(key)) {
     renderPrefetchStatus();
     return;
   }
   prefetchedEntries.set(key, status);
-  const counts = getGalleryCounts(galleryId);
   if (status === "tn") counts.tnDone++;
   else if (status === "no_full") counts.noFullDone++;
   else if (status === "error") counts.errorDone++;
@@ -768,7 +784,7 @@ function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   }
 }
 
-async function prefetchPageImage(entry, signal, galleryId = current.id) {
+async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return "error";
   const key = fullCacheKey(entry, galleryId);
   const cached = fullCache.get(key);
@@ -776,7 +792,7 @@ async function prefetchPageImage(entry, signal, galleryId = current.id) {
   if (entry.local_formats && entry.local_formats.length) {
     setSourceType(entry, "local-direct", galleryId);
     setSourceStatus(entry, "local", galleryId);
-    updatePrefetchCounts("local", entry, galleryId);
+    updatePrefetchCounts("local", entry, galleryId, allowRecount);
     return "local";
   }
   const fullSrc = entrySource(entry, galleryId);
@@ -786,21 +802,21 @@ async function prefetchPageImage(entry, signal, galleryId = current.id) {
   if (!r.ok) {
     const cache = r.headers.get("x-cache") || "error";
     storeFullCache(entry, cache, null, galleryId);
-    updatePrefetchCounts(cache, entry, galleryId);
+    updatePrefetchCounts(cache, entry, galleryId, allowRecount);
     return cache;
   }
   const cache = r.headers.get("x-cache") || "miss";
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return cache;
   if (cache === "tn") {
     storeFullCache(entry, "tn", null, galleryId);
-    updatePrefetchCounts("tn", entry, galleryId);
+    updatePrefetchCounts("tn", entry, galleryId, allowRecount);
     return cache;
   }
   const blob = await r.blob();
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return cache;
   const objectUrl = URL.createObjectURL(blob);
   storeFullCache(entry, cache, objectUrl, galleryId);
-  updatePrefetchCounts(cache, entry, galleryId);
+  updatePrefetchCounts(cache, entry, galleryId, allowRecount);
   return cache;
 }
 
@@ -816,7 +832,7 @@ function revokeFullObjectUrls() {
   renderPrefetchStatus();
 }
 
-async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {
+async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {
   const targetPage = Number(img.dataset.page);
   const targetHash = img.dataset.hash;
   const targetRender = Number(img.dataset.render);
@@ -834,7 +850,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     img.dataset.sourceType = "local-direct";
     setSourceStatus(entry, "local", galleryId);
     setSourceType(entry, "local-direct", galleryId);
-    updatePrefetchCounts("local", entry, galleryId);
+    updatePrefetchCounts("local", entry, galleryId, allowRecount);
     img.src = localDirectSrc(entry, galleryId);
     recordImageDisplayPassFromImg(img, galleryId);
     return;
@@ -847,7 +863,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     const cache = r.headers.get("x-cache") || "miss";
     if (r.status === 404 && cache === "no_full") {
       storeFullCache(entry, "no_full", null, galleryId);
-      updatePrefetchCounts("no_full", entry, galleryId);
+      updatePrefetchCounts("no_full", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "no full image: " + targetPage;
       }
@@ -855,7 +871,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     }
     if (!r.ok) {
       storeFullCache(entry, "error", null, galleryId);
-      updatePrefetchCounts("error", entry, galleryId);
+      updatePrefetchCounts("error", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "image load failed: " + targetPage;
       }
@@ -863,7 +879,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     }
     if (cache === "tn") {
       storeFullCache(entry, "tn", null, galleryId);
-      updatePrefetchCounts("tn", entry, galleryId);
+      updatePrefetchCounts("tn", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
         document.getElementById("note").textContent = "tn display fallback disabled: " + targetPage;
       }
@@ -876,7 +892,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       return;
     }
     storeFullCache(entry, cache, objectUrl, galleryId);
-    updatePrefetchCounts(cache, entry, galleryId);
+    updatePrefetchCounts(cache, entry, galleryId, allowRecount);
     if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       img.dataset.fullCache = cache;
       img.dataset.sourceType = sourceTypeByEntry.get(key) || entrySourceType(entry, galleryId);
@@ -887,7 +903,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     if (signal.aborted) return;
     if (loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration) return;
     storeFullCache(entry, "error", null, galleryId);
-    updatePrefetchCounts("error", entry, galleryId);
+    updatePrefetchCounts("error", entry, galleryId, allowRecount);
     if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
       document.getElementById("note").textContent = "image load failed: " + targetPage;
     }
@@ -989,6 +1005,37 @@ function ensureBackgroundPrefetch(displayed) {
 function startFullPrefetch(displayed = readerItems()) {
   if (!current.id) return;
   ensureBackgroundPrefetch(displayed);
+}
+
+async function manualRetryFailedFullImages() {
+  if (!current.id) return;
+  if (manualRetryRunning) return;
+  manualRetryRunning = true;
+  const retryButton = document.getElementById("retry-failed");
+  if (retryButton) retryButton.disabled = true;
+  const signal = backgroundSignal ? backgroundSignal.signal : new AbortController().signal;
+  const reader = document.getElementById("reader");
+  try {
+    for (const entry of current.files || []) {
+      const key = fullCacheKey(entry, current.id);
+      if (manualRetryingKeys.has(key)) continue;
+      if (sourceStatusByEntry.get(key) !== "error") continue;
+      if (entry.local_formats && entry.local_formats.length) continue;
+
+      manualRetryingKeys.add(key);
+
+      await prefetchPageImage(entry, signal, current.id, true);
+
+      const img = reader && reader.querySelector("img[data-hash=\"" + entry.hash + "\"]");
+      if (img) await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);
+
+      manualRetryingKeys.delete(key);
+    }
+  } finally {
+    manualRetryRunning = false;
+    renderPrefetchStatus();
+    renderRetryButtonState();
+  }
 }
 
 function startBackgroundWorkers(signal) {
@@ -1422,8 +1469,11 @@ document.getElementById("view-mode-buttons").addEventListener("click", (e) => {
   }
 });
 document.addEventListener("fullscreenchange", () => {
-  if (fullscreenElement()) {
+  if (isActualFullscreen()) {
     fullscreenState = "on";
+  } else if (fullscreenState === "fallback") {
+    updateAfterFullscreenChange();
+    return;
   } else {
     fullscreenState = "off";
     viewMode = lastViewMode || viewMode;
@@ -1457,14 +1507,20 @@ window.addEventListener("resize", () => {
   startFullPrefetch();
 });
 window.addEventListener("keydown", async (e) => {
-  if (!current.id || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
+  if (!current.id || e.target.tagName === "INPUT") return;
+  if (e.key === "f") {
+    setFullscreenFromGesture();
+    return;
+  }
+  if (e.key === "Escape") {
+    if (fullscreenState !== "off") setFullscreenFromGesture();
+    return;
+  }
+  if (e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
   if (e.key === "ArrowLeft") { if (movePage(-1)) await showPage(); }
   if (e.key === "ArrowRight") { if (movePage(1)) await showPage(); }
   if (e.key === "d") setViewMode("double");
   if (e.key === "s") setViewMode("single");
-  if (e.key === "f") {
-    setFullscreenFromGesture();
-  }
   if (e.key === "r") setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");
 });
 document.getElementById("strip-prev-group").addEventListener("click", () => {
@@ -1478,6 +1534,9 @@ document.getElementById("strip-go-group").addEventListener("click", () => {
 });
 document.getElementById("strip-group").addEventListener("change", () => {
   setStripGroup(Number(document.getElementById("strip-group").value) || 1);
+});
+document.getElementById("retry-failed").addEventListener("click", () => {
+  void manualRetryFailedFullImages();
 });
 
 let acquisitionAbort = false;

@@ -853,7 +853,7 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `function ensureBackgroundPrefetch(displayed) {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(fullSrc, { cache: \"no-store\", signal })") {
 		t.Errorf("ui should prefetch full images background through abortable no-store entry source fetch: got %q", s)
 	}
-	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status, entry, galleryId = current.id) {`) || !strings.Contains(s, `tnDone`) {
+	if !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {`) || !strings.Contains(s, `tnDone`) {
 		t.Errorf("ui should count x-cache results as full, tn, or error separately: got %q", s)
 	}
 	if !strings.Contains(s, `displayPassByEntry`) || !strings.Contains(s, `sourceStatusByEntry`) || !strings.Contains(s, `sourceTypeByEntry`) || !strings.Contains(s, `activeObjectUrlKeys`) {
@@ -927,7 +927,7 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	if !strings.Contains(s, `function runBackgroundReadAndLists(showGen, openGen) {`) || !strings.Contains(s, `showLists(showGen, openGen)`) {
 		t.Errorf("showPage should move read and lists updates to a generation-guarded background helper: got %q", s)
 	}
-	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
 	if loadStart < 0 {
 		t.Fatalf("loadFullImage function not found")
 	}
@@ -951,7 +951,7 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(page)
-	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id) {")
+	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")
 	if updateStart < 0 {
 		t.Fatalf("updatePrefetchCounts function not found")
 	}
@@ -963,7 +963,7 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 	if !strings.Contains(updateBody, `galleryId !== current.id`) || !strings.Contains(updateBody, `backgroundGalleryId !== galleryId`) {
 		t.Errorf("updatePrefetchCounts should not write status for stale gallery/background targets: got %q", updateBody)
 	}
-	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id) {")
+	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {")
 	if prefetchStart < 0 {
 		t.Fatalf("prefetchPageImage function not found")
 	}
@@ -975,11 +975,11 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 	if storeStart < 0 {
 		t.Fatalf("storeFullCache function not found")
 	}
-	storeBody := s[storeStart:strings.Index(s, "\nasync function prefetchPageImage(entry, signal, galleryId = current.id) {")]
+	storeBody := s[storeStart:strings.Index(s, "\nasync function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {")]
 	if !strings.Contains(storeBody, `galleryId === current.id && backgroundGalleryId === galleryId`) {
 		t.Errorf("storeFullCache should update strip DOM only for the current background target: got %q", storeBody)
 	}
-	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
 	if loadStart < 0 {
 		t.Fatalf("loadFullImage function not found")
 	}
@@ -1212,7 +1212,7 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `gap: 0;`) || !strings.Contains(s, `--reader-page-width: min(45vw, 500px);`) || !strings.Contains(s, `--reader-page-height: min(78vh, 700px);`) || !strings.Contains(s, `width: min(var(--reader-page-width), 100%);`) || !strings.Contains(s, `object-fit: contain;`) {
 		t.Errorf("ui should fix reader display size without gap between pages: got %q", s)
 	}
-	if !strings.Contains(s, `async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {`) || !strings.Contains(s, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `URL.createObjectURL(blob)`) || !strings.Contains(s, `img.src = objectUrl`) {
+	if !strings.Contains(s, `async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {`) || !strings.Contains(s, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `URL.createObjectURL(blob)`) || !strings.Contains(s, `img.src = objectUrl`) {
 		t.Errorf("ui should replace placeholder display from a no-store fetched full image bytes, while counting TN separately: got %q", s)
 	}
 	if !strings.Contains(s, `let fullObjectUrls = new Set();`) || !strings.Contains(s, `function revokeFullObjectUrls() {`) || !strings.Contains(s, `revokeFullObjectUrls();`) {
@@ -1235,12 +1235,12 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `attachDisplayLoadHandlers`) || !strings.Contains(s, `recordImageDisplayPassFromImg`) {
 		t.Errorf("ui should record actual pixels from DOM naturalWidth, not from status text: got %q", s)
 	}
-	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
 	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
 	if !strings.Contains(loadBody, `if (r.status === 404 && cache === "no_full") {`) || !strings.Contains(loadBody, `storeFullCache(entry, "no_full", null, galleryId);`) {
 		t.Errorf("loadFullImage should mark missing full storage as no_full, not error: got %q", loadBody)
 	}
-	if !strings.Contains(loadBody, `if (!r.ok) {`) || !strings.Contains(loadBody, `updatePrefetchCounts("error", entry, galleryId);`) {
+	if !strings.Contains(loadBody, `if (!r.ok) {`) || !strings.Contains(loadBody, `updatePrefetchCounts("error", entry, galleryId, allowRecount);`) {
 		t.Errorf("loadFullImage should still count true fetch failures as error, not no_full: got %q", loadBody)
 	}
 	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
@@ -1372,7 +1372,7 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 
 	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen !== openGeneration, loadRender !== renderGeneration) {")
 	if loadStart < 0 {
-		loadStart = strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration) {")
+		loadStart = strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
 	}
 	if loadStart < 0 {
 		t.Fatalf("loadFullImage function not found")
@@ -1480,6 +1480,18 @@ func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 	if !strings.Contains(s, `function setFullscreenFromGesture() {`) || !strings.Contains(s, `if (e.key === "f") {`) || !strings.Contains(s, `setFullscreenFromGesture();`) {
 		t.Errorf("f should toggle fullscreen through fullscreenState without losing last layout mode: got %q", s)
 	}
+
+	keyStart := strings.Index(s, "window.addEventListener(\"keydown\", async (e) => {")
+	if keyStart < 0 {
+		t.Fatalf("keydown handler not found")
+	}
+	keyBody := s[keyStart:strings.Index(s, "\ndocument.getElementById(\"strip-prev-group\")")]
+	fIndex := strings.Index(keyBody, `if (e.key === "f") {`)
+	escapeIndex := strings.Index(keyBody, `if (e.key === "Escape") {`)
+	buttonIndex := strings.Index(keyBody, `e.target.tagName === "BUTTON"`)
+	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || fIndex > buttonIndex || escapeIndex > buttonIndex {
+		t.Errorf("f and Escape should remain fullscreen gestures even from control focus before d/s/r are skipped: got %q", keyBody)
+	}
 	if !strings.Contains(s, `last layout: " + lastViewMode`) || !strings.Contains(s, `fullscreen " + fullscreenState`) {
 		t.Errorf("view state should show last layout mode and fullscreenState: got %q", s)
 	}
@@ -1516,26 +1528,44 @@ func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) 
 	if !strings.Contains(s, `let fullscreenState = "off";`) || !strings.Contains(s, `let lastViewMode = "double";`) {
 		t.Errorf("ui should keep fullscreen presentation state and last layout mode separately: got %q", s)
 	}
-	if !strings.Contains(s, `function fullscreenTarget() {`) || !strings.Contains(s, `document.getElementById("reader")`) || !strings.Contains(s, `document.documentElement`) {
-		t.Errorf("fullscreen target should prefer reader element so UI chrome can be separated: got %q", s)
+	if !strings.Contains(s, `function fullscreenTarget() { return document.documentElement; }`) {
+		t.Errorf("fullscreen target should use documentElement so the browser itself enters fullscreen: got %q", s)
 	}
-	if !strings.Contains(s, `document.body.classList.toggle("fullscreen", fullscreenState !== "off");`) || !strings.Contains(s, `document.body.classList.toggle("pseudo-fullscreen", fullscreenState === "fallback");`) {
-		t.Errorf("fullscreen presentation should apply fullscreen class and explicit CSS fallback class separately: got %q", s)
+	if !strings.Contains(s, `function fullscreenElement() { return document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || null; }`) {
+		t.Errorf("actual fullscreen element should be read from documentElement state: got %q", s)
 	}
-	if !strings.Contains(s, `function requestFullscreenWithFallback() {`) || !strings.Contains(s, `const api = target.requestFullscreen || target.webkitRequestFullscreen;`) {
-		t.Errorf("ui should implement fullscreen fallback order requestFullscreen, webkitRequestFullscreen, CSS fallback: got %q", s)
+	if !strings.Contains(s, `function isActualFullscreen() { return fullscreenElement() === fullscreenTarget(); }`) {
+		t.Errorf("fullscreen state must compare actual fullscreen element to documentElement target: got %q", s)
+	}
+	if !strings.Contains(s, `function syncFullscreenState() {`) || !strings.Contains(s, `function applyFullscreenPresentation() {`) {
+		t.Errorf("ui should separate actual fullscreen sync from presentation: got %q", s)
+	}
+	if !strings.Contains(s, `document.body.classList.toggle("fullscreen", fullscreenState === "on");`) || !strings.Contains(s, `document.documentElement.classList.toggle("fullscreen", fullscreenState === "on");`) || !strings.Contains(s, `document.body.classList.toggle("pseudo-fullscreen", fullscreenState === "fallback");`) {
+		t.Errorf("fullscreen presentation class should be actual fullscreen only, with fallback as pseudo fullscreen: got %q", s)
+	}
+	if !strings.Contains(s, `function requestFullscreenWithFallback() {`) || !strings.Contains(s, `const api = target.requestFullscreen || target.webkitRequestFullscreen || target.mozRequestFullScreen || target.msRequestFullscreen;`) || !strings.Contains(s, `api.call(target, { navigationUI: "hide" });`) {
+		t.Errorf("ui should implement fullscreen fallback order requestFullscreen, prefixes, navigationUI hide, CSS fallback: got %q", s)
 	}
 	if !strings.Contains(s, `function setFullscreenFromGesture() {`) || !strings.Contains(s, `function enterFullscreenFromGesture() {`) {
 		t.Errorf("fullscreen should be applied from user gesture without relying on load/restore fullscreen state: got %q", s)
 	}
+	if !strings.Contains(s, `const api = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;`) {
+		t.Errorf("exit fullscreen should use document-level fullscreen exit APIs: got %q", s)
+	}
 	if !strings.Contains(s, `viewMode = lastViewMode || viewMode;`) || !strings.Contains(s, `lastViewMode = viewMode || lastViewMode || "double";`) {
 		t.Errorf("fullscreen exit should restore last layout mode: got %q", s)
 	}
-	if !strings.Contains(s, `document.addEventListener("fullscreenerror", () => {`) || !strings.Contains(s, `window.addEventListener("resize"`) {
+	if !strings.Contains(s, `document.addEventListener("fullscreenchange", () => {`) || !strings.Contains(s, `document.addEventListener("fullscreenerror", () => {`) || !strings.Contains(s, `window.addEventListener("resize"`) {
 		t.Errorf("ui should re-evaluate reader render/prefetch on fullscreenerror and resize: got %q", s)
 	}
-	if !strings.Contains(s, `body.pseudo-fullscreen .side { display: none; }`) || !strings.Contains(s, `body.pseudo-fullscreen #reader { position: fixed; inset: 0;`) {
-		t.Errorf("ui should expose explicit CSS-only pseudo fullscreen fallback for reader display: got %q", s)
+	if !strings.Contains(s, `if (isActualFullscreen()) {`) || !strings.Contains(s, `else if (fullscreenState === "fallback") {`) {
+		t.Errorf("fullscreenchange should keep actual fullscreen as the source of truth and preserve explicit fallback: got %q", s)
+	}
+	if !strings.Contains(s, `html.fullscreen h1, body.fullscreen h1`) || !strings.Contains(s, `html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta`) || !strings.Contains(s, `html.fullscreen .side, body.fullscreen .side`) {
+		t.Errorf("actual browser fullscreen should hide non-essential chrome and control rows: got %q", s)
+	}
+	if !strings.Contains(s, `html.fullscreen .reader, body.fullscreen .reader, body.pseudo-fullscreen .reader`) || !strings.Contains(s, `box-sizing: border-box; position: fixed; inset: 0; z-index: 10; margin: 0; width: 100%; height: 100%;`) || !strings.Contains(s, `body.pseudo-fullscreen .side`) {
+		t.Errorf("ui should expose explicit browser fullscreen CSS and pseudo fullscreen fallback for reader display: got %q", s)
 	}
 	if !strings.Contains(s, `setFullscreenFromGesture();`) || !strings.Contains(s, `fullscreenerror`) {
 		t.Errorf("ui should expose gesture-bound fullscreen toggle and fullscreenerror handling: got %q", s)
@@ -1552,9 +1582,66 @@ func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) 
 		!strings.Contains(s, `grid-template-columns: repeat(2, minmax(0, calc(var(--fullscreen-page-width) / 2)));`) {
 		t.Errorf("fullscreen reader grid should split available fullscreen width for double pages and use full width for single pages: got %q", s)
 	}
+	if !strings.Contains(s, `html.fullscreen .reader.double img:nth-child(1), body.fullscreen .reader.double img:nth-child(1), body.pseudo-fullscreen .reader.double img:nth-child(1) { object-position: right center; }`) ||
+		!strings.Contains(s, `html.fullscreen .reader.double img:nth-child(2), body.fullscreen .reader.double img:nth-child(2), body.pseudo-fullscreen .reader.double img:nth-child(2) { object-position: left center; }`) {
+		t.Errorf("fullscreen double images must align to the center seam without extra gap: got %q", s)
+	}
 	if !strings.Contains(s, `if (e.key === "ArrowLeft") { if (movePage(-1)) await showPage(); }`) ||
 		!strings.Contains(s, `if (e.key === "ArrowRight") { if (movePage(1)) await showPage(); }`) {
 		t.Errorf("fullscreen keyboard page movement should remain handled when target is not input/control: got %q", s)
+	}
+
+	keyStart := strings.Index(s, "window.addEventListener(\"keydown\", async (e) => {")
+	if keyStart < 0 {
+		t.Fatalf("keydown handler not found")
+	}
+	keyBody := s[keyStart:strings.Index(s, "\ndocument.getElementById(\"strip-prev-group\")")]
+	fIndex := strings.Index(keyBody, `if (e.key === "f") {`)
+	escapeIndex := strings.Index(keyBody, `if (e.key === "Escape") {`)
+	buttonIndex := strings.Index(keyBody, `e.target.tagName === "BUTTON"`)
+	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || fIndex > buttonIndex || escapeIndex > buttonIndex {
+		t.Errorf("f and Escape should remain fullscreen gestures even from control focus before d/s/r are skipped: got %q", keyBody)
+	}
+}
+
+func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `id="retry-failed"`) || !strings.Contains(s, `retry failed`) || !strings.Contains(s, `manualRetryFailedFullImages()`) || !strings.Contains(s, `manualRetryingKeys`) || !strings.Contains(s, `manualRetryRunning`) || !strings.Contains(s, `allowRecount = false`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "error"`) {
+		t.Errorf("ui should expose a manual full-image retry button with manual-only recount and error-only targeting: got %q", s)
+	}
+	if !strings.Contains(s, `document.getElementById("retry-failed").addEventListener("click",`) {
+		t.Errorf("manual retry button must have an actual UI click handler: got %q", s)
+	}
+
+	renderButtonStart := strings.Index(s, "function renderRetryButtonState() {")
+	if renderButtonStart < 0 {
+		t.Fatalf("renderRetryButtonState function not found")
+	}
+	renderButtonBody := s[renderButtonStart:strings.Index(s, "\nfunction renderPrefetchStatus() {")]
+	if !strings.Contains(renderButtonBody, `const button = document.getElementById("retry-failed");`) || !strings.Contains(renderButtonBody, `button.disabled = manualRetryRunning || !current.id || Number(counts.errorDone) <= 0;`) {
+		t.Errorf("retry button should be disabled for no errors or while manual retry is running: got %q", renderButtonBody)
+	}
+
+	renderStatusStart := strings.Index(s, "function renderPrefetchStatus() {")
+	if renderStatusStart < 0 {
+		t.Fatalf("renderPrefetchStatus function not found")
+	}
+	renderStatusBody := s[renderStatusStart:strings.Index(s, "\nfunction stripItems() {")]
+	if !strings.Contains(renderStatusBody, `renderRetryButtonState();`) {
+		t.Errorf("renderPrefetchStatus should update manual retry button state: got %q", renderStatusBody)
+	}
+
+	manualStart := strings.Index(s, "async function manualRetryFailedFullImages() {")
+	if manualStart < 0 {
+		t.Fatalf("manualRetryFailedFullImages function not found")
+	}
+	manualBody := s[manualStart:strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")]
+	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `if (sourceStatusByEntry.get(key) !== "error") continue;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
+		t.Errorf("manual retry must be manual-only, error-only, re-entrancy protected, and use generation-guarded loadFullImage/prefetchPageImage with allowRecount: got %q", manualBody)
 	}
 }
 
@@ -1724,7 +1811,7 @@ func TestEmbeddedUIShowsGalleryViewerPositionOnly(t *testing.T) {
 	if loadingStart < 0 {
 		t.Fatalf("renderGalleryLoading function not found")
 	}
-	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id) {")]
+	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")]
 	if !strings.Contains(loadingBody, `renderLoadingPosition(id, pageLabel, pairLabel);`) {
 		t.Errorf("renderGalleryLoading should render loading position: got %q", loadingBody)
 	}
@@ -1761,7 +1848,7 @@ func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
 	if loadingStart < 0 {
 		t.Fatalf("renderGalleryLoading function not found")
 	}
-	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id) {")]
+	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")]
 	if !strings.Contains(loadingBody, `updateTabTitle((card && card.japanese_title) || title || id);`) {
 		t.Errorf("renderGalleryLoading should set tab title from cached card title while loading: got %q", loadingBody)
 	}
