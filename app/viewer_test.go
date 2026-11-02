@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
+
 
 func TestSafeGalleryPathStaysInsideGalleryDir(t *testing.T) {
 	root := filepath.Join("Galleries")
@@ -303,6 +305,7 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 
 func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testing.T) {
 	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
@@ -323,6 +326,56 @@ func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testi
 	cacheFile := filepath.Join(v.cacheRoot, sampleHash+".webp")
 	if _, err := os.Stat(cacheFile); err == nil {
 		t.Errorf("image proxy should not persist TN as full-image cache: %s", cacheFile)
+	}
+}
+
+func TestViewerImageProxyRefreshesGGOnceOnStorage404(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	seenStorage404 := false
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "tn.") && !strings.Contains(rawurl, "ltn.") {
+			return nil, errors.New("image proxy must not fetch TN")
+		}
+		if strings.Contains(rawurl, "/gg.js") {
+			return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+		}
+		if !seenStorage404 {
+			seenStorage404 = true
+			return nil, errors.New("status 404 for " + rawurl)
+		}
+		return []byte("data"), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "data" {
+		t.Fatalf("image proxy after gg refresh: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if len(urls) != 3 || !strings.Contains(urls[0], sampleHash+".webp") || !strings.Contains(urls[1], "/gg.js") || !strings.Contains(urls[2], sampleHash+".webp") {
+		t.Fatalf("image proxy refresh order: got %v", urls)
+	}
+}
+
+func TestViewerInfoCacheConcurrentHandlersDoNotWriteUnprotectedMap(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
+	v, _ := newTestViewer(t, galleryJSON)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+		}()
+	}
+	wg.Wait()
+	v.infoCacheMu.Lock()
+	_, ok := v.infoCache[1]
+	v.infoCacheMu.Unlock()
+	if !ok {
+		t.Error("info cache should contain the gallery after concurrent handlers")
 	}
 }
 

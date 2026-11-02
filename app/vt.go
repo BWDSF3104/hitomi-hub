@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ type VTResult struct {
 	Status     string
 	Positives  int
 	ThreatName string
+	HTTPStatus int
 }
 
 type RateState struct {
@@ -23,33 +25,36 @@ type RateState struct {
 	total  int
 }
 
-type FetchFunc func(url, key string) (map[string]any, error)
+type FetchFunc func(url, key string) (map[string]any, int, error)
 
-func defaultFetch(url, key string) (map[string]any, error) {
+func defaultFetch(url, key string) (map[string]any, int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("x-apikey", key)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	decoder := json.NewDecoder(resp.Body)
 	payload := map[string]any{}
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, err
+		return nil, resp.StatusCode, err
 	}
-	return payload, nil
+	return payload, resp.StatusCode, nil
 }
 
-func VTLookup(sha string, cfg Config, state *RateState, fetch FetchFunc) VTResult {
+func VTLookup(db *sql.DB, sha string, cfg Config, state *RateState, fetch FetchFunc) VTResult {
 	vt := cfg.VirusTotal
 	if !vt.Enabled {
 		return VTResult{Status: "skipped"}
+	}
+	if state == nil {
+		state = &RateState{}
 	}
 	now := time.Now()
 	cutoff := now.Add(-time.Minute)
@@ -60,12 +65,22 @@ func VTLookup(sha string, cfg Config, state *RateState, fetch FetchFunc) VTResul
 		}
 	}
 	state.window = kept
-	if len(kept) >= vt.MaxPerMinute {
+	if vt.MaxPerMinute > 0 && len(kept) >= vt.MaxPerMinute {
 		return VTResult{Status: "rate_limited"}
 	}
-	if state.total >= vt.MaxDaily {
+	if vt.MaxDaily > 0 && state.total >= vt.MaxDaily {
 		return VTResult{Status: "daily_quota_exhausted"}
 	}
+	if db != nil && vt.MaxDaily > 0 {
+		total, err := vtDailyTotal(db, vtDay(now))
+		if err != nil {
+			return VTResult{Status: "scan_error"}
+		}
+		if total >= vt.MaxDaily {
+			return VTResult{Status: "daily_quota_exhausted"}
+		}
+	}
+
 	key := vt.APIKey
 	if key == "" {
 		key = os.Getenv(vt.APIKeyEnv)
@@ -76,20 +91,35 @@ func VTLookup(sha string, cfg Config, state *RateState, fetch FetchFunc) VTResul
 	if fetch == nil {
 		fetch = defaultFetch
 	}
-	payload, err := fetch("https://www.virustotal.com/api/v3/files/"+sha, key)
+	payload, status, err := fetch("https://www.virustotal.com/api/v3/files/"+sha, key)
 	if err != nil {
 		return VTResult{Status: "scan_error"}
 	}
 	state.window = append(state.window, now)
 	state.total++
+	if db != nil {
+		if err := incrementVTUsage(db, vtDay(now)); err != nil {
+			return VTResult{Status: "scan_error", HTTPStatus: status}
+		}
+	}
+	if status != 200 {
+		resultStatus := "not_evaluated"
+		switch status {
+		case 401:
+			resultStatus = "auth_error"
+		case 429:
+			resultStatus = "rate_limited"
+		}
+		return VTResult{Status: resultStatus, HTTPStatus: status}
+	}
 
 	attrs, _ := payload["data"].(map[string]any)
 	stats, _ := attrs["attributes"].(map[string]any)
 	rawStats, _ := stats["stats"].(map[string]any)
 	positives := asInt(rawStats["malicious"]) + asInt(rawStats["suspicious"])
-	status := "pass"
+	statusString := "pass"
 	if positives > 0 {
-		status = "hit"
+		statusString = "hit"
 	}
 	names := []string{}
 	results, _ := stats["last_analysis_results"].(map[string]any)
@@ -99,7 +129,11 @@ func VTLookup(sha string, cfg Config, state *RateState, fetch FetchFunc) VTResul
 			continue
 		}
 		if entry["category"] == "malicious" || entry["category"] == "suspicious" {
-			names = append(names, asString(entry["category"]))
+			name := asString(entry["name"])
+			if name == "" {
+				name = asString(entry["category"])
+			}
+			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
@@ -112,7 +146,25 @@ func VTLookup(sha string, cfg Config, state *RateState, fetch FetchFunc) VTResul
 	if len(unique) > 5 {
 		unique = unique[:5]
 	}
-	return VTResult{Status: status, Positives: positives, ThreatName: strings.Join(unique, ";")}
+	return VTResult{Status: statusString, Positives: positives, ThreatName: strings.Join(unique, ";"), HTTPStatus: status}
+}
+
+func vtDay(t time.Time) string {
+	return t.UTC().Format("2006-01-02")
+}
+
+func vtDailyTotal(db *sql.DB, day string) (int, error) {
+	var total int
+	err := db.QueryRow("SELECT total FROM vt_rate_state WHERE day = ?", day).Scan(&total)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return total, err
+}
+
+func incrementVTUsage(db *sql.DB, day string) error {
+	_, err := db.Exec("INSERT INTO vt_rate_state (day, total) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET total = total + 1", day)
+	return err
 }
 
 func asInt(v any) int {

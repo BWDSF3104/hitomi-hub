@@ -33,11 +33,30 @@ func TestRunSavedQueriesTracksNewGalleries(t *testing.T) {
 		t.Fatalf("query error: %v", got["error"])
 	}
 	newIDs := got["new"].([]int)
-	if len(newIDs) != 2 || newIDs[0] != 200 || newIDs[1] != 300 {
-		t.Fatalf("new ids %v", newIDs)
+	if len(newIDs) != 3 || newIDs[0] != 100 || newIDs[1] != 200 || newIDs[2] != 300 {
+		t.Fatalf("first run new ids %v", newIDs)
 	}
 	if got["seen"] != 3 {
 		t.Fatalf("seen %v", got["seen"])
+	}
+
+	results, err = runSavedQueries(db, c, t.TempDir(), "english", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results %v", results)
+	}
+	got = results[0]
+	if got["error"] != nil {
+		t.Fatalf("query error: %v", got["error"])
+	}
+	secondIDs := got["new"].([]int)
+	if len(secondIDs) != 0 {
+		t.Fatalf("second run should have no new ids: %v", secondIDs)
+	}
+	if got["seen"] != 3 {
+		t.Fatalf("second seen %v", got["seen"])
 	}
 	queries, err := listRows(db, "queries")
 	if err != nil {

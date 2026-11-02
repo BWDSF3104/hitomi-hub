@@ -31,6 +31,28 @@ func TestSearchHTMLPlainTermUsesIndexExactTerm(t *testing.T) {
 	}
 }
 
+func TestSearchHTMLPreservesUnderscoreTagTerm(t *testing.T) {
+	var urls []string
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "/n/tag/female:big_breasts-all.nozomi") {
+			return beIDs([]uint32{10, 20}), nil
+		}
+		return nil, nil
+	}}
+
+	ids, total, err := c.SearchHTML("female:big_breasts", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(ids) != 2 || ids[0] != 10 || ids[1] != 20 {
+		t.Fatalf("underscore term: total %d ids %v", total, ids)
+	}
+	if len(urls) != 1 || !strings.Contains(urls[0], "/n/tag/female:big_breasts-all.nozomi") {
+		t.Fatalf("underscore term must not split: got %v", urls)
+	}
+}
+
 func TestSearchHTMLColonTermUsesNozomiState(t *testing.T) {
 	var urls []string
 	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {

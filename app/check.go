@@ -4,13 +4,19 @@ import (
 	"database/sql"
 )
 
-// isNewGallery は galleries にまだ無い gallery id
-func isNewGallery(db *sql.DB, galleryID int) (bool, error) {
+// isNewForQuery は saved query の bookmark_seen にまだ無い gallery id
+func isNewForQuery(db *sql.DB, queryID, galleryID int) (bool, error) {
 	var count int
-	if err := db.QueryRow("SELECT COUNT(1) FROM galleries WHERE gallery_id = ?", galleryID).Scan(&count); err != nil {
+	if err := db.QueryRow("SELECT COUNT(1) FROM bookmark_seen WHERE query_id = ? AND gallery_id = ?", queryID, galleryID).Scan(&count); err != nil {
 		return false, err
 	}
 	return count == 0, nil
+}
+
+func markQuerySeen(db *sql.DB, queryID, galleryID int) error {
+	_, err := db.Exec("INSERT OR IGNORE INTO bookmark_seen (query_id, gallery_id, first_seen_at) VALUES (?, ?, ?)",
+		queryID, galleryID, nowISO())
+	return err
 }
 
 // savedQueryIDs は保存検索文を hitomi の results.js と同じ routing で 1 回引く。plain term は galleriesindex exact hash、colon term は nozomi。
@@ -38,8 +44,9 @@ func runSavedQueries(db *sql.DB, client *Client, root, lang string, limit int) (
 			continue
 		}
 		newIDs := []int{}
+		queryID := q["id"].(int)
 		for _, id := range ids {
-			new, err := isNewGallery(db, id)
+			new, err := isNewForQuery(db, queryID, id)
 			if err != nil {
 				return nil, err
 			}
@@ -48,6 +55,9 @@ func runSavedQueries(db *sql.DB, client *Client, root, lang string, limit int) (
 			}
 			if limit > 0 && len(newIDs) >= limit {
 				break
+			}
+			if err := markQuerySeen(db, queryID, id); err != nil {
+				return nil, err
 			}
 			if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
 				return nil, err

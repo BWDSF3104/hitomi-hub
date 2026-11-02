@@ -30,16 +30,22 @@ type HitomiConfig struct {
 	UseLiveGG     bool   `json:"use_live_gg"`
 }
 
+const ggCacheTTL = time.Hour
+const indexVersionTTL = time.Hour
+
 type Client struct {
-	http      *http.Client
-	cfg       HitomiConfig
-	last      time.Time
-	imageLast time.Time
-	mu        sync.Mutex
-	fetch     func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
-	versions  map[string]string
-	gg        GG
-	metrics   map[string]*FetchMetric
+	http       *http.Client
+	cfg        HitomiConfig
+	last       time.Time
+	imageLast  time.Time
+	mu         sync.Mutex
+	cacheMu    sync.Mutex
+	fetch      func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
+	versions   map[string]string
+	versionAt  map[string]time.Time
+	gg         GG
+	ggLoadedAt time.Time
+	metrics    map[string]*FetchMetric
 }
 
 func defaultHitomiConfig() HitomiConfig {

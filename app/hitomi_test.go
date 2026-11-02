@@ -7,11 +7,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // 2026-11-01 に ltn 実測で確認した値（HTTP 200・210784 bytes）
 const sampleHash = "2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89"
+
+func TestClientCacheFieldsAreMutexProtected(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if strings.Contains(rawurl, "/gg.js") {
+			return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+		}
+		if strings.HasSuffix(rawurl, "/version") {
+			return []byte("1793467632"), nil
+		}
+		return nil, nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = c.EnsureGG(context.Background(), true)
+			_ = c.GG()
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = c.ensureIndexVersion("galleries", false)
+		}()
+	}
+	wg.Wait()
+}
 
 func TestCanonicalGGRuleComposition(t *testing.T) {
 	// 2026-11-01 実測の live `gg.js` 構造: `var o = 0; switch (g) { case ... o = 1; break; } return o;`
@@ -53,6 +84,42 @@ func TestCanonicalGGRuleComposition(t *testing.T) {
 	}
 	if strings.Contains(ThumbnailURL(outSet, "avif", gg), "tnbigtn") {
 		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(outSet, "avif", gg))
+	}
+}
+
+func TestEnsureGGUsesTTLAndForceRefresh(t *testing.T) {
+	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+	calls := 0
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		if !strings.Contains(rawurl, "/gg.js") {
+			return nil, errors.New("expected gg.js")
+		}
+		return []byte(fixture), nil
+	}
+	if source := c.EnsureGG(context.Background(), false); source != "live" {
+		t.Fatalf("first source: got %s", source)
+	}
+	if source := c.EnsureGG(context.Background(), false); source != "live" {
+		t.Fatalf("cached source: got %s", source)
+	}
+	if calls != 1 {
+		t.Errorf("TTL cache should not refetch within TTL: calls %d", calls)
+	}
+	c.ggLoadedAt = time.Now().Add(-2 * time.Hour)
+	if source := c.EnsureGG(context.Background(), false); source != "live" {
+		t.Fatalf("expired source: got %s", source)
+	}
+	if calls != 2 {
+		t.Errorf("expired cache should refetch: calls %d", calls)
+	}
+	if source := c.EnsureGG(context.Background(), true); source != "live" {
+		t.Fatalf("force source: got %s", source)
+	}
+	if calls != 3 {
+		t.Errorf("force refresh should refetch: calls %d", calls)
 	}
 }
 

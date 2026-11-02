@@ -23,14 +23,27 @@ func firstOf(list []string) string {
 }
 
 func setReadState(db *sql.DB, galleryID int, page int, complete bool) error {
+	return setReadStateWithClear(db, galleryID, page, complete, false)
+}
+
+func setReadStateWithClear(db *sql.DB, galleryID int, page int, complete bool, clearCompletion bool) error {
 	flag := 0
-	if complete {
+	if complete && !clearCompletion {
 		flag = 1
+	}
+	if clearCompletion {
+		_, err := db.Exec(`INSERT INTO read_state (gallery_id, last_page, fully_read, opened_at, favorite)
+			VALUES (?, ?, ?, ?, 0)
+			ON CONFLICT(gallery_id) DO UPDATE SET last_page = excluded.last_page,
+			fully_read = excluded.fully_read, opened_at = excluded.opened_at`,
+			galleryID, page, flag, nowISO())
+		return err
 	}
 	_, err := db.Exec(`INSERT INTO read_state (gallery_id, last_page, fully_read, opened_at, favorite)
 		VALUES (?, ?, ?, ?, 0)
 		ON CONFLICT(gallery_id) DO UPDATE SET last_page = excluded.last_page,
-		fully_read = excluded.fully_read, opened_at = excluded.opened_at`,
+		fully_read = CASE WHEN excluded.fully_read = 1 OR fully_read = 1 THEN 1 ELSE fully_read END,
+		opened_at = excluded.opened_at`,
 		galleryID, page, flag, nowISO())
 	return err
 }

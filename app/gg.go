@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 // GG は hitomi `gg.js` の正典値（bucket と switch values）。switch values と bucket は回転する
@@ -64,27 +65,51 @@ func (g GG) Value(hash string) int {
 	return int(v)
 }
 
-// LoadGG は正典 gg.js を 1 回だけ読み、snapshot にフォールバックする
+// LoadGG は正典 gg.js を TTL cache 経由で読み、snapshot にフォールバックする
 func (c *Client) LoadGG(ctx context.Context) string {
-	if !c.cfg.UseLiveGG {
+	return c.EnsureGG(ctx, false)
+}
+
+// EnsureGG は live gg を TTL cache から返す。force refresh は network 中に cache mutex を保持しない
+func (c *Client) EnsureGG(ctx context.Context, force bool) string {
+	c.cacheMu.Lock()
+	source := c.gg.Source
+	age := time.Since(c.ggLoadedAt)
+	useLive := c.cfg.UseLiveGG
+	if !useLive {
 		c.gg = snapshotGG()
+		c.ggLoadedAt = time.Now()
+		c.cacheMu.Unlock()
 		return c.gg.Source
 	}
+	if !force && source == "live" && age < ggCacheTTL {
+		c.cacheMu.Unlock()
+		return source
+	}
+	c.cacheMu.Unlock()
+
 	body, err := c.get(ctx, "https://ltn."+hitomiDomain+"/gg.js", [2]int64{-1, -1})
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
 	if err != nil {
 		c.gg = snapshotGG()
+		c.ggLoadedAt = time.Now()
 		return c.gg.Source
 	}
 	parsed, err := parseGG(string(body))
 	if err != nil {
 		c.gg = snapshotGG()
+		c.ggLoadedAt = time.Now()
 		return c.gg.Source
 	}
 	c.gg = parsed
+	c.ggLoadedAt = time.Now()
 	return c.gg.Source
 }
 
 func (c *Client) GG() GG {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
 	if c.gg.CaseSet == nil || c.gg.Bucket == "" {
 		return snapshotGG()
 	}

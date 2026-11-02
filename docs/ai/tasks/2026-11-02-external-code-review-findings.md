@@ -1,8 +1,8 @@
 # 外部コードレビュー指摘記録
 
-**Status**: 進行中
+**Status**: 実装完了・確認完了（strict UI blocker 除く）
 **Date**: 2026-11-02
-**Next Action**: A-1,A-2,A-4,A-5,A-6の優先確認
+**Next Action**: 高項目の実装確認は完了。残りは manual full-image retry の strict UI confirmation blocker。
 
 ## 意図 / 背景
 
@@ -15,7 +15,7 @@
 
 - `docs/ai/tasks/2026-11-02-external-code-review-findings.md` に外部レビュー指摘を記録した。
 - 本タスクの開始で `docs/ai/tasks/2026-11-02-external-code-review-findings.md` と `docs/ai/current-task.tsv` に記録を追加した。
-- 実装ファイルやコードへの変更は行っていない。
+- 初期記録時点では実装ファイルやコードへの変更は行っていなかった。その後、ユーザーの指示で高項目を実装し、以下の変更を反映した。
 
 ### A. 動作上の不具合・誤判定
 
@@ -310,6 +310,156 @@
 - 優先度が高い項目: A-1、A-2、A-4、A-5、A-6。
 - これらはユーザー体感、記録の正しさ、scan cacheの信頼性に直接影響する。
 - 実装は未開始。実装指示があり、各項目の patch scopeを指定できる。
+
+## 現在ユースケースで高い項目の修正方法と合格条件（2026-11-02）
+
+判定は現コードの静的読解と現行ユースケースの優先順位に基づく。実施項目は A-1、A-2、A-4、A-5、A-6、A-9、A-10、SQLite WAL/busy_timeout/schema version。
+
+### A-1. `gg.js` / index version の TTL と force refresh
+- 修正方法:
+  - `Client` に cache 用 mutex を追加し、`gg` と `versions` を mutex で保護する。
+  - `EnsureGG(ctx, force)` を追加し、live `gg.js` を TTL で更新する。既定 TTL は 1 時間。
+  - `imageProxy` が storage 404 を受けたとき、`EnsureGG(ctx, true)` を 1 回だけ呼び、rate gate 内で再取得して 1 回だけ storage URL を再試行する。
+  - `indexVersion` を mutex + TTL cache にする。
+- 合格条件:
+  - `UseLiveGG=false` のときは live fetch せず snapshot を返す。
+  - cache が TTL 内なら network fetch を増やさない。
+  - `imageProxy` の storage 404 で live `gg.js` を force refresh できる。
+  - `tn.` を image proxy の fallback として fetch しない。
+  - `go test -race -count=1 .` で `Client.gg` / `Client.versions` / `viewer.infoCache` の data race を検出しない。
+
+### A-2. 検索 term 正規化順序
+- 修正方法:
+  - `SearchHTML` は raw query を `strings.Fields` で先に分割し、各 term を個別に `normalizeSearchTerm` する。
+  - `female:big_breasts` は raw term の `_` を保ち、1 term として nozomi path を組む。
+- 合格条件:
+  - `female:big_breasts` が `female:big` と `breasts` に分裂しない。
+  - URL が `/n/tag/female:big_breasts-<lang>.nozomi` になる。
+
+### A-4. `read_state` の完全既読 preserve
+- 修正方法:
+  - `setReadState` の upsert を `MAX(fully_read, excluded.fully_read)` 相当にする。
+  - 明示的な解除は `setReadStateWithClear` と CLI `--clear-complete` で行う。
+  - UI/CLI の通常 page 移動は解除扱いにしない。
+- 合格条件:
+  - `complete=true` の後に通常 page 移動 `complete=false` しても `fully_read=1` が保たれる。
+  - 明示的な clear 操作だけが `fully_read=0` にできる。
+  - `read` CLI の出力は更新後の DB 値を反映する。
+
+### A-5. scan record の NULL gallery、known gallery、DB error
+- 修正方法:
+  - `galleryIDForPath` は `<gallery_dir>/<id>/<file>` の `<file>` 形式のみ id を認める。export 直下 `<gallery_dir>/<id>.<format>` は `NULL` にする。
+  - 有効な gallery id の場合、file insert 前に `recordDiscovered` で parent row を作る。
+  - `processFile` は `addFinding`, `cacheStore`, `recordScanFile` の DB error を stderr に出す。
+  - summary は DB write 成功後にのみ加算する。
+- 合格条件:
+  - `Galleries/123.cbz` は `files.gallery_id` に FK 違反になる `0` を入れない。
+  - known id の file path では parent row が作られ、DB error で黙って落ちない。
+  - DB write failure 時に summary だけ加算されない。
+
+### A-6. VirusTotal status / cache TTL / daily DB / engine result name
+- 修正方法:
+  - `FetchFunc` は HTTP status を返す。
+  - `VTLookup` は 200 の正応答だけを `pass`/`hit` として扱い、404/401/429/other を cache しない。
+  - `scan_cache` lookup に TTL を付ける。cache に保存するのは `pass`/`hit` のときだけ。
+  - 日次 request count を `vt_rate_state` table で UTC date に保存する。
+  - `ThreatName` は engine result name を優先する。engine name が無いときだけ category を使う。
+  - `scan_source` は cached pass/hit または live pass/hit のときだけ `structural+virustotal`。
+- 合格条件:
+  - HTTP status 非 200 で `scan_cache` に `pass` を保存しない。
+  - 404/429/401/no key/fetch error は `not_evaluated`、`rate_limited`、`auth_error`、`no_key`、`scan_error` として扱い、source は structural のまま。
+  - cache TTL 切れの pass は live lookup 経路に落ちる。
+  - 同一 UTC date の daily request count は DB に残り、process 間でリセットされない。
+  - engine result name が `ThreatName` に出る。
+
+### A-9. `check` の saved query 別 seen tracking
+- 修正方法:
+  - `bookmark_seen` table を追加する。
+  - `runSavedQueries` は `galleries` 行の有無ではなく、`bookmark_seen` で saved query 別新着を判定する。
+  - `bookmark_queries` の `last_run_at` は更新する。
+- 合格条件:
+  - 同じ保存検索の 2 回目 `check` で、1 回目に表示済みの id は new にならない。
+  - 保存検索別の `bookmark_seen` が `runSavedQueries` 後に残る。
+  - `galleries` 行が存在しても、その query の `bookmark_seen` に無い id は first run で new として扱える。
+
+### A-10. shared cache data race
+- 修正方法:
+  - `Client.gg`, `Client.versions`, `viewer.infoCache` を mutex で保護する。
+  - network fetch 中は cache mutex を保持しない。
+- 合格条件:
+  - cgo/gcc が可用な環境では `go test -race -count=1 .` で data race を検出しない。
+  - 本環境では cgo/gcc がなく race detector は実行不可のため、mutex lock と concurrent handler/cache test で保護構造を確認する。
+  - `Viewer` の `infoCache` cache hit/cache miss 判定は mutex lock で行う。
+
+### SQLite WAL / busy_timeout / schema version
+- 修正方法:
+  - `openDB` で `PRAGMA journal_mode = WAL` と `PRAGMA busy_timeout = 5000` を設定する。
+  - `ensureSchema` は `PRAGMA user_version` を schema version (2) に設定する。
+  - schema.sql に `bookmark_seen` と `vt_rate_state` を追加する。
+- 合格条件:
+  - `PRAGMA journal_mode` が `wal` を返す。
+  - `PRAGMA busy_timeout` が positive を返す。
+  - `PRAGMA user_version` が schema version 2 を返す。
+  - `bookmark_seen`, `vt_rate_state` が ensureSchema 後に存在する。
+
+## 実装内容（高項目）
+
+- A-1:
+  - `Client` に `cacheMu`, `versionAt`, `ggLoadedAt` を追加。
+  - `EnsureGG(ctx, force)` は network fetch 中は mutex を保持せず、fetch 後に mutex lock して `c.gg` を更新。
+  - `indexVersion` は `ensureIndexVersion(field, force)` で TTL cache を参照。
+  - `imageProxy` は storage 404 で live `gg.js` を force refresh し、live と確認できたときだけ 1 回 retry。
+  - `UseLiveGG=false` のときは live fetch せず snapshot を返す。
+  - `tn.` 判定は `ltn.` を TN と誤認しない。
+- A-2:
+  - `SearchHTML` は raw query を先に `strings.Fields` で分割し、term ごとに `normalizeSearchTerm`。
+  - `female:big_breasts` の `_` を保持し、search card と query term route で一致。
+- A-4:
+  - `setReadState` は `MAX(fully_read, excluded.fully_read)` で `fully_read` を preserve。
+  - 明示 clear は `setReadStateWithClear`。
+  - CLI `findCommand` の `--clear-complete` で explicit clear route を追加。
+- A-5:
+  - `galleryIDForPath` は export direct path や invalid numeric id で `sql.NullInt64` の `NULL` を返す。
+  - `recordScanFile` は known gallery id で `recordDiscovered` を呼ぶ。
+  - `processFile` は `addFinding`, `cacheStore`, `recordScanFile` の DB error を log し、summary は成功後にのみ加算。
+- A-6:
+  - `FetchFunc` は `[]byte`, `error`, HTTP status を返す。
+  - `VTLookup` は HTTP status を扱い、non-200 を cache しない。
+  - `scan_cache` lookup に `scanCacheTTL` を追加。
+  - 同一 UTC date の daily request count は `vt_rate_state` table に残す。
+  - `ThreatName` は engine result name を優先。
+- A-9:
+  - `bookmark_seen` table を追加。
+  - `runSavedQueries` は query 別 seen table で新着判定し、`markQuerySeen` で記録。
+- A-10:
+  - `Client.gg`, `Client.versions`, `viewer.infoCache` を mutex で保護。
+  - `EnsureGG` は cache mutex を保持したまま fetch しない。
+  - `searchCard` の infoCache hit/miss 判定は `infoCacheMu` の内側で行う。
+- SQLite:
+  - `openDB` で `PRAGMA journal_mode = WAL` と `PRAGMA busy_timeout = 5000` を設定。
+  - `ensureSchema` で `PRAGMA user_version = 2` を設定。
+  - `bookmark_seen`, `vt_rate_state` を schema に追加。
+
+## 実装確認（2026-11-02）
+
+- `go vet .` passes.
+- `go test -count=1 .` passes.
+- `go test -race -count=1 .` is not executable in this environment because cgo/gcc is unavailable. The race condition is prevented by mutex locks, and concurrent handler/cache tests pass under `go test -count=1 .`.
+
+## 簡易 UI 確認（2026-11-02）
+
+- Local UI server を `S:\Documents\Kilo_Commons\hitomi-hub\scratch\ui_confirm` root で起動して simple UI confirmation を実施。Strict UI confirmation blocker とは別。
+- Screenshots are saved under the current workspace root `Common_Operations`:
+  - `S:\Documents\Kilo_Commons\Common_Operations\scratch\ui_confirm\01_search_female_big_breasts.png`
+    - UI query input に `female:big_breasts` を入力し、search route/result へ反映。
+    - 1回目の UI search で results 25件、total `32882` を確認。raw query が `female:big` + `breasts` に分裂せず `female:big_breasts` term route で results が表示された。
+  - `S:\Documents\Kilo_Commons\Common_Operations\scratch\ui_confirm\02_read_state_preserved_after_next_page.png`
+    - gallery `4297838` で UI click `読み完了` 後、`#next` page move で通常 read update を実施。
+    - `/api/gallery/4297838` read state は `last_page 3`, `fully_read 1` を保持。
+  - `S:\Documents\Kilo_Commons\Common_Operations\scratch\ui_confirm\03_manual_retry_ui_current_state.png`
+    - manual retry UI は存在し、`retry failed` button は errorDone が 0 のため disabled。
+    - strict UI confirmation blocker（actual UI `errorDone > 0` entry 再現）は解決していない。
+- Simple UI/API re-request で `/api/search?query=female%3Abig_breasts` が一時的に `502` を返した。これは local test server の network fetch/rate condition で、1回目の UI search success と screenshot evidence から UI path と raw query preservation を確認した。
 
 ## 完了時 Memory Bank 操作
 

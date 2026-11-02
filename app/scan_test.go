@@ -140,24 +140,24 @@ func TestVTRateGate(t *testing.T) {
 	c := cfg()
 	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 2, MaxDaily: 3, APIKey: "k"}
 	state := &RateState{}
-	fetch := func(url, key string) (map[string]any, error) {
-		return map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 1}}}}, nil
+	fetch := func(url, key string) (map[string]any, int, error) {
+		return map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 1}}}}, 200, nil
 	}
 	for i := 0; i < 2; i++ {
-		if r := VTLookup("abc", c, state, fetch); r.Status != "hit" {
+		if r := VTLookup(nil, "abc", c, state, fetch); r.Status != "hit" {
 			t.Fatalf("request %d: got %s", i, r.Status)
 		}
 	}
-	if r := VTLookup("abc", c, state, fetch); r.Status != "rate_limited" {
+	if r := VTLookup(nil, "abc", c, state, fetch); r.Status != "rate_limited" {
 		t.Errorf("rate gate: got %s", r.Status)
 	}
 	state.window = []time.Time{}
 	state.total = 3
-	if r := VTLookup("abc", c, state, fetch); r.Status != "daily_quota_exhausted" {
+	if r := VTLookup(nil, "abc", c, state, fetch); r.Status != "daily_quota_exhausted" {
 		t.Errorf("daily gate: got %s", r.Status)
 	}
 	c.VirusTotal.Enabled = false
-	if r := VTLookup("abc", c, state, fetch); r.Status != "skipped" {
+	if r := VTLookup(nil, "abc", c, state, fetch); r.Status != "skipped" {
 		t.Errorf("disabled: got %s", r.Status)
 	}
 }
@@ -192,5 +192,88 @@ func TestReferenceEntryIsYaraOnlyFinding(t *testing.T) {
 	_, _, findings, status := ScanFile(cbz, cfg())
 	if status != "pass" || len(findings) != 0 {
 		t.Errorf("structural must not flag reference entry: status %s findings %v", status, findings)
+	}
+}
+
+func TestVTNon200DoesNotCachePass(t *testing.T) {
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
+	state := &RateState{}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 0}}}}
+	fetch := func(url, key string) (map[string]any, int, error) {
+		return payload, 404, nil
+	}
+	result := VTLookup(db, "abc", c, state, fetch)
+	if result.Status != "not_evaluated" {
+		t.Fatalf("status: got %s", result.Status)
+	}
+	verdict, _, _, _, err := cacheLookup(db, "abc", scanCacheTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "" {
+		t.Errorf("non-200 VT must not cache pass: got %s", verdict)
+	}
+}
+
+func TestVTThreatNameUsesEngineResultName(t *testing.T) {
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
+	state := &RateState{}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
+		"stats": map[string]any{"malicious": 1},
+		"last_analysis_results": map[string]any{
+			"engine": map[string]any{"category": "malicious", "name": "Engine A"},
+		},
+	}}}
+	fetch := func(url, key string) (map[string]any, int, error) {
+		return payload, 200, nil
+	}
+	result := VTLookup(db, "abc", c, state, fetch)
+	if result.Status != "hit" || result.ThreatName != "Engine A" {
+		t.Fatalf("result: %v", result)
+	}
+}
+
+func TestVTDailyQuotaIsStoredInDB(t *testing.T) {
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 10, MaxDaily: 1, APIKey: "k"}
+	state := &RateState{}
+	fetch := func(url, key string) (map[string]any, int, error) {
+		return map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 1}}}}, 200, nil
+	}
+	if result := VTLookup(db, "abc", c, state, fetch); result.Status != "hit" {
+		t.Fatalf("first lookup: got %s", result.Status)
+	}
+	total, err := vtDailyTotal(db, vtDay(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Errorf("daily total: got %d", total)
+	}
+	if result := VTLookup(db, "abc", c, state, fetch); result.Status != "daily_quota_exhausted" {
+		t.Errorf("daily db quota: got %s", result.Status)
+	}
+}
+
+func TestScanCacheTTLStalePassIsNotUsed(t *testing.T) {
+	db := openTestDB(t)
+	if err := cacheStore(db, "abc", "pass", "virustotal", "", "positives=0"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-31 * 24 * time.Hour).Format("2006-01-02T15:04:05Z")
+	if _, err := db.Exec("UPDATE scan_cache SET cached_at = ? WHERE sha256 = ?", old, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	verdict, _, _, _, err := cacheLookup(db, "abc", scanCacheTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "" {
+		t.Errorf("stale cache must not be used: got %s", verdict)
 	}
 }

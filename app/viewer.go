@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type viewer struct {
 	cacheRoot      string
 	acquisitionRoot string
 	infoCache      map[int]*GalleryInfo
+	infoCacheMu    sync.Mutex
 }
 
 func newViewer(db *sql.DB, cfg Config, root string) *viewer {
@@ -282,10 +284,14 @@ func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
 		return
 	}
-	cacheState := "miss"
+	var cacheState string
+	v.infoCacheMu.Lock()
 	if _, ok := v.infoCache[id]; ok {
 		cacheState = "cache"
+	} else {
+		cacheState = "miss"
 	}
+	v.infoCacheMu.Unlock()
 	w.Header().Set("x-cache", cacheState)
 	_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
 	jsonOut(w, v.searchResult(id))
@@ -476,6 +482,23 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(err.Error(), "status 404") {
+		if v.client.EnsureGG(r.Context(), true) == "live" {
+			body, err = v.client.getImage(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
+			if err == nil {
+				writeImage(w, format, body, "miss")
+				if cacheErr == nil && len(body) > 0 {
+					_ = os.MkdirAll(v.cacheRoot, 0o755)
+					_ = os.WriteFile(cachePath, body, 0o644)
+				}
+				return
+			}
+			if strings.Contains(err.Error(), "status 404") {
+				writeNoFull(w, format)
+				return
+			}
+			http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 		writeNoFull(w, format)
 		return
 	}
@@ -591,14 +614,19 @@ func (v *viewer) query(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) info(id int) (*GalleryInfo, error) {
-	if cached, ok := v.infoCache[id]; ok {
+	v.infoCacheMu.Lock()
+	cached, ok := v.infoCache[id]
+	v.infoCacheMu.Unlock()
+	if ok {
 		return cached, nil
 	}
 	info, err := v.client.Gallery(id)
 	if err != nil {
 		return nil, err
 	}
+	v.infoCacheMu.Lock()
 	v.infoCache[id] = info
+	v.infoCacheMu.Unlock()
 	return info, nil
 }
 

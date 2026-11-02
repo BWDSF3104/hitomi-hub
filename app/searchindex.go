@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // hitomi の search 正典（searchlib.js）から: B=16、max_node_size=464、
@@ -152,21 +153,44 @@ func indexBaseURL(field string) string {
 }
 
 func (c *Client) indexVersion(field string) (string, error) {
+	return c.ensureIndexVersion(field, false)
+}
+
+func (c *Client) ensureIndexVersion(field string, force bool) (string, error) {
+	c.cacheMu.Lock()
 	if c.versions == nil {
 		c.versions = map[string]string{}
 	}
-	if v := c.versions[field]; v != "" {
-		return v, nil
+	if c.versionAt == nil {
+		c.versionAt = map[string]time.Time{}
 	}
+	version := c.versions[field]
+	age := time.Since(c.versionAt[field])
+	cached := version != "" && !force && age < indexVersionTTL
+	c.cacheMu.Unlock()
+	if cached {
+		return version, nil
+	}
+
 	body, err := c.get(context.Background(), indexBaseURL(field)+"/version", [2]int64{-1, -1})
 	if err != nil {
 		return "", err
 	}
-	version := strings.TrimSpace(string(body))
+	version = strings.TrimSpace(string(body))
 	if version == "" {
 		return "", errors.New("empty index version")
 	}
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	if c.versions == nil {
+		c.versions = map[string]string{}
+	}
+	if c.versionAt == nil {
+		c.versionAt = map[string]time.Time{}
+	}
 	c.versions[field] = version
+	c.versionAt[field] = time.Now()
 	return version, nil
 }
 

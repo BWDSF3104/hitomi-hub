@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"database/sql"
 	"image"
 	"image/png"
 	"os"
@@ -10,6 +11,10 @@ import (
 	"sort"
 	"testing"
 )
+
+func validGalleryID(id int) sql.NullInt64 {
+	return sql.NullInt64{Int64: int64(id), Valid: true}
+}
 
 func exportTestCfg() Config {
 	return Config{Limits: defaultLimits(), Hitomi: defaultHitomiConfig()}
@@ -46,7 +51,7 @@ func TestExportCBZUsesPageOrderAndSkipsHit(t *testing.T) {
 		{"Galleries/1/aaaa.webp", "not_evaluated"},
 		{"Galleries/1/bbbb.webp", "hit"},
 	} {
-		if err := recordFile(db, filepath.Join("Galleries", "1", filepath.Base(row.rel)), 1, "0", 10, "webp", "webp", row.status, "structural"); err != nil {
+		if err := recordFile(db, filepath.Join("Galleries", "1", filepath.Base(row.rel)), validGalleryID(1), "0", 10, "webp", "webp", row.status, "structural"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -104,7 +109,7 @@ func TestExportCBZFallsBackToInsertionOrder(t *testing.T) {
 	writeExportFile(t, root, "Galleries/2/cc.webp", []byte("first"))
 	writeExportFile(t, root, "Galleries/2/dd.webp", []byte("second"))
 	for _, name := range []string{"cc.webp", "dd.webp"} {
-		if err := recordFile(db, filepath.Join("Galleries", "2", name), 2, "0", 6, "webp", "webp", "not_evaluated", "structural"); err != nil {
+		if err := recordFile(db, filepath.Join("Galleries", "2", name), validGalleryID(2), "0", 6, "webp", "webp", "not_evaluated", "structural"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -144,7 +149,7 @@ func TestExportPDFWritesPagesAndSkipsUndecodable(t *testing.T) {
 	writeExportFile(t, root, "Galleries/3/pnghash.png", buf.Bytes())
 	writeExportFile(t, root, "Galleries/3/avifhash.avif", []byte("not-an-avif"))
 	for _, name := range []string{"pnghash.png", "avifhash.avif"} {
-		if err := recordFile(db, filepath.Join("Galleries", "3", name), 3, "0", int64(len(buf.Bytes())), "png", "png", "not_evaluated", "structural"); err != nil {
+		if err := recordFile(db, filepath.Join("Galleries", "3", name), validGalleryID(3), "0", int64(len(buf.Bytes())), "png", "png", "not_evaluated", "structural"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -183,7 +188,7 @@ func TestExportRefusesOutputOutsideRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeExportFile(t, root, "Galleries/4/hh.webp", []byte("data"))
-	if err := recordFile(db, filepath.Join("Galleries", "4", "hh.webp"), 4, "0", 4, "webp", "webp", "not_evaluated", "structural"); err != nil {
+	if err := recordFile(db, filepath.Join("Galleries", "4", "hh.webp"), validGalleryID(4), "0", 4, "webp", "webp", "not_evaluated", "structural"); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(filepath.Dir(root), "escape.cbz")

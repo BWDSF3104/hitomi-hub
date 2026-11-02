@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"strings"
 	"testing"
+	"time"
 )
 
 func beNode(nKeys int, keys [][]byte, datas [][2]int64, subs []uint64) []byte {
@@ -171,6 +172,30 @@ func TestSearchTitleDescendsToLeafNode(t *testing.T) {
 
 func beID(id uint32) []byte {
 	return []byte{byte(id >> 24), byte(id >> 16), byte(id >> 8), byte(id)}
+}
+
+func TestIndexVersionCacheUsesTTL(t *testing.T) {
+	calls := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte("1793467632"), nil
+	}}
+	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("TTL cache should not refetch within TTL: calls %d", calls)
+	}
+	c.versionAt["galleries"] = time.Now().Add(-2 * time.Hour)
+	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("expired version cache should refetch: calls %d", calls)
+	}
 }
 
 func TestDecodeIDsLengthGuard(t *testing.T) {

@@ -184,7 +184,7 @@ func (v *viewer) acquire(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		rel = dest
 	}
-	if err := recordFile(v.db, rel, body.GalleryID, sha, fileSize(dest), ext, magic, scanStatus, "acquisition"); err != nil {
+	if err := recordFile(v.db, rel, sql.NullInt64{Int64: int64(body.GalleryID), Valid: true}, sha, fileSize(dest), ext, magic, scanStatus, "acquisition"); err != nil {
 		acquisitionStatus(w, "record_error", map[string]any{
 			"gallery_id": body.GalleryID,
 			"page":       body.Page,

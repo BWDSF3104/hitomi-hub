@@ -151,6 +151,8 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
+const schemaVersion = 2
+
 func openDB(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -159,29 +161,56 @@ func openDB(path string) (*sql.DB, error) {
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		return nil, err
 	}
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		return nil, err
+	}
 	// viewer の handler が同時に書込むと SQLITE_BUSY になるため単一接続に固定
 	db.SetMaxOpenConns(1)
 	return db, nil
 }
 
 func ensureSchema(db *sql.DB) error {
+	var current int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+		return err
+	}
 	text, err := os.ReadFile(filepath.Join(dataDir, "schema.sql"))
 	if err != nil {
 		return err
 	}
 	_, err = db.Exec(string(text))
-	return err
+	if err != nil {
+		return err
+	}
+	if current < schemaVersion {
+		_, err = db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func cacheLookup(db *sql.DB, sha string) (string, string, string, string, error) {
-	var verdict, engine, threat, detail sql.NullString
-	err := db.QueryRow("SELECT verdict, engine, threat_name, detail FROM scan_cache WHERE sha256 = ?", sha).
-		Scan(&verdict, &engine, &threat, &detail)
+const scanCacheTTL = 30 * 24 * time.Hour
+
+func cacheLookup(db *sql.DB, sha string, ttl time.Duration) (string, string, string, string, error) {
+	var verdict, engine, threat, detail, cachedAt sql.NullString
+	err := db.QueryRow("SELECT verdict, engine, threat_name, detail, cached_at FROM scan_cache WHERE sha256 = ?", sha).
+		Scan(&verdict, &engine, &threat, &detail, &cachedAt)
 	if err == sql.ErrNoRows {
 		return "", "", "", "", nil
 	}
 	if err != nil {
 		return "", "", "", "", err
+	}
+	if ttl > 0 && cachedAt.Valid {
+		cachedTime, parseErr := time.Parse("2006-01-02T15:04:05Z", cachedAt.String)
+		if parseErr == nil && time.Since(cachedTime) > ttl {
+			return "", "", "", "", nil
+		}
 	}
 	return verdict.String, engine.String, threat.String, detail.String, nil
 }
@@ -201,7 +230,7 @@ func addFinding(db *sql.DB, path, sha, rule, detail string) error {
 	return err
 }
 
-func recordFile(db *sql.DB, path string, galleryID int, sha string, size int64, ext, magic, status, source string) error {
+func recordFile(db *sql.DB, path string, galleryID sql.NullInt64, sha string, size int64, ext, magic, status, source string) error {
 	_, err := db.Exec(`INSERT INTO files (path, gallery_id, sha256, size, ext, magic, scan_status, scan_source, scan_time)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET scan_status = excluded.scan_status, scan_source = excluded.scan_source,
@@ -211,17 +240,34 @@ func recordFile(db *sql.DB, path string, galleryID int, sha string, size int64, 
 	return err
 }
 
+func recordScanFile(db *sql.DB, root string, galleryID sql.NullInt64, path string, sha string, size int64, ext, magic, status, source string) error {
+	if galleryID.Valid {
+		galleryIDInt := int(galleryID.Int64)
+		if err := recordDiscovered(db, galleryIDInt, galleryDir(root, galleryIDInt)); err != nil {
+			return err
+		}
+	}
+	return recordFile(db, path, galleryID, sha, size, ext, magic, status, source)
+}
+
 // galleryIDForPath は `<gallery_dir>/<id>/<file>` の `<id>` を読む（scan は path からしか判断できない）
-func galleryIDForPath(rel, galleryDirName string) int {
+// export file の `<gallery_dir>/<id>.<format>` は gallery dir file ではないため NULL にする
+func galleryIDForPath(rel, galleryDirName string) sql.NullInt64 {
 	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
-	if len(parts) < 2 || parts[0] != galleryDirName {
-		return 0
+	if len(parts) < 3 || parts[0] != galleryDirName {
+		return sql.NullInt64{}
 	}
 	id, err := strconv.Atoi(parts[1])
 	if err != nil {
-		return 0
+		return sql.NullInt64{}
 	}
-	return id
+	return sql.NullInt64{Int64: int64(id), Valid: true}
+}
+
+func logScanError(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "scan: "+err.Error())
+	}
 }
 
 func verifyMissing(db *sql.DB, root string) (int, error) {
@@ -314,7 +360,7 @@ func downloadFilesParallel(client *Client, target string, entries []FileEntry, f
 func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int) string {
 	sha, err := Sha256File(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sha: %s\n", err.Error())
+		fmt.Fprintln(os.Stderr, "scan: "+err.Error())
 		return ""
 	}
 	ext, magic, findings, status := ScanFile(path, cfg)
@@ -322,52 +368,95 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 	if err != nil {
 		rel = path
 	}
+	galleryID := galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries"))
+
 	for _, item := range findings {
-		_ = addFinding(db, rel, sha, "structural", item)
+		if err := addFinding(db, rel, sha, "structural", item); err != nil {
+			logScanError(err)
+			return status
+		}
 	}
+
 	if status == "scan_error" {
-		summary["scan_error"]++
-		_ = recordFile(db, rel, galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries")), sha, fileSize(path), ext, magic, status, "structural")
+		if err := recordScanFile(db, root, galleryID, rel, sha, fileSize(path), ext, magic, status, "structural"); err != nil {
+			logScanError(err)
+			return status
+		}
+		summary[status] = summary[status] + 1
 		return status
 	}
+
+	source := "structural"
 	if YaraGate(ext, cfg) {
 		for _, rule := range RunYara(path, rulesFile(root), cfg.Yr, cfg.Limits) {
 			findings = append(findings, rule)
-			_ = addFinding(db, rel, sha, "yara", rule)
+			if err := addFinding(db, rel, sha, "yara", rule); err != nil {
+				logScanError(err)
+				return status
+			}
 		}
 		if len(findings) > 0 {
 			status = "hit"
 		}
 	}
+
 	if status != "hit" && cfg.VirusTotal.Enabled && scanTargets[ext] {
-		verdict, engine, threat, detail, err := cacheLookup(db, sha)
+		verdict, engine, threat, detail, err := cacheLookup(db, sha, scanCacheTTL)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "cache: %s\n", err.Error())
-		} else if verdict != "" {
-			summary["cached"]++
+			logScanError(err)
+			return status
+		}
+		if verdict != "" {
+			source = "structural+virustotal"
 			if verdict == "hit" {
 				status = "hit"
-				_ = addFinding(db, rel, sha, engine, firstNonEmpty(detail, threat))
+				if err := addFinding(db, rel, sha, engine, firstNonEmpty(detail, threat)); err != nil {
+					logScanError(err)
+					return status
+				}
 			} else {
-				_ = addFinding(db, rel, sha, engine, "cache_hit")
+				if err := addFinding(db, rel, sha, engine, "cache_hit"); err != nil {
+					logScanError(err)
+					return status
+				}
 			}
+			summary["cached"] = summary["cached"] + 1
 		} else {
-			result := VTLookup(sha, cfg, state, nil)
+			result := VTLookup(db, sha, cfg, state, nil)
 			if result.Status == "pass" || result.Status == "hit" {
-				_ = cacheStore(db, sha, result.Status, "virustotal", result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))
+				if err := cacheStore(db, sha, result.Status, "virustotal", result.ThreatName, fmt.Sprintf("positives=%d", result.Positives)); err != nil {
+					logScanError(err)
+					return status
+				}
+				source = "structural+virustotal"
 				if result.Status == "hit" {
 					status = "hit"
-					_ = addFinding(db, rel, sha, "virustotal", fmt.Sprintf("positives=%d", result.Positives))
+					if err := addFinding(db, rel, sha, "virustotal", firstNonEmpty(result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))); err != nil {
+						logScanError(err)
+						return status
+					}
+				}
+			} else {
+				if result.Status == "scan_error" {
+					status = "scan_error"
+				} else if result.Status != "skipped" {
+					status = "not_evaluated"
+				}
+				if result.Status != "skipped" {
+					if err := addFinding(db, rel, sha, "virustotal", result.Status); err != nil {
+						logScanError(err)
+						return status
+					}
 				}
 			}
 		}
 	}
-	summary[status] = summary[status] + 1
-	source := "structural"
-	if cfg.VirusTotal.Enabled {
-		source = "structural+virustotal"
+
+	if err := recordScanFile(db, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
+		logScanError(err)
+		return status
 	}
-		_ = recordFile(db, rel, galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries")), sha, fileSize(path), ext, magic, status, source)
+	summary[status] = summary[status] + 1
 	return status
 }
 
@@ -387,10 +476,11 @@ type flags struct {
 	query    string
 	complete bool
 	unfav    bool
-	list     string
-	port     int
-	format   string
-	out      string
+	list         string
+	port         int
+	format       string
+	out          string
+	clearComplete bool
 }
 
 func main() {
@@ -415,6 +505,7 @@ func main() {
 	fsFlags.StringVar(&f.query, "query", "", "saved query text")
 	fsFlags.BoolVar(&f.complete, "complete", false, "mark read_state as fully_read")
 	fsFlags.BoolVar(&f.unfav, "unfav", false, "clear favorite instead of setting it")
+	fsFlags.BoolVar(&f.clearComplete, "clear-complete", false, "clear fully_read explicitly")
 	fsFlags.StringVar(&f.list, "list", "", "unread | favorites | queries")
 	fsFlags.IntVar(&f.port, "port", 0, "viewer port (default 8731)")
 	fsFlags.StringVar(&f.format, "format", "cbz", "export format: cbz | pdf")
@@ -602,11 +693,16 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
 		}
-		if err := setReadState(db, id, f.page, f.complete); err != nil {
+		if err := setReadStateWithClear(db, id, f.page, f.complete, f.clearComplete); err != nil {
 			fmt.Fprintln(os.Stderr, "read: "+err.Error())
 			os.Exit(1)
 		}
-		printJSON(map[string]any{"gallery_id": id, "last_page": f.page, "fully_read": boolToInt(f.complete)})
+		row, err := readStateRow(db, id)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "read_state: "+err.Error())
+			os.Exit(1)
+		}
+		printJSON(map[string]any{"gallery_id": id, "last_page": row["last_page"], "fully_read": row["fully_read"]})
 	case "fav":
 		id, err := targetID(f)
 		if err != nil {

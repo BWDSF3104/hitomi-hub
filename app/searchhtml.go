@@ -180,7 +180,10 @@ func searchPageSlice(ids []int, page, limit int) []int {
 // colon term は nozomi。`language:` は state の language を変え、その後の nozomi fetch に効く。
 // `search.html?furry` は部分一致ではなく、index に exact key がある term だけ返す。
 func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, error) {
-	terms := strings.Fields(normalizeSearchTerm(query))
+	terms := []string{}
+	for _, rawTerm := range strings.Fields(query) {
+		terms = append(terms, normalizeSearchTerm(rawTerm))
+	}
 	if len(terms) == 0 {
 		return nil, 0, errors.New("query has no searchable term")
 	}

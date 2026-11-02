@@ -63,6 +63,18 @@ CREATE TABLE IF NOT EXISTS read_state (
     favorite INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS bookmark_seen (
+    query_id INTEGER NOT NULL REFERENCES bookmark_queries(id),
+    gallery_id INTEGER NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    PRIMARY KEY (query_id, gallery_id)
+);
+
+CREATE TABLE IF NOT EXISTS vt_rate_state (
+    day TEXT PRIMARY KEY,
+    total INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(scan_status);
 CREATE INDEX IF NOT EXISTS idx_findings_sha256 ON findings(sha256);
