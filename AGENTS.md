@@ -8,6 +8,31 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 
 正典ツールはプロジェクトごとにコピーせず `S:\Documents\Kilo_Commons\Common_Operations\bin\`（PATH 登録）の単一正典を使用。本プロジェクトでも `task_manager.py`・`archive_memory_bank.py`・`kilo-safe-*` は同じ正典を参照する（ルート判定は `hitomi-hub/.git` に解決される）。
 
+## 絶対に壊してはいけない条件（フル画像）
+
+詳細な経緯よりも、この節が優先する。変更が必要に見えても、ユーザーの明示承認なしに
+この節に反する実装・合格条件の変更をしないこと。反する案を出す場合は、実装案ではなく
+「方針変更の提案」として分けて出し、承認を得てからにすること。
+
+- フル画像の取得経路は `app/viewer.go imageProxy` の順序を維持する:
+  local full → 製品 root 配下の persistent full cache（既定 `cache/images`）→ remote `StorageURL` → 404 時のみ `EnsureGG(force=true)` で gg が変わった場合に1回再試行 → `no_full`
+- 永続先を `scratch/` や `output/` へ移さない。それらは確認用／成果物用で永続先ではない
+- shard URL は format（webp/avif）で組む。galleryinfo の `name` の拡張子（jpg/png 等）で組まない（`StorageURL`）
+- gg は live 取得が既定で、`app/ggset.go` は snapshot = fallback。bucket/switch は約1時間で回転する
+- TN は search-card の cover 専用。reader（`#reader` / `#thumbs`）の表示源にしない。TN display fallback は禁止
+  - 根拠: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、
+    `docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`
+- TN バイトを full cache に保存しない。`tn` / `tn-cache` / `no_full` / `error` を full actual pixels として数えない
+- UI の full 判定（`x-cache`、no-store fetch、objectURL 表示、generation guard）を弱めない
+
+### 作業前チェック（フル画像・viewer・download に触るタスクでは必須）
+
+1. 上記2つの decision と `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md` を読んだことを、タスク記録にファイル名で明記する
+2. 変更後に `go vet . && go test -count=1 -timeout 300s .`（app）と canonical build での実機確認を行い、次を報告する
+   - CLI download: 実在 gallery で attempted と written が一致すること
+   - viewer: `/api/image/<hash>?format=webp` が 200 / `x-cache: miss|cache|local` で、`no_full` でないこと（バイト数も記録）
+3. 上記が確認できない場合は完了と書かず、未確認として報告する
+
 ## コード検証（本プロジェクト）
 
 - **Python 変更後**: `python -m pytest tests/ -v`
