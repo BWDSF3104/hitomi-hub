@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -92,6 +94,7 @@ func TestEnsureGGUsesTTLAndForceRefresh(t *testing.T) {
 	calls := 0
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1
+	c.cfg.GGForceMinIntervalMS = 0
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
 		if !strings.Contains(rawurl, "/gg.js") {
@@ -120,6 +123,69 @@ func TestEnsureGGUsesTTLAndForceRefresh(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Errorf("force refresh should refetch: calls %d", calls)
+	}
+}
+
+func TestEnsureGGForceMinIntervalSkipsSecondForce(t *testing.T) {
+	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+	calls := 0
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1
+	c.cfg.GGForceMinIntervalMS = 60000
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		if !strings.Contains(rawurl, "/gg.js") {
+			return nil, errors.New("expected gg.js")
+		}
+		return []byte(fixture), nil
+	}
+	if source := c.EnsureGG(context.Background(), true); source != "live" {
+		t.Fatalf("first force source: got %s", source)
+	}
+	if calls != 1 {
+		t.Fatalf("first force calls: got %d", calls)
+	}
+	if source := c.EnsureGG(context.Background(), true); source != "live" {
+		t.Fatalf("second force source: got %s", source)
+	}
+	if calls != 1 {
+		t.Errorf("force within minimum interval should not refetch: calls %d", calls)
+	}
+	c.ggForceAt = time.Now().Add(-2 * time.Minute)
+	if source := c.EnsureGG(context.Background(), true); source != "live" {
+		t.Fatalf("third force source: got %s", source)
+	}
+	if calls != 2 {
+		t.Errorf("force after minimum interval should refetch: calls %d", calls)
+	}
+}
+
+func TestEnsureGGSingleflightDoesNotRepeatConcurrentForce(t *testing.T) {
+	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1
+	c.cfg.GGForceMinIntervalMS = 60000
+	var calls int32
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if !strings.Contains(rawurl, "/gg.js") {
+			return nil, errors.New("expected gg.js")
+		}
+		atomic.AddInt32(&calls, 1)
+		return []byte(fixture), nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if source := c.EnsureGG(context.Background(), true); source != "live" {
+				t.Errorf("concurrent force source: got %s", source)
+			}
+		}()
+	}
+	wg.Wait()
+	if calls != 1 {
+		t.Errorf("singleflight should fetch once, got %d", calls)
 	}
 }
 
@@ -155,6 +221,24 @@ func TestSnapshotGGIsPopulatedAndUsedAsFallback(t *testing.T) {
 	off.cfg.UseLiveGG = false
 	if source := off.LoadGG(context.Background()); source != "snapshot" {
 		t.Errorf("config off: got %s", source)
+	}
+}
+
+func TestHitomiConfigPreservesUseLiveGGDefaultWhenJSONOmitted(t *testing.T) {
+	cfg := HitomiConfig{}
+	if err := json.Unmarshal([]byte(`{"min_interval_ms":1000}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UseLiveGG {
+		t.Errorf("omitted use_live_gg should remain true: got %v", cfg.UseLiveGG)
+	}
+
+	explicit := HitomiConfig{}
+	if err := json.Unmarshal([]byte(`{"min_interval_ms":1000,"use_live_gg":false}`), &explicit); err != nil {
+		t.Fatal(err)
+	}
+	if explicit.UseLiveGG {
+		t.Errorf("explicit use_live_gg false should remain false: got %v", explicit.UseLiveGG)
 	}
 }
 

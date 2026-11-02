@@ -6,6 +6,45 @@ import (
 	"testing"
 )
 
+func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return nil, nil
+	}}
+
+	ids1, err := c.SearchNozomiParts("tag", "female:yuri", "all")
+	if err != nil {
+		t.Fatalf("SearchNozomiParts: %s", err)
+	}
+	if len(ids1) != 3 || ids1[0] != 10 || ids1[1] != 20 || ids1[2] != 30 {
+		t.Fatalf("first cache result: %v", ids1)
+	}
+
+	ids2, err := c.SearchNozomiParts("tag", "female:yuri", "all")
+	if err != nil {
+		t.Fatalf("SearchNozomiParts cache: %s", err)
+	}
+	if fetches != 1 {
+		t.Fatalf("TTL cache should not refetch within TTL: fetches %d", fetches)
+	}
+	if len(ids2) != 3 || ids2[0] != 10 || ids2[1] != 20 || ids2[2] != 30 {
+		t.Fatalf("second cache result: %v", ids2)
+	}
+
+	ids1[0] = 99
+	ids3, err := c.SearchNozomiParts("tag", "female:yuri", "all")
+	if err != nil {
+		t.Fatalf("SearchNozomiParts after mutation: %s", err)
+	}
+	if len(ids3) != 3 || ids3[0] != 10 || ids3[1] != 20 || ids3[2] != 30 {
+		t.Fatalf("cache must not be mutated by caller slice: %v", ids3)
+	}
+}
+
 func TestSearchHTMLPlainTermUsesIndexExactTerm(t *testing.T) {
 	key := hashTerm("furry")
 	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 24}}, make([]uint64, btreeOrder+1))
@@ -117,6 +156,16 @@ func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 	}
 	if total != 2 || len(ids) != 2 || ids[0] != 10 || ids[1] != 30 {
 		t.Fatalf("negative: total %d ids %v", total, ids)
+	}
+}
+
+func TestApplySearchOrderDoesNotDoubleReverseAsc(t *testing.T) {
+	state := &searchState{orderbydir: "asc"}
+	ids := []int{10, 20, 30}
+	applyOrderForInitial(ids, state)
+	applySearchOrder(ids, state)
+	if len(ids) != 3 || ids[0] != 30 || ids[1] != 20 || ids[2] != 10 {
+		t.Fatalf("asc order should reverse only once, got %v", ids)
 	}
 }
 

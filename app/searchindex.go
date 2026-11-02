@@ -164,8 +164,16 @@ func (c *Client) ensureIndexVersion(field string, force bool) (string, error) {
 	if c.versionAt == nil {
 		c.versionAt = map[string]time.Time{}
 	}
+	if c.versionForceAt == nil {
+		c.versionForceAt = map[string]time.Time{}
+	}
 	version := c.versions[field]
 	age := time.Since(c.versionAt[field])
+	forceMin := time.Duration(c.cfg.GGForceMinIntervalMS) * time.Millisecond
+	if force && version != "" && forceMin > 0 && !c.versionForceAt[field].IsZero() && time.Since(c.versionForceAt[field]) < forceMin {
+		c.cacheMu.Unlock()
+		return version, nil
+	}
 	cached := version != "" && !force && age < indexVersionTTL
 	c.cacheMu.Unlock()
 	if cached {
@@ -189,14 +197,80 @@ func (c *Client) ensureIndexVersion(field string, force bool) (string, error) {
 	if c.versionAt == nil {
 		c.versionAt = map[string]time.Time{}
 	}
+	if c.versionForceAt == nil {
+		c.versionForceAt = map[string]time.Time{}
+	}
 	c.versions[field] = version
 	c.versionAt[field] = time.Now()
+	if force {
+		c.versionForceAt[field] = time.Now()
+	}
 	return version, nil
+}
+
+func (c *Client) indexGetRefetchWithFlag(field, version, url string, rng [2]int64, forceRefetch bool) ([]byte, string, bool, error) {
+	body, err := c.get(context.Background(), url, rng)
+	if err == nil {
+		return body, version, false, nil
+	}
+	if !forceRefetch || !strings.Contains(err.Error(), "status 404") {
+		return nil, version, false, err
+	}
+	newVersion, versionErr := c.ensureIndexVersion(field, true)
+	if versionErr != nil {
+		return nil, version, true, err
+	}
+	if newVersion != version {
+		retryURL := strings.Replace(url, "."+version+".", "."+newVersion+".", 1)
+		body, err := c.get(context.Background(), retryURL, rng)
+		return body, newVersion, true, err
+	}
+	return nil, version, true, err
+}
+
+func (c *Client) indexGetRefetch(field, version, url string, rng [2]int64, forceRefetch bool) ([]byte, error) {
+	body, _, _, err := c.indexGetRefetchWithFlag(field, version, url, rng, forceRefetch)
+	return body, err
+}
+
+func (c *Client) indexTopNodeCached(field, version string) (*bnode, string, error) {
+	key := field + "|" + version
+
+	c.indexTopCacheMu.Lock()
+	if entry, ok := c.indexTopCache[key]; ok && time.Since(entry.fetchedAt) < topCacheTTL {
+		c.indexTopCacheMu.Unlock()
+		return entry.node, version, nil
+	}
+	c.indexTopCacheMu.Unlock()
+
+	body, actualVersion, refetched, err := c.indexGetRefetchWithFlag(
+		field,
+		version,
+		indexBaseURL(field)+"/"+field+"."+version+".index",
+		[2]int64{0, int64(maxNodeSize) - 1},
+		true,
+	)
+	if err != nil {
+		return nil, version, err
+	}
+	node, err := decodeNode(body)
+	if err != nil {
+		return nil, actualVersion, err
+	}
+	if !refetched && actualVersion == version {
+		c.indexTopCacheMu.Lock()
+		if c.indexTopCache == nil {
+			c.indexTopCache = map[string]*indexTopCacheEntry{}
+		}
+		c.indexTopCache[key] = &indexTopCacheEntry{node: node, fetchedAt: time.Now()}
+		c.indexTopCacheMu.Unlock()
+	}
+	return node, actualVersion, nil
 }
 
 func (c *Client) indexNode(field, version string, addr uint64) (*bnode, error) {
 	url := indexBaseURL(field) + "/" + field + "." + version + ".index"
-	body, err := c.get(context.Background(), url, [2]int64{int64(addr), int64(addr) + maxNodeSize - 1})
+	body, err := c.indexGetRefetch(field, version, url, [2]int64{int64(addr), int64(addr) + maxNodeSize - 1}, true)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +282,7 @@ func (c *Client) indexData(field, version string, offset, length int64) ([]byte,
 		return nil, fmt.Errorf("data length %d out of range", length)
 	}
 	url := indexBaseURL(field) + "/" + field + "." + version + ".data"
-	return c.get(context.Background(), url, [2]int64{offset, offset + length - 1})
+	return c.indexGetRefetch(field, version, url, [2]int64{offset, offset + length - 1}, true)
 }
 
 // IndexIDs は galleriesindex の 1 token（word）→ gallery IDs。hitomi の B-tree 降下と同じ
@@ -217,12 +291,19 @@ func (c *Client) IndexIDs(field, term string) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	node, actualVersion, err := c.indexTopNodeCached(field, version)
+	if err != nil {
+		return nil, err
+	}
+	version = actualVersion
 	key := hashTerm(term)
 	addr := uint64(0)
 	for hop := 0; hop < 64; hop++ {
-		node, err := c.indexNode(field, version, addr)
-		if err != nil {
-			return nil, err
+		if hop > 0 {
+			node, err = c.indexNode(field, version, addr)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if len(node.keys) == 0 {
 			return nil, nil

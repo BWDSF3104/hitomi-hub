@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -48,7 +50,7 @@ func defaultFetch(url, key string) (map[string]any, int, error) {
 	return payload, resp.StatusCode, nil
 }
 
-func VTLookup(db *sql.DB, sha string, cfg Config, state *RateState, fetch FetchFunc) VTResult {
+func VTLookup(db dbExec, sha string, cfg Config, state *RateState, fetch FetchFunc) VTResult {
 	vt := cfg.VirusTotal
 	if !vt.Enabled {
 		return VTResult{Status: "skipped"}
@@ -113,27 +115,35 @@ func VTLookup(db *sql.DB, sha string, cfg Config, state *RateState, fetch FetchF
 		return VTResult{Status: resultStatus, HTTPStatus: status}
 	}
 
-	attrs, _ := payload["data"].(map[string]any)
-	stats, _ := attrs["attributes"].(map[string]any)
-	rawStats, _ := stats["stats"].(map[string]any)
-	positives := asInt(rawStats["malicious"]) + asInt(rawStats["suspicious"])
+	attrs, ok := payload["data"].(map[string]any)
+	if !ok {
+		return VTResult{Status: "not_evaluated", HTTPStatus: status}
+	}
+	attributes, ok := attrs["attributes"].(map[string]any)
+	if !ok {
+		return VTResult{Status: "not_evaluated", HTTPStatus: status}
+	}
+	analysisStats, ok := attributes["last_analysis_stats"].(map[string]any)
+	if !ok {
+		return VTResult{Status: "not_evaluated", HTTPStatus: status}
+	}
+	positives := asInt(analysisStats["malicious"]) + asInt(analysisStats["suspicious"])
+	results, hasResults := attributes["last_analysis_results"].(map[string]any)
+	if !hasResults && positives == 0 {
+		return VTResult{Status: "not_evaluated", HTTPStatus: status}
+	}
 	statusString := "pass"
 	if positives > 0 {
 		statusString = "hit"
 	}
 	names := []string{}
-	results, _ := stats["last_analysis_results"].(map[string]any)
 	for _, v := range results {
 		entry, ok := v.(map[string]any)
 		if !ok {
 			continue
 		}
 		if entry["category"] == "malicious" || entry["category"] == "suspicious" {
-			name := asString(entry["name"])
-			if name == "" {
-				name = asString(entry["category"])
-			}
-			names = append(names, name)
+			names = append(names, engineDisplayName(entry))
 		}
 	}
 	sort.Strings(names)
@@ -149,11 +159,26 @@ func VTLookup(db *sql.DB, sha string, cfg Config, state *RateState, fetch FetchF
 	return VTResult{Status: statusString, Positives: positives, ThreatName: strings.Join(unique, ";"), HTTPStatus: status}
 }
 
+func engineDisplayName(entry map[string]any) string {
+	result := asString(entry["result"])
+	engine := asString(entry["engine_name"])
+	if engine != "" && result != "" {
+		return engine + ": " + result
+	}
+	if result != "" {
+		return result
+	}
+	if engine != "" {
+		return engine
+	}
+	return asString(entry["category"])
+}
+
 func vtDay(t time.Time) string {
 	return t.UTC().Format("2006-01-02")
 }
 
-func vtDailyTotal(db *sql.DB, day string) (int, error) {
+func vtDailyTotal(db dbExec, day string) (int, error) {
 	var total int
 	err := db.QueryRow("SELECT total FROM vt_rate_state WHERE day = ?", day).Scan(&total)
 	if err == sql.ErrNoRows {
@@ -162,7 +187,7 @@ func vtDailyTotal(db *sql.DB, day string) (int, error) {
 	return total, err
 }
 
-func incrementVTUsage(db *sql.DB, day string) error {
+func incrementVTUsage(db dbExec, day string) error {
 	_, err := db.Exec("INSERT INTO vt_rate_state (day, total) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET total = total + 1", day)
 	return err
 }
@@ -182,6 +207,82 @@ func asString(v any) string {
 		return s
 	}
 	return ""
+}
+
+type YaraResult struct {
+	Rules  []string
+	Status string
+	Error  string
+	Exit   int
+}
+
+type YaraRunFunc func(ctx context.Context, exe string, args []string) ([]byte, int, error)
+
+func defaultYaraRun(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+	cmd := exec.CommandContext(ctx, exe, args...)
+	out, err := cmd.Output()
+	exit := 0
+	if cmd.ProcessState != nil {
+		exit = cmd.ProcessState.ExitCode()
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		exit = exitErr.ExitCode()
+	}
+	return out, exit, err
+}
+
+func runYaraWithRunner(ctx context.Context, path, rulesPath, yr string, l Limits, run YaraRunFunc) YaraResult {
+	if run == nil {
+		run = defaultYaraRun
+	}
+	args := []string{"scan", rulesPath, path, "--output-format", "ndjson",
+		"--timeout", fmt.Sprintf("%d", l.YrTimeoutSec),
+		"--cpu-limit", fmt.Sprintf("%d", l.YrCpuLimit),
+		"--skip-larger", fmt.Sprintf("%d", l.YrSkipLarger)}
+	if l.YrFastScan {
+		args = append(args, "--fast-scan")
+	}
+	out, exit, err := run(ctx, yr, args)
+	rules := ParseYaraOutput(string(out))
+	if err != nil && exit > 1 {
+		return YaraResult{Status: "scan_error", Error: err.Error(), Exit: exit}
+	}
+	if len(rules) > 0 {
+		return YaraResult{Rules: rules, Status: "hit", Exit: exit}
+	}
+	if err != nil && exit == 0 {
+		return YaraResult{Status: "scan_error", Error: err.Error(), Exit: exit}
+	}
+	return YaraResult{Rules: rules, Status: "pass", Exit: exit}
+}
+
+func resolveYrPath(yr, root string) string {
+	if yr == "" {
+		return ""
+	}
+	if filepath.IsAbs(yr) {
+		return yr
+	}
+	candidates := []string{
+		filepath.Join(dataDir, yr),
+		filepath.Join(root, yr),
+	}
+	if abs, err := filepath.Abs(yr); err == nil {
+		candidates = append(candidates, abs)
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return yr
+}
+
+func RunYaraScan(path, rulesPath, yr string, l Limits) YaraResult {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(l.YrTimeoutSec+15)*time.Second)
+	defer cancel()
+	return runYaraWithRunner(ctx, path, rulesPath, yr, l, defaultYaraRun)
 }
 
 func ParseYaraOutput(text string) []string {
@@ -213,25 +314,11 @@ func ParseYaraOutput(text string) []string {
 }
 
 func RunYara(path, rulesPath, yr string, l Limits) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(l.YrTimeoutSec+15)*time.Second)
-	defer cancel()
-	args := []string{"scan", rulesPath, path, "--output-format", "ndjson",
-		"--timeout", fmt.Sprintf("%d", l.YrTimeoutSec),
-		"--cpu-limit", fmt.Sprintf("%d", l.YrCpuLimit),
-		"--skip-larger", fmt.Sprintf("%d", l.YrSkipLarger)}
-	if l.YrFastScan {
-		args = append(args, "--fast-scan")
+	result := RunYaraScan(path, rulesPath, yr, l)
+	if result.Status == "scan_error" {
+		return []string{"yara_error:" + result.Error}
 	}
-	cmd := exec.CommandContext(ctx, yr, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return []string{"yara_error:" + err.Error()}
-	}
-	rules := ParseYaraOutput(string(out))
-	if len(rules) == 0 && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() > 1 {
-		return []string{fmt.Sprintf("yara_error:exit_%d", cmd.ProcessState.ExitCode())}
-	}
-	return rules
+	return result.Rules
 }
 
 func executablePath() string {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -195,6 +196,74 @@ func TestIndexVersionCacheUsesTTL(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("expired version cache should refetch: calls %d", calls)
+	}
+}
+
+func TestIndexVersionForceRefetchOnlyOnceOn404(t *testing.T) {
+	versionCalls := 0
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if strings.HasSuffix(rawurl, "/version") {
+			versionCalls++
+			return []byte("1793467632"), nil
+		}
+		return nil, errors.New("status 404 for " + rawurl)
+	}
+	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+		t.Fatal(err)
+	}
+	if versionCalls != 1 {
+		t.Fatalf("initial version fetch should happen once, got %d", versionCalls)
+	}
+	if _, err := c.indexData("galleries", "1793467632", 1, 1); err == nil {
+		t.Fatal("expected old version 404")
+	}
+	if versionCalls != 2 {
+		t.Fatalf("404 should force one version refetch, version calls %d", versionCalls)
+	}
+	if _, err := c.indexData("galleries", "1793467632", 1, 1); err == nil {
+		t.Fatal("expected old version 404 again")
+	}
+	if versionCalls != 2 {
+		t.Errorf("force refetch should happen once, version calls %d", versionCalls)
+	}
+}
+
+func TestIndexIDsUsesTopNodeCache(t *testing.T) {
+	top := beNode(1, [][]byte{hashTerm("kemo")}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1))
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return top, nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, err := c.IndexIDs("galleries", "miss")
+	if err != nil {
+		t.Fatalf("IndexIDs: %s", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("missing term should return no ids: %v", ids)
+	}
+	if fetches != 2 {
+		t.Fatalf("first IndexIDs should fetch version and top node once, fetches %d", fetches)
+	}
+
+	ids, err = c.IndexIDs("galleries", "miss")
+	if err != nil {
+		t.Fatalf("IndexIDs cache: %s", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("cached top result: %v", ids)
+	}
+	if fetches != 2 {
+		t.Fatalf("top node cache should not refetch within TTL: fetches %d", fetches)
 	}
 }
 

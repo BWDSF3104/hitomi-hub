@@ -23,6 +23,7 @@ const galleriesPerPage = 25
 type HitomiConfig struct {
 	MinIntervalMS int    `json:"min_interval_ms"`
 	ImageMinIntervalMS int `json:"image_min_interval_ms"`
+	GGForceMinIntervalMS int `json:"gg_force_min_interval_ms"`
 	MaxRetries    int    `json:"max_retries"`
 	RetryBackoffMS int   `json:"retry_backoff_ms"`
 	UserAgent     string `json:"user_agent"`
@@ -32,25 +33,79 @@ type HitomiConfig struct {
 
 const ggCacheTTL = time.Hour
 const indexVersionTTL = time.Hour
+const searchCacheTTL = time.Hour
+const topCacheTTL = time.Hour
+
+type singleflightCall struct {
+	done chan struct{}
+}
+
+type searchCacheEntry struct {
+	ids       []int
+	fetchedAt time.Time
+}
+
+type indexTopCacheEntry struct {
+	node      *bnode
+	fetchedAt time.Time
+}
 
 type Client struct {
-	http       *http.Client
-	cfg        HitomiConfig
-	last       time.Time
-	imageLast  time.Time
-	mu         sync.Mutex
-	cacheMu    sync.Mutex
-	fetch      func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
-	versions   map[string]string
-	versionAt  map[string]time.Time
-	gg         GG
-	ggLoadedAt time.Time
-	metrics    map[string]*FetchMetric
+	http           *http.Client
+	cfg            HitomiConfig
+	last           time.Time
+	imageLast      time.Time
+	mu             sync.Mutex
+	cacheMu        sync.Mutex
+	singleflightMu sync.Mutex
+	metricsMu      sync.Mutex
+	fetch          func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
+	versions       map[string]string
+	versionAt      map[string]time.Time
+	versionForceAt map[string]time.Time
+	gg             GG
+	ggLoadedAt     time.Time
+	ggForceAt      time.Time
+	singleflight   map[string]*singleflightCall
+	metrics        map[string]*FetchMetric
+	searchCache    map[string]searchCacheEntry
+	searchCacheMu  sync.Mutex
+	indexTopCache  map[string]*indexTopCacheEntry
+	indexTopCacheMu sync.Mutex
 }
 
 func defaultHitomiConfig() HitomiConfig {
-	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, MaxRetries: 3, RetryBackoffMS: 2000,
+	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true}
+}
+
+func (c *HitomiConfig) UnmarshalJSON(data []byte) error {
+	type jsonConfig struct {
+		MinIntervalMS          int    `json:"min_interval_ms"`
+		ImageMinIntervalMS     int    `json:"image_min_interval_ms"`
+		GGForceMinIntervalMS   int    `json:"gg_force_min_interval_ms"`
+		MaxRetries             int    `json:"max_retries"`
+		RetryBackoffMS         int    `json:"retry_backoff_ms"`
+		UserAgent              string `json:"user_agent"`
+		ImageFormat            string `json:"image_format"`
+		UseLiveGG              *bool  `json:"use_live_gg"`
+	}
+	var raw jsonConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	c.MinIntervalMS = raw.MinIntervalMS
+	c.ImageMinIntervalMS = raw.ImageMinIntervalMS
+	c.GGForceMinIntervalMS = raw.GGForceMinIntervalMS
+	c.MaxRetries = raw.MaxRetries
+	c.RetryBackoffMS = raw.RetryBackoffMS
+	c.UserAgent = raw.UserAgent
+	c.ImageFormat = raw.ImageFormat
+	c.UseLiveGG = true
+	if raw.UseLiveGG != nil {
+		c.UseLiveGG = *raw.UseLiveGG
+	}
+	return nil
 }
 
 func (c *Client) gate() {

@@ -46,6 +46,18 @@ func parseGG(text string) (GG, error) {
 	return gg, nil
 }
 
+func sameGG(a, b GG) bool {
+	if a.Source != b.Source || a.Bucket != b.Bucket || len(a.CaseSet) != len(b.CaseSet) {
+		return false
+	}
+	for value := range a.CaseSet {
+		if !b.CaseSet[value] {
+			return false
+		}
+	}
+	return true
+}
+
 func (g GG) M(value int) int {
 	if g.CaseSet[value] {
 		return 1
@@ -70,8 +82,10 @@ func (c *Client) LoadGG(ctx context.Context) string {
 	return c.EnsureGG(ctx, false)
 }
 
-// EnsureGG は live gg を TTL cache から返す。force refresh は network 中に cache mutex を保持しない
+// EnsureGG は live gg を TTL cache から返す。force refresh は minimum interval と singleflight で
+// network 中に cache mutex を保持しない。
 func (c *Client) EnsureGG(ctx context.Context, force bool) string {
+	c.singleflightMu.Lock()
 	c.cacheMu.Lock()
 	source := c.gg.Source
 	age := time.Since(c.ggLoadedAt)
@@ -80,31 +94,73 @@ func (c *Client) EnsureGG(ctx context.Context, force bool) string {
 		c.gg = snapshotGG()
 		c.ggLoadedAt = time.Now()
 		c.cacheMu.Unlock()
+		c.singleflightMu.Unlock()
 		return c.gg.Source
+	}
+	forceMin := time.Duration(c.cfg.GGForceMinIntervalMS) * time.Millisecond
+	if force && forceMin > 0 && !c.ggForceAt.IsZero() && time.Since(c.ggForceAt) < forceMin {
+		c.cacheMu.Unlock()
+		c.singleflightMu.Unlock()
+		return source
 	}
 	if !force && source == "live" && age < ggCacheTTL {
 		c.cacheMu.Unlock()
+		c.singleflightMu.Unlock()
 		return source
 	}
-	c.cacheMu.Unlock()
 
-	body, err := c.get(ctx, "https://ltn."+hitomiDomain+"/gg.js", [2]int64{-1, -1})
+	key := "https://ltn." + hitomiDomain + "/gg.js"
+	if c.singleflight == nil {
+		c.singleflight = map[string]*singleflightCall{}
+	}
+	if call := c.singleflight[key]; call != nil {
+		c.cacheMu.Unlock()
+		c.singleflightMu.Unlock()
+		<-call.done
+		c.cacheMu.Lock()
+		defer c.cacheMu.Unlock()
+		return c.gg.Source
+	}
+	call := &singleflightCall{done: make(chan struct{})}
+	c.singleflight[key] = call
+	c.cacheMu.Unlock()
+	c.singleflightMu.Unlock()
+
+	body, err := c.get(ctx, key, [2]int64{-1, -1})
+
+	c.singleflightMu.Lock()
 	c.cacheMu.Lock()
-	defer c.cacheMu.Unlock()
+	if c.singleflight[key] == call {
+		delete(c.singleflight, key)
+	}
+	if force {
+		c.ggForceAt = time.Now()
+	}
 	if err != nil {
 		c.gg = snapshotGG()
 		c.ggLoadedAt = time.Now()
-		return c.gg.Source
+		if source != "live" {
+			source = c.gg.Source
+		}
+	} else {
+		parsed, parseErr := parseGG(string(body))
+		if parseErr != nil {
+			c.gg = snapshotGG()
+			c.ggLoadedAt = time.Now()
+			if source != "live" {
+				source = c.gg.Source
+			}
+		} else {
+			c.gg = parsed
+			c.ggLoadedAt = time.Now()
+			source = c.gg.Source
+		}
 	}
-	parsed, err := parseGG(string(body))
-	if err != nil {
-		c.gg = snapshotGG()
-		c.ggLoadedAt = time.Now()
-		return c.gg.Source
-	}
-	c.gg = parsed
-	c.ggLoadedAt = time.Now()
-	return c.gg.Source
+	c.cacheMu.Unlock()
+	c.singleflightMu.Unlock()
+
+	close(call.done)
+	return source
 }
 
 func (c *Client) GG() GG {

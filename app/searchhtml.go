@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"time"
 )
 
 type searchState struct {
@@ -16,6 +17,7 @@ type searchState struct {
 	orderby      string
 	orderbykey   string
 	orderbydir   string
+	orderApplied bool
 }
 
 func normalizeSearchTerm(term string) string {
@@ -65,12 +67,39 @@ func decodeNozomiIDs(body []byte) ([]int, error) {
 	return out, nil
 }
 
+func copyInts(ids []int) []int {
+	out := make([]int, len(ids))
+	copy(out, ids)
+	return out
+}
+
 func (c *Client) SearchNozomiParts(area, tag, lang string) ([]int, error) {
+	key := area + "|" + tag + "|" + lang
+
+	c.searchCacheMu.Lock()
+	if entry, ok := c.searchCache[key]; ok && time.Since(entry.fetchedAt) < searchCacheTTL {
+		c.searchCacheMu.Unlock()
+		return copyInts(entry.ids), nil
+	}
+	c.searchCacheMu.Unlock()
+
 	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+nozomiPath(area, tag, lang), [2]int64{-1, -1})
 	if err != nil {
 		return nil, err
 	}
-	return decodeNozomiIDs(body)
+	ids, err := decodeNozomiIDs(body)
+	if err != nil {
+		return nil, err
+	}
+
+	c.searchCacheMu.Lock()
+	if c.searchCache == nil {
+		c.searchCache = map[string]searchCacheEntry{}
+	}
+	c.searchCache[key] = searchCacheEntry{ids: copyInts(ids), fetchedAt: time.Now()}
+	c.searchCacheMu.Unlock()
+
+	return ids, nil
 }
 
 func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
@@ -147,6 +176,10 @@ func filterNonEmptyOrGroups(groups [][]string) [][]string {
 }
 
 func applySearchOrder(ids []int, state *searchState) {
+	if state.orderApplied {
+		return
+	}
+	state.orderApplied = true
 	switch state.orderbydir {
 	case "asc", "ascending":
 		for i, j := 0, len(ids)-1; i < j; i, j = i+1, j-1 {
@@ -253,6 +286,7 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 			groupIDs = append(groupIDs, ids)
 		}
 		results = unionIDs(groupIDs)
+		applySearchOrder(results, &state)
 	}
 
 	for _, group := range orGroups {
@@ -300,12 +334,5 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 }
 
 func applyOrderForInitial(ids []int, state *searchState) {
-	switch state.orderbydir {
-	case "asc", "ascending":
-		for i, j := 0, len(ids)-1; i < j; i, j = i+1, j-1 {
-			ids[i], ids[j] = ids[j], ids[i]
-		}
-	case "rand", "random":
-		rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
-	}
+	applySearchOrder(ids, state)
 }

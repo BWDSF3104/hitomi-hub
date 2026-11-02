@@ -2,6 +2,8 @@ package main
 
 import (
 	"archive/zip"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,7 +143,7 @@ func TestVTRateGate(t *testing.T) {
 	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 2, MaxDaily: 3, APIKey: "k"}
 	state := &RateState{}
 	fetch := func(url, key string) (map[string]any, int, error) {
-		return map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 1}}}}, 200, nil
+		return map[string]any{"data": map[string]any{"attributes": map[string]any{"last_analysis_stats": map[string]any{"malicious": 1}}}}, 200, nil
 	}
 	for i := 0; i < 2; i++ {
 		if r := VTLookup(nil, "abc", c, state, fetch); r.Status != "hit" {
@@ -200,7 +202,7 @@ func TestVTNon200DoesNotCachePass(t *testing.T) {
 	c := cfg()
 	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
 	state := &RateState{}
-	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 0}}}}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{"last_analysis_stats": map[string]any{"malicious": 0}}}}
 	fetch := func(url, key string) (map[string]any, int, error) {
 		return payload, 404, nil
 	}
@@ -217,23 +219,201 @@ func TestVTNon200DoesNotCachePass(t *testing.T) {
 	}
 }
 
-func TestVTThreatNameUsesEngineResultName(t *testing.T) {
+func TestVTThreatNameUsesResultAndEngineName(t *testing.T) {
 	db := openTestDB(t)
 	c := cfg()
 	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
 	state := &RateState{}
 	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
-		"stats": map[string]any{"malicious": 1},
+		"last_analysis_stats": map[string]any{"malicious": 2},
 		"last_analysis_results": map[string]any{
-			"engine": map[string]any{"category": "malicious", "name": "Engine A"},
+			"Ad-Aware": map[string]any{"category": "malicious", "engine_name": "Ad-Aware", "result": "Trojan.GenericKD.42996961"},
+			"AegisLab": map[string]any{"category": "malicious", "engine_name": "AegisLab", "result": nil},
 		},
 	}}}
 	fetch := func(url, key string) (map[string]any, int, error) {
 		return payload, 200, nil
 	}
 	result := VTLookup(db, "abc", c, state, fetch)
-	if result.Status != "hit" || result.ThreatName != "Engine A" {
-		t.Fatalf("result: %v", result)
+	if result.Status != "hit" {
+		t.Fatalf("status: got %s", result.Status)
+	}
+	want := "Ad-Aware: Trojan.GenericKD.42996961;AegisLab"
+	if result.ThreatName != want {
+		t.Errorf("threat name: got %q want %q", result.ThreatName, want)
+	}
+}
+
+func TestVTThreatNameFallsBackToCategoryWhenResultMissing(t *testing.T) {
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
+		"last_analysis_stats": map[string]any{"malicious": 1},
+		"last_analysis_results": map[string]any{
+			"engine": map[string]any{"category": "malicious"},
+		},
+	}}}
+	result := VTLookup(db, "abc", c, &RateState{}, func(url, key string) (map[string]any, int, error) {
+		return payload, 200, nil
+	})
+	if result.Status != "hit" || result.ThreatName != "malicious" {
+		t.Errorf("category fallback: got %v", result)
+	}
+}
+
+func TestVTLegacyStatsKeyAloneIsNotEvaluated(t *testing.T) {
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
+		"stats": map[string]any{"malicious": 1},
+		"last_analysis_results": map[string]any{
+			"engine": map[string]any{"category": "malicious", "result": "dropper"},
+		},
+	}}}
+	result := VTLookup(db, "abc", c, &RateState{}, func(url, key string) (map[string]any, int, error) {
+		return payload, 200, nil
+	})
+	if result.Status != "not_evaluated" {
+		t.Errorf("legacy stats key must not be treated as analysis: got %v", result)
+	}
+}
+
+func TestVTUnanalyzedWithoutResultsIsNotEvaluated(t *testing.T) {
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
+		"last_analysis_stats": map[string]any{"malicious": 0, "undetected": 0},
+	}}}
+	result := VTLookup(db, "abc", c, &RateState{}, func(url, key string) (map[string]any, int, error) {
+		return payload, 200, nil
+	})
+	if result.Status != "not_evaluated" {
+		t.Errorf("unanalyzed: got %v", result)
+	}
+	verdict, _, _, _, err := cacheLookup(db, "abc", scanCacheTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "" {
+		t.Errorf("unanalyzed must not cache pass: got %s", verdict)
+	}
+}
+
+func TestVTV3RealAPIShapeWhenKeyAvailable(t *testing.T) {
+	key := os.Getenv("VIRUSTOTAL_API_KEY")
+	if key == "" {
+		t.Skip("VIRUSTOTAL_API_KEY is not set")
+	}
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 1, APIKey: key}
+	payload, status, err := defaultFetch("https://www.virustotal.com/api/v3/files/27545216921b2559534379243d19446661534481345149624164814776710798", key)
+	if err != nil {
+		t.Fatalf("real VT API call: %v", err)
+	}
+	if status == 429 {
+		t.Skip("VT real API rate limited")
+	}
+	if status != 200 {
+		t.Fatalf("VT real API status: %d", status)
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("VT real API payload has no data")
+	}
+	attrs, ok := data["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("VT real API payload has no data.attributes")
+	}
+	stats, ok := attrs["last_analysis_stats"].(map[string]any)
+	if !ok {
+		t.Fatalf("VT real API attributes has no last_analysis_stats")
+	}
+	if asInt(stats["malicious"]) <= 0 {
+		t.Fatalf("known malicious hash must have malicious stats, got %v", stats)
+	}
+	results, ok := attrs["last_analysis_results"].(map[string]any)
+	if !ok {
+		t.Fatalf("VT real API attributes has no last_analysis_results")
+	}
+	sawResult := false
+	sawEngineName := false
+	for _, entryAny := range results {
+		entry, ok := entryAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		if asString(entry["result"]) != "" {
+			sawResult = true
+		}
+		if asString(entry["engine_name"]) != "" {
+			sawEngineName = true
+		}
+		if sawResult && sawEngineName {
+			break
+		}
+	}
+	if !sawResult {
+		t.Fatalf("VT real API malicious entry did not contain result")
+	}
+	if !sawEngineName {
+		t.Fatalf("VT real API entry must contain engine_name")
+	}
+	result := VTLookup(nil, "27545216921b2559534379243d19446661534481345149624164814776710798", c, &RateState{}, func(url, key string) (map[string]any, int, error) {
+		return payload, status, nil
+	})
+	if result.Status != "hit" {
+		t.Fatalf("VT real API shape must produce hit, got %v", result)
+	}
+}
+
+func TestProcessFileVTFailureKeepsStructuralPassStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		apiKey string
+		maxPer int
+		state  *RateState
+		fetch  FetchFunc
+		want   string
+	}{
+		{"fetch_error", "k", 5, &RateState{}, func(url, key string) (map[string]any, int, error) {
+			return nil, 0, errors.New("network down")
+		}, "api_error:scan_error"},
+		{"no_key", "", 5, &RateState{}, nil, "api_error:no_key"},
+		{"rate_limited", "k", 1, &RateState{window: []time.Time{time.Now()}}, nil, "api_error:rate_limited"},
+	}
+	for _, tc := range cases {
+		db := openTestDB(t)
+		dir := t.TempDir()
+		path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+		c := cfg()
+		c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: tc.maxPer, MaxDaily: 5, APIKey: tc.apiKey}
+		summary := map[string]int{}
+		status := processFile(db, c, tc.state, dir, path, summary, tc.fetch)
+		if status != "pass" {
+			t.Errorf("%s: structural status must survive VT failure, got %s", tc.name, status)
+		}
+		if summary["pass"] != 1 {
+			t.Errorf("%s: summary: got %v", tc.name, summary)
+		}
+		var detail string
+		if err := db.QueryRow("SELECT detail FROM findings WHERE rule = 'virustotal'").Scan(&detail); err != nil {
+			t.Errorf("%s: VT status finding missing: %v", tc.name, err)
+			continue
+		}
+		if detail != tc.want {
+			t.Errorf("%s: finding detail: got %q want %q", tc.name, detail, tc.want)
+		}
+		var source, recorded string
+		if err := db.QueryRow("SELECT scan_source, scan_status FROM files").Scan(&source, &recorded); err != nil {
+			t.Errorf("%s: file row: %v", tc.name, err)
+			continue
+		}
+		if source != "structural" || recorded != "pass" {
+			t.Errorf("%s: recorded row: source %s status %s", tc.name, source, recorded)
+		}
 	}
 }
 
@@ -243,7 +423,7 @@ func TestVTDailyQuotaIsStoredInDB(t *testing.T) {
 	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 10, MaxDaily: 1, APIKey: "k"}
 	state := &RateState{}
 	fetch := func(url, key string) (map[string]any, int, error) {
-		return map[string]any{"data": map[string]any{"attributes": map[string]any{"stats": map[string]any{"malicious": 1}}}}, 200, nil
+		return map[string]any{"data": map[string]any{"attributes": map[string]any{"last_analysis_stats": map[string]any{"malicious": 1}}}}, 200, nil
 	}
 	if result := VTLookup(db, "abc", c, state, fetch); result.Status != "hit" {
 		t.Fatalf("first lookup: got %s", result.Status)
@@ -275,5 +455,99 @@ func TestScanCacheTTLStalePassIsNotUsed(t *testing.T) {
 	}
 	if verdict != "" {
 		t.Errorf("stale cache must not be used: got %s", verdict)
+	}
+}
+
+func TestRunYaraExit1WithRulesIsHit(t *testing.T) {
+	result := runYaraWithRunner(context.Background(), "file.cbz", "rules.yar", "yr", defaultLimits(), func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return []byte(`{"rules":[{"identifier":"Zip_Path_Traversal"}]}`), 1, errors.New("exit status 1")
+	})
+	if result.Status != "hit" || len(result.Rules) != 1 || result.Rules[0] != "Zip_Path_Traversal" {
+		t.Fatalf("yara exit1 rules: got %v %v", result.Status, result.Rules)
+	}
+}
+
+func TestRunYaraExecutionFailureIsScanError(t *testing.T) {
+	result := runYaraWithRunner(context.Background(), "file.cbz", "rules.yar", "yr", defaultLimits(), func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return nil, 2, errors.New("missing yr")
+	})
+	if result.Status != "scan_error" || len(result.Rules) != 0 {
+		t.Fatalf("yara execution failure: got %v %v", result.Status, result.Rules)
+	}
+}
+
+func TestProcessFileYaraExecutionFailureIsScanError(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	summary := map[string]int{}
+
+	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return nil, 2, errors.New("missing yr")
+	}); status != "scan_error" {
+		t.Fatalf("status: got %s", status)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("yara execution failure must not add findings: got %d", count)
+	}
+	if summary["scan_error"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+	var source string
+	if err := db.QueryRow("SELECT scan_source FROM files").Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "structural+yara_error" {
+		t.Errorf("source: got %s", source)
+	}
+}
+
+func TestProcessFileYaraRulesDoNotRecordExecutionFailureAsFinding(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	summary := map[string]int{}
+
+	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return []byte(`{"rules":[{"identifier":"Zip_Rule"}]}`), 1, errors.New("exit status 1")
+	}); status != "hit" {
+		t.Fatalf("status: got %s", status)
+	}
+
+	var rule string
+	if err := db.QueryRow("SELECT rule FROM findings").Scan(&rule); err != nil {
+		t.Fatal(err)
+	}
+	if rule != "yara" {
+		t.Errorf("finding rule: got %s", rule)
+	}
+	if summary["hit"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+}
+
+func TestResolveYrPathUsesDataDirForRelativePath(t *testing.T) {
+	oldDataDir := dataDir
+	dataDir = t.TempDir()
+	t.Cleanup(func() { dataDir = oldDataDir })
+
+	yrPath := filepath.Join(dataDir, "tools", "yr.exe")
+	if err := os.MkdirAll(filepath.Dir(yrPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(yrPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveYrPath("tools/yr.exe", t.TempDir()); got != yrPath {
+		t.Errorf("resolve yr path: got %s want %s", got, yrPath)
 	}
 }

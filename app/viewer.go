@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,7 +59,70 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("POST /api/query", v.query)
 	mux.HandleFunc("POST /api/cache/acquire", v.acquire)
 	mux.HandleFunc("GET /files/{gallery}/{name}", v.serveFile)
-	return mux
+	return v.withPOSTSecurity(mux)
+}
+
+func (v *viewer) withPOSTSecurity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !sameOriginPost(r) {
+			writeJSONError(w, http.StatusForbidden, "cross-origin post is not allowed")
+			return
+		}
+		ct := strings.TrimSpace(strings.Split(strings.ToLower(r.Header.Get("Content-Type")), ";")[0])
+		if ct != "application/json" {
+			writeJSONError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sameOriginPost(r *http.Request) bool {
+	host := strings.ToLower(r.Host)
+	if host == "" {
+		host = strings.ToLower(r.URL.Host)
+	}
+	if !isLoopbackHost(host) {
+		return false
+	}
+	origin := strings.ToLower(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return strings.ToLower(u.Host) == host
+}
+
+func isLoopbackHost(raw string) bool {
+	host := strings.ToLower(strings.TrimSpace(raw))
+	if host == "" {
+		return false
+	}
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	if host == "[::1]" {
+		return true
+	}
+	if name, port, ok := strings.Cut(host, ":"); ok {
+		if name == "localhost" || name == "127.0.0.1" || name == "::1" {
+			return port != ""
+		}
+		if name == "[::1]" {
+			return port != ""
+		}
+	}
+	return false
 }
 
 func (v *viewer) serve() error {
@@ -482,7 +546,9 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(err.Error(), "status 404") {
-		if v.client.EnsureGG(r.Context(), true) == "live" {
+		ggBefore := v.client.GG()
+		source := v.client.EnsureGG(r.Context(), true)
+		if source == "live" && !sameGG(ggBefore, v.client.GG()) {
 			body, err = v.client.getImage(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
 			if err == nil {
 				writeImage(w, format, body, "miss")
@@ -659,4 +725,10 @@ func entryFormat(entry FileEntry, base string) string {
 func jsonOut(w http.ResponseWriter, value any) {
 	w.Header().Set("content-type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("content-type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

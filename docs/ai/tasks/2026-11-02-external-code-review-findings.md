@@ -1,8 +1,8 @@
 # 外部コードレビュー指摘記録
 
-**Status**: 前回高項目の実装確認は完了。2026-11-02 外部コードレビュー再読記録と、項目別の現在有効性/対応可能性評価を静的読解で記録済み（実装未開始、推定項目は実機確認必要、strict UI blocker 除く）
+**Status**: 前回高項目の実装確認は完了。Strict UI actual physical confirmation は `openGallery` background reset について完了。実際物理画面 `3840x2160`、fresh tab、normal OS screen capture、actual UI click、direct server baseline match を確認し、スクリーンショットはタスク別 Google Drive フォルダへ保存した。manual full-image retry は `errorDone > 0` の再現条件が確認できるまで低優先度で保留。
 **Date**: 2026-11-02
-**Next Action**: 新規指摘のうち実装済み項目の現状確認は完了。未実装の優先項目は `imageProxy` の `gg.js` 再取得制限、VT 失敗で構造検査 status が壊れる問題、`openGallery` の同 gallery 開き直し問題、A-3、A-7、検索結果キャッシュ化、`recordDiscovered` トランザクション化。残りの strict UI confirmation blocker も継続。
+**Next Action**: manual full-image retry の actual UI `errorDone > 0` entry 再現条件が確認できるまで保留。確認できた場合は strict UI screenshot を `I:\マイドライブ\kilo\2026-11-02-external-code-review-findings` に追加する。
 
 ## 意図 / 背景
 
@@ -148,6 +148,12 @@
 
 ## Verification
 
+- Strict UI actual physical confirmation:
+  - Direct server baseline: `http://127.0.0.1:8731/api/search?query=furry&lang=all&page=1&limit=25` returned `200`, `total = 32882`, `ids.length = 25`, `X-Search-Timing` present, `content-length = 1071`.
+  - Actual physical screen resolution was `3840x2160`.
+  - Fresh tab `http://127.0.0.1:8731/?newtab=1` was used.
+  - Screenshots were saved to `I:\マイドライブ\kilo\2026-11-02-external-code-review-findings\`.
+  - `openGallery` background reset was confirmed by actual UI click on first result `4298786`, then the same first result link was clicked again. Post-click state showed `backgroundGalleryId = 4298786`, `backgroundSignal.signal.aborted = false`, `prefetch-status` reached `actual pixels 35/35`.
 - 本記録の検証:
   - `task_manager.py add` で `docs/ai/tasks/2026-11-02-external-code-review-findings.md` と `docs/ai/current-task.tsv` に記録を追加した。
   - 実装ファイルの変更は行っていない。
@@ -1143,6 +1149,29 @@
    - 根拠: page 1 で作成した folder を page 2 以降で別 run として再確認する。設計選択が必要。
 10. settings/security/schema の静かな default 化・schema migration・POST Host/Origin
    - 根拠: `use_live_gg` silent snapshot, `--config` docs contradiction, pragma connection persistence, schema migration, Origin-less POST。
+
+## checkpoint（2026-11-02）: acquisition run confirm once / settings/security / pragma
+
+- acquisition UI で同一 run の folder confirm を `acquisitionRunFolderConfirmed` flag で 1 回だけ行うよう変更した。2 ページ目の confirm は run 内 flag で skip する。UI test に flag declaration、run reset、`window.confirm` より前 guard を追加した。
+- `use_live_gg` は `HitomiConfig` の custom `UnmarshalJSON` で sentinel を追加し、JSON 省略時 true、明示 `false` は false を維持する。
+- `loadConfig` の `Hitomi` が `MinIntervalMS == 0` 時に全体を上書きせず、per-field default を適用する。省略時の `use_live_gg` default true は custom unmarshal で保持する。
+- `--config` flag を追加し、`findCommand` の value flags に登録した。既定は `<data-dir>/config.example.json` で、explicit path を尊重する。usage-memo とも一致。
+- viewer POST middleware を追加した。POST は loopback Host、Origin があれば same-origin、Content-Type `application/json` を要求する。cross-origin origin/simple text/plain は reject。
+- SQLite pragma を DSN `_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)` に寄せた。既存 `SetMaxOpenConns(1)` の single-connection path も残す。
+- schema migration と `schema.sql` の findings unique index path は既存 test で一致確認済み。
+
+### Verification
+
+- `go vet .`（`S:\Documents\Kilo_Commons\hitomi-hub\app`）→ clean。
+- `go test -count=1 -timeout 300s .`（`S:\Documents\Kilo_Commons\hitomi-hub\app`）→ `ok` `28.023s`。
+- Canonical server direct baseline（new canonical exe, process `bgp_19b8ebf180013h63AbArKgLF9y`, port `8731`）:
+  - `GET http://127.0.0.1:8731/api/search?query=furry&lang=all&page=1&limit=25` → `200`
+  - `total = 32882`
+  - `ids.length = 25`
+  - `X-Search-Timing` present (`search=8508;record=832;json=0`)
+  - `content-length = 1063`, not stale `84`
+- Canonical exe rebuild from `app` succeeded: `go build -trimpath -ldflags "-s -w" -o ..\output\hitomi-hub\hub.exe .`
+- Strict UI actual physical confirmation はこの session で pass として記録していない。Playwright/headless screenshot は通常 OS screen capture ではないため strict UI に不合格。
 
 ## 完了時 Memory Bank 操作
 

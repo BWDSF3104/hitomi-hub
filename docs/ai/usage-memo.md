@@ -20,7 +20,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 
 ```
 .\hub.exe --root .                          # スキャン（config.example.json を読む）
-.\hub.exe --root . --config config.json
+.\hub.exe --root . --config config.json    # config path override (default: <data-dir>/config.example.json)
 .\hub.exe --root . --gallery-dir Galleries
 .\hub.exe --root . --verify                 # 記録済みで消失したファイルを external_removal に
 .\hub.exe --root . --no-vt                  # VirusTotal を呼ばずに構造検査のみ

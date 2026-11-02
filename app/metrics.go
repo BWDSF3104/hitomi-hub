@@ -49,8 +49,8 @@ func (c *Client) metricFor(kind string) *FetchMetric {
 }
 
 func (c *Client) recordMetric(kind string, gateWait, network, decode, retrySleep time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.metricsMu.Lock()
+	defer c.metricsMu.Unlock()
 	m := c.metricFor(kind)
 	m.Calls++
 	m.GateWaitMS += int64(gateWait / time.Millisecond)
@@ -60,8 +60,8 @@ func (c *Client) recordMetric(kind string, gateWait, network, decode, retrySleep
 }
 
 func (c *Client) metricsSnapshot() map[string]any {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.metricsMu.Lock()
+	defer c.metricsMu.Unlock()
 	out := map[string]any{}
 	for kind, m := range c.metrics {
 		out[kind] = map[string]int64{

@@ -1024,10 +1024,15 @@ async function manualRetryFailedFullImages() {
 
       manualRetryingKeys.add(key);
 
-      await prefetchPageImage(entry, signal, current.id, true);
+      try {
+        await prefetchPageImage(entry, signal, current.id, true);
 
-      const img = reader && reader.querySelector("img[data-hash=\"" + entry.hash + "\"]");
-      if (img) await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);
+        const img = reader && reader.querySelector("img[data-hash=\"" + entry.hash + "\"]");
+        if (img) await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);
+      } catch (err) {
+        if (signal.aborted) break;
+        updatePrefetchCounts("error", entry, current.id, true);
+      }
 
       manualRetryingKeys.delete(key);
     }
@@ -1134,6 +1139,7 @@ async function openGallery(id, page, second) {
   stripGroup = null;
   if (prefetchAbort) prefetchAbort.abort();
   if (backgroundSignal) backgroundSignal.abort();
+  backgroundGalleryId = null;
   history.replaceState(null, "", route(id, page, second));
   const card = searchCardCache.get(id);
   const fullCardData = galleryDataFromCard(card);
@@ -1542,6 +1548,7 @@ document.getElementById("retry-failed").addEventListener("click", () => {
 let acquisitionAbort = false;
 let acquisitionDone = 0;
 let acquisitionOverwrite = false;
+let acquisitionRunFolderConfirmed = false;
 
 function renderAcquisitionStatus() {
   const status = document.getElementById("acquisition-status");
@@ -1570,6 +1577,7 @@ async function runAcquisition() {
   acquisitionAbort = false;
   acquisitionDone = 0;
   acquisitionOverwrite = false;
+  acquisitionRunFolderConfirmed = false;
   const results = document.getElementById("acquisition-results");
   if (results) results.textContent = "";
   renderAcquisitionStatus();
@@ -1583,6 +1591,13 @@ async function runAcquisition() {
       let result = await post("/api/cache/acquire", request);
       if (result.status === "confirm") {
         appendAcquisitionResult({ ...result, page, hash: entry.hash });
+        if (acquisitionRunFolderConfirmed) {
+          appendAcquisitionResult({ page, hash: entry.hash, status: "skipped", path: result.path || "" });
+          acquisitionDone++;
+          renderAcquisitionStatus();
+          continue;
+        }
+        acquisitionRunFolderConfirmed = true;
         if (!window.confirm("既存の同名タイトルフォルダがあります。上書きしますか？")) {
           appendAcquisitionResult({ page, hash: entry.hash, status: "skipped", path: result.path || "" });
           acquisitionDone++;

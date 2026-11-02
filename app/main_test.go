@@ -160,12 +160,220 @@ func TestProcessFileDoesNotCountSummaryWhenDBWriteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary := map[string]int{}
-	status := processFile(db, cfg(), &RateState{}, root, path, summary)
+	status := processFile(db, cfg(), &RateState{}, root, path, summary, nil)
 	if status != "scan_error" {
 		t.Fatalf("status: got %s", status)
 	}
 	if len(summary) != 0 {
 		t.Errorf("summary must not increment on failed DB write: got %v", summary)
+	}
+}
+
+func TestProcessFileRollsBackFindingsWhenFileRecordFails(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"../evil.exe": "x"})
+	if _, err := db.Exec("DROP TABLE files"); err != nil {
+		t.Fatal(err)
+	}
+	summary := map[string]int{}
+	status := processFile(db, cfg(), &RateState{}, dir, path, summary, nil)
+	if status != "hit" {
+		t.Fatalf("status: got %s", status)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("findings must roll back together with the failed file record: got %d", count)
+	}
+	if len(summary) != 0 {
+		t.Errorf("summary must not increment on failed commit: got %v", summary)
+	}
+}
+
+func TestProcessFileCommitsFindingsAndFileTogether(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"../evil.exe": "x"})
+	summary := map[string]int{}
+	if status := processFile(db, cfg(), &RateState{}, dir, path, summary, nil); status != "hit" {
+		t.Fatalf("status: got %s", status)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("committed findings: got %d", count)
+	}
+	var foundPath string
+	if err := db.QueryRow("SELECT path FROM files").Scan(&foundPath); err != nil {
+		t.Fatal(err)
+	}
+	if summary["hit"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+}
+
+func TestAddFindingIsIdempotentForSameFinding(t *testing.T) {
+	db := openTestDB(t)
+	for i := 0; i < 2; i++ {
+		if err := addFinding(db, "Galleries/1/file.cbz", "sha1", "structural", "bad_zip"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("duplicate finding must be ignored: got %d", count)
+	}
+	if err := addFinding(db, "Galleries/1/file.cbz", "sha1", "yara", "Zip_Path_Traversal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("different rule must still be recorded: got %d", count)
+	}
+}
+
+func TestMigrateSchemaCollapsesFindingsDuplicatesAndSetsVersion(t *testing.T) {
+	dataDir = dataRoot()
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// 移行前の findings 形状（unique index なし）を再現する
+	if _, err := db.Exec(`CREATE TABLE findings (
+		id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT NOT NULL,
+		rule TEXT NOT NULL, detail TEXT, found_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+			"Galleries/1/file.cbz", "sha1", "structural", "bad_zip", nowISO()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+		"Galleries/1/file.cbz", "sha1", "structural", "path_traversal:x", nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("duplicates must be collapsed to first occurrence: got %d", count)
+	}
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatal(err)
+	}
+	if userVersion != schemaVersion {
+		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
+	}
+	_, err = db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+		"Galleries/2/file.cbz", "sha1", "structural", "bad_zip", nowISO())
+	if err == nil {
+		t.Errorf("duplicate insert must be rejected after migration")
+	}
+}
+
+func TestLoadConfigPreservesUseLiveGGWhenOmitted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":1000}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Hitomi.UseLiveGG {
+		t.Errorf("omitted use_live_gg in loadConfig should remain true: got %v", cfg.Hitomi.UseLiveGG)
+	}
+
+	path = filepath.Join(t.TempDir(), "config-off.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":1000,"use_live_gg":false}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hitomi.UseLiveGG {
+		t.Errorf("explicit use_live_gg false should remain false: got %v", cfg.Hitomi.UseLiveGG)
+	}
+}
+
+func TestLoadConfigUsesPerFieldHitomiDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":1000,"user_agent":"custom UA","image_format":"avif"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs := defaultHitomiConfig()
+	if cfg.Hitomi.MinIntervalMS != 1000 || cfg.Hitomi.UserAgent != "custom UA" || cfg.Hitomi.ImageFormat != "avif" {
+		t.Errorf("explicit hitomi fields should survive defaults: got %+v", cfg.Hitomi)
+	}
+	if cfg.Hitomi.MaxRetries != defs.MaxRetries || cfg.Hitomi.RetryBackoffMS != defs.RetryBackoffMS {
+		t.Errorf("omitted hitomi fields should use defaults: got %+v", cfg.Hitomi)
+	}
+	if !cfg.Hitomi.UseLiveGG {
+		t.Errorf("omitted use_live_gg should use default true: got %+v", cfg.Hitomi)
+	}
+}
+
+func TestOpenDBDSNCarriesPragmaSettings(t *testing.T) {
+	dsn := dbDSN(filepath.Join(t.TempDir(), "hitomi.db"))
+	for _, want := range []string{"_pragma=foreign_keys(1)", "_pragma=journal_mode(WAL)", "_pragma=busy_timeout(5000)"} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("DSN missing pragma setting %q: got %q", want, dsn)
+		}
+	}
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Errorf("DSN journal_mode: got %q", journalMode)
+	}
+	var busyTimeout int
+	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if busyTimeout != 5000 {
+		t.Errorf("DSN busy_timeout: got %d", busyTimeout)
+	}
+	var foreignKeys int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeys != 1 {
+		t.Errorf("DSN foreign_keys: got %d", foreignKeys)
 	}
 }
 
@@ -185,5 +393,12 @@ func TestFindCommandKeepsFlagValues(t *testing.T) {
 	cmd, rest = findCommand([]string{"--root=C:\\data", "fav", "--id", "125"})
 	if cmd != "fav" || len(rest) != 3 {
 		t.Errorf("inline value: cmd=%q rest=%v", cmd, rest)
+	}
+	cmd, rest = findCommand([]string{"--config", "config.json", "scan"})
+	if cmd != "scan" || len(rest) != 2 {
+		t.Errorf("config value: cmd=%q rest=%v", cmd, rest)
+	}
+	if !valueFlags["config"] {
+		t.Errorf("--config must be registered as a value flag")
 	}
 }

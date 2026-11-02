@@ -46,6 +46,13 @@ func viewerFixtureGG() GG {
 	}
 }
 
+func jsonPOSTRequest(path, body string) *http.Request {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Host = "127.0.0.1:8731"
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
 func newTestViewer(t *testing.T, galleryJSON string) (*viewer, string) {
 	t.Helper()
 	db := openTestDB(t)
@@ -128,22 +135,22 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"125","files":[]}`)
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/read",
-		strings.NewReader(`{"gallery_id":125,"page":4,"complete":false}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/read", `{"gallery_id":125,"page":4,"complete":false}`))
+
 	if rec.Code != 200 {
 		t.Fatalf("read: %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/fav",
-		strings.NewReader(`{"gallery_id":125,"on":true}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/fav", `{"gallery_id":125,"on":true}`))
+
 	if rec.Code != 200 {
 		t.Fatalf("fav: %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/query",
-		strings.NewReader(`{"name":"kemo","query":"artist:kikunyi language:japanese"}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/query", `{"name":"kemo","query":"artist:kikunyi language:japanese"}`))
+
 	if rec.Code != 200 {
 		t.Fatalf("query: %d %s", rec.Code, rec.Body.String())
 	}
@@ -171,6 +178,49 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	}
 	if len(lists["favorites"].([]any)) != 1 || len(lists["queries"].([]any)) != 1 {
 		t.Errorf("lists: got %v", lists)
+	}
+}
+
+func TestViewerPOSTSecurityAllowsLoopbackJSONAndRejectsCrossOriginText(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":125,"files":[]}`)
+
+	rec := httptest.NewRecorder()
+	req := jsonPOSTRequest("/api/fav", `{"gallery_id":125,"on":true}`)
+	req.Header.Set("Origin", "http://127.0.0.1:8731")
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback json post: code %d body %q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = jsonPOSTRequest("/api/fav", `{"gallery_id":125,"on":true}`)
+	req.Host = "evil.example"
+	req.Header.Set("Origin", "http://evil.example")
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin host: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cross-origin") {
+		t.Errorf("cross-origin host body: got %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/fav", strings.NewReader(`{"gallery_id":125,"on":true}`))
+	req.Host = "127.0.0.1:8731"
+	req.Header.Set("Origin", "http://evil.example")
+	req.Header.Set("Content-Type", "text/plain")
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin origin: code %d body %q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/fav", strings.NewReader(`{"gallery_id":125,"on":true}`))
+	req.Host = "127.0.0.1:8731"
+	req.Header.Set("Content-Type", "text/plain")
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text content-type: code %d body %q", rec.Code, rec.Body.String())
 	}
 }
 
@@ -339,7 +389,7 @@ func TestViewerImageProxyRefreshesGGOnceOnStorage404(t *testing.T) {
 			return nil, errors.New("image proxy must not fetch TN")
 		}
 		if strings.Contains(rawurl, "/gg.js") {
-			return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+			return []byte("var gg = { b: '1793494803/', m: function (g) { return 1; } }; case 2488:"), nil
 		}
 		if !seenStorage404 {
 			seenStorage404 = true
@@ -355,6 +405,35 @@ func TestViewerImageProxyRefreshesGGOnceOnStorage404(t *testing.T) {
 	}
 	if len(urls) != 3 || !strings.Contains(urls[0], sampleHash+".webp") || !strings.Contains(urls[1], "/gg.js") || !strings.Contains(urls[2], sampleHash+".webp") {
 		t.Fatalf("image proxy refresh order: got %v", urls)
+	}
+}
+
+func TestViewerImageProxyDoesNotRetryWhenGGBucketUnchanged(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	var urls []string
+	seenStorage404 := false
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "tn.") && !strings.Contains(rawurl, "ltn.") {
+			return nil, errors.New("image proxy must not fetch TN")
+		}
+		if strings.Contains(rawurl, "/gg.js") {
+			return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+		}
+		if !seenStorage404 {
+			seenStorage404 = true
+			return nil, errors.New("status 404 for " + rawurl)
+		}
+		return []byte("data"), nil
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unchanged gg bucket should return no_full without retry: code %d", rec.Code)
+	}
+	if len(urls) != 2 || !strings.Contains(urls[0], sampleHash+".webp") || !strings.Contains(urls[1], "/gg.js") {
+		t.Fatalf("unchanged gg bucket fetch order: got %v", urls)
 	}
 }
 
@@ -1075,6 +1154,30 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	}
 	if !strings.Contains(s, `function showGalleryMetaFromCache(id) {`) || !strings.Contains(s, `<span class='meta'>loading</span>`) || !strings.Contains(s, `setPrefetchStatus("gallery read load: " + id);`) {
 		t.Errorf("showGalleryMetaFromCache should show loading status before async gallery data arrives: got %q", s)
+	}
+}
+
+func TestEmbeddedUIResetsBackgroundGalleryAfterOpenGalleryAbort(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
+	if openStart < 0 {
+		t.Fatalf("openGallery function not found")
+	}
+	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
+	if !strings.Contains(openBody, `backgroundGalleryId = null;`) {
+		t.Errorf("openGallery should reset backgroundGalleryId after abort so ensureBackgroundPrefetch creates a new controller: got %q", openBody)
+	}
+	retryStart := strings.Index(s, "async function manualRetryFailedFullImages() {")
+	if retryStart < 0 {
+		t.Fatalf("manualRetryFailedFullImages function not found")
+	}
+	retryBody := s[retryStart:strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")]
+	if !strings.Contains(retryBody, `catch (err) {`) || !strings.Contains(retryBody, `updatePrefetchCounts("error", entry, current.id, true);`) {
+		t.Errorf("manualRetryFailedFullImages should catch aborted fetch errors instead of leaking unhandled rejection: got %q", retryBody)
 	}
 }
 
@@ -1925,8 +2028,7 @@ func TestViewerAcquisitionCopiesCacheFileIntoTitleFolder(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
-		strings.NewReader(`{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":false}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":false}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code: got %d body %q", rec.Code, rec.Body.String())
 	}
@@ -1988,8 +2090,7 @@ func TestViewerAcquisitionExistingTitleFolderRequiresOverwrite(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
-		strings.NewReader(`{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":false}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":false}`))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -2002,8 +2103,7 @@ func TestViewerAcquisitionExistingTitleFolderRequiresOverwrite(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
-		strings.NewReader(`{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":true}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":1,"page":2,"hash":"`+sampleHash+`","format":"png","overwrite":true}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("overwrite code: got %d body %q", rec.Code, rec.Body.String())
 	}
@@ -2044,8 +2144,7 @@ func TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/cache/acquire",
-		strings.NewReader(`{"gallery_id":1,"page":1,"hash":"`+sampleHash+`","format":"png","overwrite":true}`)))
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":1,"page":1,"hash":"`+sampleHash+`","format":"png","overwrite":true}`))
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("path outside root: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -2097,6 +2196,15 @@ func TestEmbeddedUIHasAcquisitionHandler(t *testing.T) {
 		!strings.Contains(runBody, `result.status === "confirm"`) ||
 		!strings.Contains(runBody, `appendAcquisitionResult(`) {
 		t.Errorf("runAcquisition should abort, handle confirmation, and append per-page results: got %q", runBody)
+	}
+	if !strings.Contains(s, `let acquisitionRunFolderConfirmed = false;`) ||
+		!strings.Contains(runBody, `acquisitionRunFolderConfirmed = false;`) {
+		t.Errorf("runAcquisition should have a per-run folder confirmation flag: got %q", s)
+	}
+	guard := strings.Index(runBody, `if (acquisitionRunFolderConfirmed) {`)
+	confirm := strings.Index(runBody, `if (!window.confirm(`)
+	if guard < 0 || confirm < 0 || guard > confirm {
+		t.Errorf("runAcquisition should check the folder confirmation flag before window.confirm once per run: got %q", runBody)
 	}
 }
 

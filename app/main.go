@@ -118,11 +118,27 @@ func loadConfig(path string) (Config, error) {
 	if cfg.VirusTotal.MaxDaily == 0 {
 		cfg.VirusTotal.MaxDaily = 500
 	}
+	defs := defaultHitomiConfig()
 	if cfg.Hitomi.MinIntervalMS == 0 {
-		cfg.Hitomi = defaultHitomiConfig()
+		cfg.Hitomi.MinIntervalMS = defs.MinIntervalMS
 	}
 	if cfg.Hitomi.ImageMinIntervalMS == 0 {
-		cfg.Hitomi.ImageMinIntervalMS = 250
+		cfg.Hitomi.ImageMinIntervalMS = defs.ImageMinIntervalMS
+	}
+	if cfg.Hitomi.GGForceMinIntervalMS == 0 {
+		cfg.Hitomi.GGForceMinIntervalMS = defs.GGForceMinIntervalMS
+	}
+	if cfg.Hitomi.MaxRetries == 0 {
+		cfg.Hitomi.MaxRetries = defs.MaxRetries
+	}
+	if cfg.Hitomi.RetryBackoffMS == 0 {
+		cfg.Hitomi.RetryBackoffMS = defs.RetryBackoffMS
+	}
+	if cfg.Hitomi.UserAgent == "" {
+		cfg.Hitomi.UserAgent = defs.UserAgent
+	}
+	if cfg.Hitomi.ImageFormat == "" {
+		cfg.Hitomi.ImageFormat = defs.ImageFormat
 	}
 	if cfg.AcquisitionDir == "" {
 		cfg.AcquisitionDir = "acquisition"
@@ -151,10 +167,16 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 2
+const schemaVersion = 3
+
+// dbExec は *sql.DB と *sql.Tx の共通部分。processFile の tx 内で同じ書き込みヘルパーを使えるようにする
+type dbExec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
 
 func openDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", dbDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -172,9 +194,20 @@ func openDB(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+func dbDSN(path string) string {
+	settings := "_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	if strings.Contains(path, "?") {
+		return path + "&" + settings
+	}
+	return path + "?" + settings
+}
+
 func ensureSchema(db *sql.DB) error {
 	var current int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+		return err
+	}
+	if err := migrateSchema(db, current); err != nil {
 		return err
 	}
 	text, err := os.ReadFile(filepath.Join(dataDir, "schema.sql"))
@@ -194,9 +227,37 @@ func ensureSchema(db *sql.DB) error {
 	return nil
 }
 
+// migrateSchema は user_version 段階移行。findings の重複行を掃除してから unique index を作る
+// （CREATE UNIQUE INDEX は重複行があるままでは失敗するため、既存 DB はこの順が必要）
+func migrateSchema(db *sql.DB, current int) error {
+	if current >= schemaVersion {
+		return nil
+	}
+	var tables int
+	if err := db.QueryRow("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'findings'").Scan(&tables); err != nil {
+		return err
+	}
+	if tables == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM findings WHERE id NOT IN (
+		SELECT MIN(id) FROM findings GROUP BY sha256, rule, detail)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(sha256, rule, detail)"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 const scanCacheTTL = 30 * 24 * time.Hour
 
-func cacheLookup(db *sql.DB, sha string, ttl time.Duration) (string, string, string, string, error) {
+func cacheLookup(db dbExec, sha string, ttl time.Duration) (string, string, string, string, error) {
 	var verdict, engine, threat, detail, cachedAt sql.NullString
 	err := db.QueryRow("SELECT verdict, engine, threat_name, detail, cached_at FROM scan_cache WHERE sha256 = ?", sha).
 		Scan(&verdict, &engine, &threat, &detail, &cachedAt)
@@ -215,7 +276,7 @@ func cacheLookup(db *sql.DB, sha string, ttl time.Duration) (string, string, str
 	return verdict.String, engine.String, threat.String, detail.String, nil
 }
 
-func cacheStore(db *sql.DB, sha, verdict, engine, threat, detail string) error {
+func cacheStore(db dbExec, sha, verdict, engine, threat, detail string) error {
 	_, err := db.Exec(`INSERT INTO scan_cache (sha256, verdict, engine, threat_name, detail, cached_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(sha256) DO UPDATE SET verdict = excluded.verdict, engine = excluded.engine,
@@ -224,13 +285,13 @@ func cacheStore(db *sql.DB, sha, verdict, engine, threat, detail string) error {
 	return err
 }
 
-func addFinding(db *sql.DB, path, sha, rule, detail string) error {
-	_, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+func addFinding(db dbExec, path, sha, rule, detail string) error {
+	_, err := db.Exec("INSERT OR IGNORE INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
 		path, sha, rule, detail, nowISO())
 	return err
 }
 
-func recordFile(db *sql.DB, path string, galleryID sql.NullInt64, sha string, size int64, ext, magic, status, source string) error {
+func recordFile(db dbExec, path string, galleryID sql.NullInt64, sha string, size int64, ext, magic, status, source string) error {
 	_, err := db.Exec(`INSERT INTO files (path, gallery_id, sha256, size, ext, magic, scan_status, scan_source, scan_time)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET scan_status = excluded.scan_status, scan_source = excluded.scan_source,
@@ -240,7 +301,7 @@ func recordFile(db *sql.DB, path string, galleryID sql.NullInt64, sha string, si
 	return err
 }
 
-func recordScanFile(db *sql.DB, root string, galleryID sql.NullInt64, path string, sha string, size int64, ext, magic, status, source string) error {
+func recordScanFile(db dbExec, root string, galleryID sql.NullInt64, path string, sha string, size int64, ext, magic, status, source string) error {
 	if galleryID.Valid {
 		galleryIDInt := int(galleryID.Int64)
 		if err := recordDiscovered(db, galleryIDInt, galleryDir(root, galleryIDInt)); err != nil {
@@ -357,28 +418,47 @@ func downloadFilesParallel(client *Client, target string, entries []FileEntry, f
 	return results
 }
 
-func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int) string {
+func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int, fetch FetchFunc) string {
+	return processFileWithYara(db, cfg, state, root, path, summary, fetch, nil)
+}
+
+func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int, fetch FetchFunc, runYara YaraRunFunc) string {
 	sha, err := Sha256File(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "scan: "+err.Error())
+		logScanError(err)
 		return ""
 	}
-	ext, magic, findings, status := ScanFile(path, cfg)
+	ext, magic, findings, structuralStatus := ScanFile(path, cfg)
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		rel = path
 	}
 	galleryID := galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries"))
 
+	tx, err := db.Begin()
+	if err != nil {
+		logScanError(err)
+		return structuralStatus
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	for _, item := range findings {
-		if err := addFinding(db, rel, sha, "structural", item); err != nil {
+		if err := addFinding(tx, rel, sha, "structural", item); err != nil {
 			logScanError(err)
-			return status
+			return structuralStatus
 		}
 	}
 
+	status := structuralStatus
+	source := "structural"
+	cached := false
+
 	if status == "scan_error" {
-		if err := recordScanFile(db, root, galleryID, rel, sha, fileSize(path), ext, magic, status, "structural"); err != nil {
+		if err := recordScanFile(tx, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
+			logScanError(err)
+			return status
+		}
+		if err := tx.Commit(); err != nil {
 			logScanError(err)
 			return status
 		}
@@ -386,22 +466,28 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 		return status
 	}
 
-	source := "structural"
 	if YaraGate(ext, cfg) {
-		for _, rule := range RunYara(path, rulesFile(root), cfg.Yr, cfg.Limits) {
-			findings = append(findings, rule)
-			if err := addFinding(db, rel, sha, "yara", rule); err != nil {
-				logScanError(err)
-				return status
+		result := runYaraWithRunner(context.Background(), path, rulesFile(root), resolveYrPath(cfg.Yr, root), cfg.Limits, runYara)
+		if result.Status == "scan_error" {
+			if status != "hit" {
+				status = "scan_error"
 			}
-		}
-		if len(findings) > 0 {
+			source = "structural+yara_error"
+		} else if len(result.Rules) > 0 {
 			status = "hit"
+			source = "structural+yara"
+			for _, rule := range result.Rules {
+				findings = append(findings, rule)
+				if err := addFinding(tx, rel, sha, "yara", rule); err != nil {
+					logScanError(err)
+					return status
+				}
+			}
 		}
 	}
 
 	if status != "hit" && cfg.VirusTotal.Enabled && scanTargets[ext] {
-		verdict, engine, threat, detail, err := cacheLookup(db, sha, scanCacheTTL)
+		verdict, engine, threat, detail, err := cacheLookup(tx, sha, scanCacheTTL)
 		if err != nil {
 			logScanError(err)
 			return status
@@ -410,53 +496,54 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 			source = "structural+virustotal"
 			if verdict == "hit" {
 				status = "hit"
-				if err := addFinding(db, rel, sha, engine, firstNonEmpty(detail, threat)); err != nil {
+				if err := addFinding(tx, rel, sha, engine, firstNonEmpty(detail, threat)); err != nil {
 					logScanError(err)
 					return status
 				}
 			} else {
-				if err := addFinding(db, rel, sha, engine, "cache_hit"); err != nil {
+				if err := addFinding(tx, rel, sha, engine, "cache_hit"); err != nil {
 					logScanError(err)
 					return status
 				}
 			}
-			summary["cached"] = summary["cached"] + 1
+			cached = true
 		} else {
-			result := VTLookup(db, sha, cfg, state, nil)
+			result := VTLookup(tx, sha, cfg, state, fetch)
 			if result.Status == "pass" || result.Status == "hit" {
-				if err := cacheStore(db, sha, result.Status, "virustotal", result.ThreatName, fmt.Sprintf("positives=%d", result.Positives)); err != nil {
+				if err := cacheStore(tx, sha, result.Status, "virustotal", result.ThreatName, fmt.Sprintf("positives=%d", result.Positives)); err != nil {
 					logScanError(err)
 					return status
 				}
 				source = "structural+virustotal"
 				if result.Status == "hit" {
 					status = "hit"
-					if err := addFinding(db, rel, sha, "virustotal", firstNonEmpty(result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))); err != nil {
+					if err := addFinding(tx, rel, sha, "virustotal", firstNonEmpty(result.ThreatName, fmt.Sprintf("positives=%d", result.Positives))); err != nil {
 						logScanError(err)
 						return status
 					}
 				}
-			} else {
-				if result.Status == "scan_error" {
-					status = "scan_error"
-				} else if result.Status != "skipped" {
-					status = "not_evaluated"
-				}
-				if result.Status != "skipped" {
-					if err := addFinding(db, rel, sha, "virustotal", result.Status); err != nil {
-						logScanError(err)
-						return status
-					}
+			} else if result.Status != "skipped" {
+				// VT 側の失敗は構造判定を上書きしない。status は構造側、VT 状態は finding detail に残す
+				if err := addFinding(tx, rel, sha, "virustotal", "api_error:"+result.Status); err != nil {
+					logScanError(err)
+					return status
 				}
 			}
 		}
 	}
 
-	if err := recordScanFile(db, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
+	if err := recordScanFile(tx, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
+		logScanError(err)
+		return status
+	}
+	if err := tx.Commit(); err != nil {
 		logScanError(err)
 		return status
 	}
 	summary[status] = summary[status] + 1
+	if cached {
+		summary["cached"] = summary["cached"] + 1
+	}
 	return status
 }
 
@@ -480,6 +567,7 @@ type flags struct {
 	port         int
 	format       string
 	out          string
+	config       string
 	clearComplete bool
 }
 
@@ -510,6 +598,7 @@ func main() {
 	fsFlags.IntVar(&f.port, "port", 0, "viewer port (default 8731)")
 	fsFlags.StringVar(&f.format, "format", "cbz", "export format: cbz | pdf")
 	fsFlags.StringVar(&f.out, "out", "", "export output file (default Galleries/<id>.<format>)")
+	fsFlags.StringVar(&f.config, "config", "", "config JSON path (default <data-dir>/config.example.json)")
 	_ = fsFlags.Parse(args)
 
 	if dataDir == "" {
@@ -517,6 +606,9 @@ func main() {
 	}
 	root := resolveRoot(f.root)
 	cfgPath := filepath.Join(dataDir, "config.example.json")
+	if f.config != "" {
+		cfgPath = f.config
+	}
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config: "+err.Error())
@@ -558,7 +650,7 @@ func main() {
 		sort.Strings(files)
 		state := &RateState{}
 		for _, path := range files {
-			processFile(db, cfg, state, root, path, summary)
+			processFile(db, cfg, state, root, path, summary, nil)
 		}
 		if f.verify {
 			count, err := verifyMissing(db, root)
@@ -659,7 +751,7 @@ func main() {
 			if err := recordPage(db, info.ID, result.page, result.hash); err != nil {
 				fmt.Fprintf(os.Stderr, "pageorder: %s\n", err.Error())
 			}
-			processFile(db, cfg, state, root, result.path, summary)
+			processFile(db, cfg, state, root, result.path, summary, nil)
 		}
 		printJSON(map[string]any{"gallery_id": info.ID, "attempted": len(results), "written": written, "summary": summary})
 	case "export":
@@ -761,7 +853,7 @@ func boolToInt(value bool) int {
 var valueFlags = map[string]bool{
 	"root": true, "gallery-dir": true, "data-dir": true, "term": true, "lang": true,
 	"title": true, "page": true, "id": true, "url": true, "limit": true, "name": true, "query": true,
-	"list": true, "port": true, "format": true, "out": true,
+	"list": true, "port": true, "format": true, "out": true, "config": true,
 }
 
 // findCommand はサブコマンドを許容位置で拾い、残りをフラグ引数として返す
@@ -836,7 +928,7 @@ func rulesFile(root string) string {
 	return filepath.Join(dataDir, "rules", "structural.yar")
 }
 
-func recordDiscovered(db *sql.DB, galleryID int, dir string) error {
+func recordDiscovered(db dbExec, galleryID int, dir string) error {
 	_, err := db.Exec(`INSERT INTO galleries (gallery_id, title, lang, dir, first_seen, last_seen)
 		VALUES (?, NULL, NULL, ?, ?, ?)
 		ON CONFLICT(gallery_id) DO UPDATE SET last_seen = excluded.last_seen`,
