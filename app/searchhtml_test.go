@@ -9,7 +9,7 @@ import (
 
 func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
 			return beIDs([]uint32{10, 20, 30}), nil
@@ -48,7 +48,7 @@ func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 
 func TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 2, searchCacheMaxBytes: 1024}
+	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 2, searchCacheMaxBytes: 1024, testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		switch {
@@ -125,7 +125,7 @@ func TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 }
 
 func TestSearchCacheSizeCapBoundsMemory(t *testing.T) {
-	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 10, searchCacheMaxBytes: 40}
+	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 10, searchCacheMaxBytes: 40, testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		switch {
 		case strings.Contains(rawurl, "female:yuri"):
@@ -162,7 +162,7 @@ func TestSearchHTMLPlainTermUsesIndexExactTerm(t *testing.T) {
 	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 24}}, make([]uint64, btreeOrder+1))
 	data := append([]byte{0, 0, 0, 3}, beIDs([]uint32{10, 20, 30})...)
 
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):
 			return []byte("1793467632"), nil
@@ -184,7 +184,7 @@ func TestSearchHTMLPlainTermUsesIndexExactTerm(t *testing.T) {
 
 func TestSearchHTMLPreservesUnderscoreTagTerm(t *testing.T) {
 	var urls []string
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
 		if strings.Contains(rawurl, "/n/tag/female:big_breasts-all.nozomi") {
 			return beIDs([]uint32{10, 20}), nil
@@ -211,7 +211,7 @@ func TestSearchHTMLColonTermUsesNozomiState(t *testing.T) {
 	// dataset は all dataset の subset）に従う。
 	var urls []string
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		urls = append(urls, rawurl)
 		switch {
@@ -238,7 +238,7 @@ func TestSearchHTMLColonTermUsesNozomiState(t *testing.T) {
 
 func TestSearchHTMLLanguageOnlyUsesNozomiIndex(t *testing.T) {
 	var urls []string
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
 		if strings.Contains(rawurl, "/n/index-japanese.nozomi") {
 			return beIDs([]uint32{7, 8, 9}), nil
@@ -260,7 +260,7 @@ func TestSearchHTMLLanguageOnlyUsesNozomiIndex(t *testing.T) {
 func TestSearchHTMLLanguageTermIntersectionRegression(t *testing.T) {
 	var urls []string
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		urls = append(urls, rawurl)
 		switch {
@@ -291,7 +291,7 @@ func TestSearchHTMLLanguageTermIntersectionRegression(t *testing.T) {
 }
 
 func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		switch rawurl {
 		case "https://ltn." + hitomiDomain + "/n/tag/female:yuri-all.nozomi":
 			return beIDs([]uint32{10, 20, 30}), nil
@@ -313,7 +313,7 @@ func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 func TestSearchHTMLNegativeTermExcludesWithLanguageRegression(t *testing.T) {
 	var urls []string
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		urls = append(urls, rawurl)
 		switch {
@@ -346,7 +346,7 @@ func TestSearchHTMLNegativeTermExcludesWithLanguageRegression(t *testing.T) {
 func TestSearchHTMLNegativeLanguageTermExcludesItsOwnLanguageDataset(t *testing.T) {
 	var urls []string
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		urls = append(urls, rawurl)
 		switch {
@@ -374,7 +374,7 @@ func TestSearchHTMLNegativeLanguageTermExcludesItsOwnLanguageDataset(t *testing.
 func TestSearchHTMLOrGroupLanguageTermContributesOwnLanguageDataset(t *testing.T) {
 	var urls []string
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		urls = append(urls, rawurl)
 		switch {
@@ -424,7 +424,7 @@ func TestSearchHTMLPreservesOrOnlyUnionWithoutDuplicateGroup(t *testing.T) {
 	dataB := append([]byte{0, 0, 0, 3}, beIDs([]uint32{2, 3, 4})...)
 
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):

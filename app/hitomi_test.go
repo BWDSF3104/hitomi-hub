@@ -324,7 +324,7 @@ func TestHitomiConfigPreservesUseLiveGGDefaultWhenJSONOmitted(t *testing.T) {
 }
 
 func TestSearchNozomiDecodeAndRange(t *testing.T) {
-	c := &Client{cfg: defaultHitomiConfig()}
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1}
 	var gotURL string
 	var gotRange [2]int64
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -360,7 +360,7 @@ func TestSearchNozomiDecodeAndRange(t *testing.T) {
 }
 
 func TestSearchQueryIntersectsTermsAndLanguage(t *testing.T) {
-	c := &Client{cfg: defaultHitomiConfig()}
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1}
 	var urls []string
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)

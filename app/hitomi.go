@@ -127,6 +127,9 @@ type Client struct {
 	singleflightMu sync.Mutex
 	metricsMu      sync.Mutex
 	fetch          func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error)
+	// C-10: testGateIntervalMS はテスト専用 gate interval inject 口（0 = 非 inject、
+	// cfg 値を使用）。本番既定 1000ms と gate semantics は不変。
+	testGateIntervalMS int
 	versions       map[string]string
 	versionAt      map[string]time.Time
 	versionForceAt map[string]time.Time
@@ -288,7 +291,13 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// C-10: testGateIntervalMS > 0 のときテスト専用 interval を inject する。本番既定
+// （defaultHitomiConfig() MinIntervalMS 1000ms）と gate semantics（interval 記録・
+// sleep・ctx cancel・recordMetric）は維持する。
 func (c *Client) gateForInterval(ctx context.Context, intervalMS int, last *time.Time) error {
+	if c.testGateIntervalMS > 0 {
+		intervalMS = c.testGateIntervalMS
+	}
 	if last == nil || intervalMS <= 0 {
 		return nil
 	}

@@ -68,6 +68,7 @@ func newTestViewer(t *testing.T, galleryJSON string) (*viewer, string) {
 		t.Fatal(err)
 	}
 	v := newViewer(db, defaultConfigForTest(), root)
+	v.client.testGateIntervalMS = 1
 	v.client.gg = viewerFixtureGG()
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		return []byte(galleryJSON), nil

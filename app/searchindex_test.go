@@ -107,7 +107,7 @@ func TestSearchTitleIntersectsTokensInFirstTokenOrder(t *testing.T) {
 	kemoData := append([]byte{0, 0, 0, 5}, beIDs(kemoIDs)...)
 	neeData := append([]byte{0, 0, 0, 4}, beIDs(neeIDs)...)
 
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):
 			return []byte("1793467632"), nil
@@ -146,7 +146,7 @@ func TestSearchTitleDescendsToLeafNode(t *testing.T) {
 	childData := append([]byte{0, 0, 0, 5}, beIDs([]uint32{4252697, 4294613, 4294614, 1, 2})...)
 
 	calls := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):
@@ -178,7 +178,7 @@ func beID(id uint32) []byte {
 
 func TestIndexVersionCacheUsesTTL(t *testing.T) {
 	calls := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
 		return []byte("1793467632"), nil
 	}}
@@ -202,7 +202,7 @@ func TestIndexVersionCacheUsesTTL(t *testing.T) {
 
 func TestIndexVersionForceRefetchOnlyOnceOn404(t *testing.T) {
 	versionCalls := 0
-	c := &Client{cfg: defaultHitomiConfig()}
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		if strings.HasSuffix(rawurl, "/version") {
 			versionCalls++
@@ -233,7 +233,7 @@ func TestIndexVersionForceRefetchOnlyOnceOn404(t *testing.T) {
 func TestIndexIDsUsesTopNodeCache(t *testing.T) {
 	top := beNode(1, [][]byte{hashTerm("kemo")}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1))
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):
@@ -279,7 +279,7 @@ func TestIndexIDsCachesInternalNodeAndDataForSameTerm(t *testing.T) {
 
 	fetches := 0
 	dataFetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):
@@ -320,7 +320,7 @@ func TestIndexIDsCachesInternalNodeAndDataForSameTerm(t *testing.T) {
 
 func TestIndexDataCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), indexDataCacheMaxEntries: 2, indexDataCacheMaxBytes: 200}
+	c := &Client{cfg: defaultHitomiConfig(), indexDataCacheMaxEntries: 2, indexDataCacheMaxBytes: 200, testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		return append([]byte{0, 0, 0, 1}, beID(uint32(rng[0]))...), nil
@@ -383,7 +383,7 @@ func TestIndexDataCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 }
 
 func TestIndexDataCacheSizeCapBoundsMemory(t *testing.T) {
-	c := &Client{cfg: defaultHitomiConfig(), indexDataCacheMaxEntries: 10, indexDataCacheMaxBytes: 20}
+	c := &Client{cfg: defaultHitomiConfig(), indexDataCacheMaxEntries: 10, indexDataCacheMaxBytes: 20, testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		return append([]byte{0, 0, 0, 1}, beID(uint32(rng[0]))...), nil
 	}
@@ -409,7 +409,7 @@ func TestIndexDataCacheSizeCapBoundsMemory(t *testing.T) {
 
 func TestIndexNodeCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	fetches := 0
-	c := &Client{cfg: defaultHitomiConfig(), indexNodeCacheMaxEntries: 2, indexNodeCacheMaxBytes: 1000}
+	c := &Client{cfg: defaultHitomiConfig(), indexNodeCacheMaxEntries: 2, indexNodeCacheMaxBytes: 1000, testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		fetches++
 		return beNode(1, [][]byte{{byte(rng[0]), 0, 0, 0}}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1)), nil
@@ -466,7 +466,7 @@ func TestIndexNodeCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 }
 
 func TestIndexNodeCacheSizeCapBoundsMemory(t *testing.T) {
-	c := &Client{cfg: defaultHitomiConfig(), indexNodeCacheMaxEntries: 10, indexNodeCacheMaxBytes: 1000}
+	c := &Client{cfg: defaultHitomiConfig(), indexNodeCacheMaxEntries: 10, indexNodeCacheMaxBytes: 1000, testGateIntervalMS: 1}
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		return beNode(1, [][]byte{{byte(rng[0]), 0, 0, 0}}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1)), nil
 	}

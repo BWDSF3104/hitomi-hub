@@ -15,7 +15,7 @@ func TestRunSavedQueriesTracksNewGalleries(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := beIDs([]uint32{100, 200, 300})
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		if strings.Contains(rawurl, ".nozomi") {
 			return page, nil
 		}
@@ -83,7 +83,7 @@ func TestRunSavedQueriesRollsBackNewIdsWhenGalleryRecordFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := beIDs([]uint32{100})
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		return page, nil
 	}}
 
@@ -107,7 +107,7 @@ func TestRunSavedQueriesUsesIndexForPlainQuery(t *testing.T) {
 	key := hashTerm("kemo")
 	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 12}}, make([]uint64, btreeOrder+1))
 	data := append([]byte{0, 0, 0, 2}, beIDs([]uint32{4252697, 4294614})...)
-	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		switch {
 		case strings.HasSuffix(rawurl, "/version"):
 			return []byte("1793467632"), nil
