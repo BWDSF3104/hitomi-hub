@@ -1253,8 +1253,8 @@ func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
 	if !strings.Contains(s, `submit.dataset.original`) {
 		t.Errorf("ui should restore search button after concurrent searches: got %q", s)
 	}
-	if !strings.Contains(s, "const li = results.querySelector(\"[data-search-id='\" + ids[i] + \"']\");") {
-		t.Errorf("ui lazy search card lookup must use a valid selector: got %q", s)
+	if !strings.Contains(s, "const li = results.querySelector(\"[data-search-id='\" + id + \"']\");") {
+		t.Errorf("ui lazy search card lookup must use a valid bounded-worker selector: got %q", s)
 	}
 }
 
@@ -1567,7 +1567,7 @@ func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {
 		t.Fatalf("loadSearchCards function not found")
 	}
 	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
-	if !strings.Contains(loadCardBody, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadCardBody, `const li = results.querySelector("[data-search-id='" + ids[i] + "']");`) {
+	if !strings.Contains(loadCardBody, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadCardBody, `const li = results.querySelector("[data-search-id='" + id + "']");`) {
 		t.Errorf("loadSearchCards should guard stale async card writes while keeping lazy card selectors: got %q", loadCardBody)
 	}
 	initStart := strings.Index(s, "showLists();\nconst initialSearch = parseSearchHash(window.location.hash);")
@@ -1746,6 +1746,36 @@ func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
 	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
 	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
 		t.Errorf("loadSearchCards should load card covers after current priority: got %q", loadCardBody)
+	}
+}
+
+func TestEmbeddedUISearchCardLoadsCardsWithBoundedParallelWorkers(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	if !strings.Contains(s, `const SEARCH_CARD_CONCURRENCY = 4;`) {
+		t.Errorf("ui should bound search card workers to 4: got %q", s)
+	}
+
+	loadCardStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
+	if loadCardStart < 0 {
+		t.Fatalf("loadSearchCards function not found")
+	}
+	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
+	if strings.Contains(loadCardBody, `for (let i = 0; i < ids.length; i++) {`) {
+		t.Errorf("loadSearchCards should not fetch all ids sequentially: got %q", loadCardBody)
+	}
+	if !strings.Contains(loadCardBody, `const workerCount = Math.min(SEARCH_CARD_CONCURRENCY, ids.length);`) || !strings.Contains(loadCardBody, `const workers = [];`) || !strings.Contains(loadCardBody, `await Promise.all(workers);`) {
+		t.Errorf("loadSearchCards should process cards through bounded workers: got %q", loadCardBody)
+	}
+	if !strings.Contains(loadCardBody, `const cardStart = performance.now();`) || !strings.Contains(loadCardBody, `recordPerfCache(card._x_cache);`) {
+		t.Errorf("parallel card workers must keep per-card API timing and cache distribution: got %q", loadCardBody)
+	}
+	if !strings.Contains(s, `async function loadSearchCardCover(r, searchGen = searchGeneration) {`) || !strings.Contains(s, `await currentPriorityDone;`) || !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
+		t.Errorf("cover load must remain current-priority guarded while card fetch workers are bounded: got %q", loadCardBody)
 	}
 }
 

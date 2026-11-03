@@ -6,7 +6,6 @@ docs/ai/tasks/2026-11-03-a01-pdf-page-dict-close.md	進行中	調査（assess-20
 docs/ai/tasks/2026-11-03-a02-record-discovered-commit.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a03-json-ms-and-metrics.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a04-plain-term-lang.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
-docs/ai/tasks/2026-11-03-a05-search-card-sequential.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a06-sleep-ctx-aware.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a07a-cache-write-magic-check.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a09-serve-stored-image-full-read.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
@@ -26,7 +25,6 @@ docs/ai/tasks/2026-11-03-b07-yara-failure-overwrites-pass.md	進行中	調査（
 docs/ai/tasks/2026-11-03-b08-zip-traversal-partial-match.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-b09-newtab-click-handler.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-b10-python-vt-httperror.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
-docs/ai/tasks/2026-11-03-c02-card-current-priority-wait.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-c04-language-double-fetch.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-c06-strip-rebuild.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-c07-resize-generation-debounce.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ

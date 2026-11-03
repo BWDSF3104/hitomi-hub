@@ -215,6 +215,7 @@ let tnDone = 0;
 let errorDone = 0;
 let prefetchTotal = 0;
 const PREFETCH_CONCURRENCY = 4;
+const SEARCH_CARD_CONCURRENCY = 4;
 const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";
 const MAX_FULL_CACHE_ENTRIES = 2000;
 let fullObjectUrls = new Set();
@@ -1357,13 +1358,16 @@ async function setSearchPage(delta) {
 async function loadSearchCards(ids, searchGen = searchGeneration) {
   const status = document.getElementById("search-status");
   const results = document.getElementById("results");
-  for (let i = 0; i < ids.length; i++) {
+  const queue = ids.slice();
+  let processed = 0;
+
+  async function processCard(id) {
     if (searchGen !== searchGeneration) return;
-    status.textContent = "カード読み込み " + (i + 1) + "/" + ids.length + ": " + ids[i];
-    const li = results.querySelector("[data-search-id='" + ids[i] + "']");
+    status.textContent = "カード読み込み " + processed + "/" + ids.length + ": " + id;
+    const li = results.querySelector("[data-search-id='" + id + "']");
     const cardStart = performance.now();
     try {
-      const card = await api("/api/search-card/" + ids[i]);
+      const card = await api("/api/search-card/" + id);
       if (searchGen !== searchGeneration) return;
       perfStatus.cardsLoaded++;
       perfStatus.cardTotalMs += performance.now() - cardStart;
@@ -1380,7 +1384,19 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
       renderPerfStatus();
       if (li) li.innerHTML = "<span class='meta'>" + escapeHTML(err.message) + "</span>";
     }
+    processed++;
   }
+
+  async function worker() {
+    while (queue.length && searchGen === searchGeneration) {
+      await processCard(queue.shift());
+    }
+  }
+
+  const workers = [];
+  const workerCount = Math.min(SEARCH_CARD_CONCURRENCY, ids.length);
+  for (let i = 0; i < workerCount; i++) workers.push(worker());
+  await Promise.all(workers);
 }
 
 async function runSearch() {
