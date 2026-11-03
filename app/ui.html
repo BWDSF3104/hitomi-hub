@@ -769,6 +769,14 @@ function galleryDataFromCard(card) {
   };
 }
 
+function syncReadStateCache(id, patch) {
+  for (const entry of [searchCardCache.get(id), galleryCache.get(id)]) {
+    if (!entry) continue;
+    if (!entry.read_state) entry.read_state = { gallery_id: id, last_page: current.page || 1, fully_read: 0, favorite: 0 };
+    for (const [key, value] of Object.entries(patch)) entry.read_state[key] = value;
+  }
+}
+
 function renderGalleryLoading(id, page, second) {
   const reader = document.getElementById("reader");
   if (!reader) return;
@@ -1545,12 +1553,14 @@ document.getElementById("fav").addEventListener("click", async () => {
   const on = !current.favorite;
   await post("/api/fav", { gallery_id: current.id, on });
   current.favorite = on ? 1 : 0;
+  syncReadStateCache(current.id, { favorite: current.favorite });
   await showLists();
 });
 document.getElementById("complete").addEventListener("click", async () => {
   if (!current.id) return;
   await post("/api/read", { gallery_id: current.id, page: current.page, complete: true });
   current.favorite = current.favorite;
+  syncReadStateCache(current.id, { last_page: current.page, fully_read: 1 });
   await showLists();
 });
 document.getElementById("view-mode").addEventListener("change", (e) => setViewMode(e.target.value));

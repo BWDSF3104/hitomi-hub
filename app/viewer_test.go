@@ -2410,6 +2410,66 @@ func TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIFavoriteToggleSyncsReadStateCaches(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	helperStart := strings.Index(s, "function syncReadStateCache(id, patch) {")
+	if helperStart < 0 {
+		t.Fatalf("syncReadStateCache not found")
+	}
+	helperEnd := strings.Index(s[helperStart:], "\n}")
+	if helperEnd < 0 {
+		t.Fatalf("syncReadStateCache close brace not found")
+	}
+	helper := s[helperStart : helperStart+helperEnd]
+	if !strings.Contains(helper, "searchCardCache.get(id)") || !strings.Contains(helper, "galleryCache.get(id)") {
+		t.Errorf("syncReadStateCache must update read_state on both searchCardCache and galleryCache: got %q", helper)
+	}
+
+	favStart := strings.Index(s, `document.getElementById("fav").addEventListener("click", async () => {`)
+	if favStart < 0 {
+		t.Fatalf("fav click handler not found")
+	}
+	favEnd := strings.Index(s[favStart:], "\n});")
+	if favEnd < 0 {
+		t.Fatalf("fav click handler close not found")
+	}
+	favBody := s[favStart : favStart+favEnd]
+	onPos := strings.Index(favBody, "const on = !current.favorite;")
+	postPos := strings.Index(favBody, `await post("/api/fav", { gallery_id: current.id, on });`)
+	updatePos := strings.Index(favBody, "current.favorite = on ? 1 : 0;")
+	syncPos := strings.Index(favBody, "syncReadStateCache(current.id, { favorite: current.favorite });")
+	if onPos < 0 || postPos < 0 || updatePos < 0 || syncPos < 0 {
+		t.Fatalf("fav handler must compute on from current.favorite, post, update current.favorite, then sync caches: got %q", favBody)
+	}
+	if onPos > postPos || postPos > updatePos || updatePos > syncPos {
+		t.Errorf("fav handler order must be on computed from current.favorite before post, then current.favorite update, then cache sync: got %q", favBody)
+	}
+
+	completeStart := strings.Index(s, `document.getElementById("complete").addEventListener("click", async () => {`)
+	if completeStart < 0 {
+		t.Fatalf("complete click handler not found")
+	}
+	completeEnd := strings.Index(s[completeStart:], "\n});")
+	if completeEnd < 0 {
+		t.Fatalf("complete click handler close not found")
+	}
+	completeBody := s[completeStart : completeStart+completeEnd]
+	cPostPos := strings.Index(completeBody, `await post("/api/read", { gallery_id: current.id, page: current.page, complete: true });`)
+	cSyncPos := strings.Index(completeBody, "syncReadStateCache(current.id, { last_page: current.page, fully_read: 1 });")
+	if cPostPos < 0 || cSyncPos < 0 || cPostPos > cSyncPos {
+		t.Errorf("complete handler must sync caches after post: got %q", completeBody)
+	}
+
+	if !strings.Contains(s, "favorite: s.favorite") {
+		t.Errorf("setGalleryMeta must take favorite from cached read_state so cache re-display reflects the synced value")
+	}
+}
+
 func TestEmbeddedUIHasSearchMeasurementStatus(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
