@@ -11,3 +11,9 @@ docs/ai/tmp/
 cache/
 config.json
 secrets/
+# D-01（2026-11-03）: DB journal・完成フォルダ・生成物
+*.db-wal
+*.db-shm
+Galleries/
+app/app.exe
+app/docs/
