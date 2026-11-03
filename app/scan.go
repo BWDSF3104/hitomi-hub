@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -34,7 +35,10 @@ var expectedMagic = map[string]map[string]bool{
 	"pdf":  {"pdf": true},
 }
 
-var pdfKeys = []string{"/Launch", "/OpenAction", "/AA", "/JS", "/JavaScript", "/EmbeddedFile", "/XFA"}
+var pdfKeys = [][]byte{
+	[]byte("/Launch"), []byte("/OpenAction"), []byte("/AA"), []byte("/JS"),
+	[]byte("/JavaScript"), []byte("/EmbeddedFile"), []byte("/XFA"),
+}
 
 var drivePrefix = regexp.MustCompile(`^[A-Za-z]:`)
 
@@ -170,13 +174,18 @@ func ScanPDFKeys(path string, l Limits) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return pdfKeyFindings(data), nil
+}
+
+// pdfKeyFindings は key を []byte で保持し、data を key ごとにコピーしない（A-13）。
+func pdfKeyFindings(data []byte) []string {
 	found := []string{}
 	for _, key := range pdfKeys {
-		if strings.Contains(string(data), key) {
-			found = append(found, "pdf_object:"+key)
+		if bytes.Contains(data, key) {
+			found = append(found, "pdf_object:"+string(key))
 		}
 	}
-	return found, nil
+	return found
 }
 
 // ScanFile mirrors the Python reference implementation's status semantics.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -177,6 +178,34 @@ func TestStatusSemantics(t *testing.T) {
 	}
 	if _, _, findings, status := ScanFile(bad, cfg()); status != "scan_error" || findings[0] != "bad_zip" {
 		t.Errorf("bad zip: got %s %v", status, findings)
+	}
+}
+
+func TestScanPDFKeysDoesNotCopyDataPerKey(t *testing.T) {
+	dir := t.TempDir()
+	// 非 UTF-8 バイナリ 2MB（MaxScanBytes 既定相当）。bytes.Contains は byte 単位なので
+	// 非 UTF-8 でも key 判定結果は string(data) 方式と同一。
+	noHit := bytes.Repeat([]byte{0xff, 0xfe, 0x80, 0x01}, 524288)
+	path := filepath.Join(dir, "clean.pdf")
+	if err := os.WriteFile(path, noHit, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := ScanPDFKeys(path, cfg().Limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings == nil || len(findings) != 0 {
+		t.Fatalf("no-hit findings: got %v", findings)
+	}
+	if allocs := testing.AllocsPerRun(10, func() { pdfKeyFindings(noHit) }); allocs != 0 {
+		t.Errorf("key scan must not copy data per key: allocs %v", allocs)
+	}
+	for _, key := range pdfKeys {
+		hit := append(append([]byte{}, noHit...), key...)
+		got := pdfKeyFindings(hit)
+		if len(got) != 1 || got[0] != "pdf_object:"+string(key) {
+			t.Errorf("key %q: got %v", string(key), got)
+		}
 	}
 }
 
