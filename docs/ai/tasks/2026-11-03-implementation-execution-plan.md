@@ -111,7 +111,7 @@
 - 判断解決: D-02を除く残判断項目はユーザー推奨承認で確定。確定方針は `docs/ai/decisions/2026-11-03-implementation-judgment-approval.md`。D-01のignore追加、D-06 docs修正、A-04/D-09/D-10 hitomi準拠確認、C-10 test gate inject、B-06/B-07 parity/Python側対応は未実施。
 - 次の実施順18項目以降はplanの承認範囲と合格条件に従う。最も近い独立項目は実施順18 A-03。
 
-- A-03 合格（単独commit）。`app/viewer.go`のsearch JSON responseをEncoderで実測し、`json_ms` positiveへ。`timing.metrics` duplicate削除、top-level `metrics` 維持。fixed test更新: `json_ms > 0`、`timing.metrics`不存在、top-level metrics存在、header positive。実測: `go vet` clean、`go test` ok 40.058s、canonical exe再build、pytest 38 passed 4.16s（freshness含む）。UI未変更のためserver実機確認なし。commit IDは該当commit。
+- A-03 合格（単独commit）。`app/viewer.go`のsearch JSON responseをEncoderで実測し、`json_ms` positiveへ。`timing.metrics` duplicate削除、top-level `metrics` 維持。fixed test更新: `json_ms > 0`、`timing.metrics`不存在、top-level metrics存在、header positive。実測: `go vet` clean、`go test` ok 40.058s、canonical exe再build、pytest 38 passed 4.16s（freshness含む）。UI未変更のためserver実機確認なし。commit `eaf1461`（push済み）。
 
 ## Verification
 

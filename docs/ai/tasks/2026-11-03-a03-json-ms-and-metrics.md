@@ -26,7 +26,7 @@
 - `app` で `go vet .` clean・`go test -count=1 -timeout 300s .` → `ok hitomi-hub/app 40.058s`。テスト更新: `TestSearchHandlerIncludesMeasurementShape`。
 - canonical exe再build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → `test_canonical_build_freshness.py` pass。UI未変更、canonical server未稼働のまま。
 - ルートで `python -m pytest tests/ -v` → 38 passed in 4.16s（freshness含む）。
-- commitはA-03単独commit（`app/viewer.go`、`app/viewer_test.go`、A-03記録、plan、`current-task.tsv`参照行削除）。commit IDは `git log` の該当commit。
+- commitはA-03単独commit `eaf1461`（push済み: `app/viewer.go`、`app/viewer_test.go`、A-03記録、plan、`current-task.tsv`参照行削除）。
 
 ## 完了時 Memory Bank 操作
 
