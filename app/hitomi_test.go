@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -503,13 +504,16 @@ func TestDownloadFilesParallelWritesResultsInOriginalOrder(t *testing.T) {
 
 	target := t.TempDir()
 	entries := []FileEntry{{Hash: "a"}, {Hash: "b"}, {Hash: "c"}}
-	results := downloadFilesParallel(c, target, entries, "webp", 4)
+	results := downloadFilesParallel(c, target, entries, "webp", 4, nil)
 	if len(results) != 3 {
 		t.Fatalf("results: got %d", len(results))
 	}
 	for i, result := range results {
 		if result.err != "" {
 			t.Fatalf("result %d error: %s", i, result.err)
+		}
+		if result.skipped {
+			t.Errorf("result %d must not be skipped without recorded size: got %v", i, result)
 		}
 		if result.page != i+1 {
 			t.Errorf("result %d page: got %d", i, result.page)
@@ -536,6 +540,208 @@ func openTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func recordTestFileSize(db *sql.DB, rel string, galleryID sql.NullInt64, size int64) error {
+	return recordFile(db, rel, galleryID, "test-sha", size, "webp", "webp", "not_evaluated", "structural")
+}
+
+func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	calls := 0
+	content := "x"
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte(content), nil
+	}
+	db := openTestDB(t)
+	if err := upsertGallery(db, &GalleryInfo{ID: 125, Title: "t", Language: "all"}, "Galleries/125"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, galleryDir(root, 125))
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries := []FileEntry{{Hash: "a"}}
+
+	// 1 run: no recorded size yet -> fetch and write. scan 相当の記録後、size 一致。
+	results := downloadFilesParallel(c, target, entries, "webp", 1, nil)
+	if len(results) != 1 || results[0].skipped || results[0].err != "" {
+		t.Fatalf("run 1: got %v", results)
+	}
+	if calls != 1 {
+		t.Fatalf("run 1 image calls: got %d", calls)
+	}
+	if err := recordTestFileSize(db, filepath.Join(galleryDir(root, 125), "a.webp"), sql.NullInt64{Int64: 125, Valid: true}, 1); err != nil {
+		t.Fatal(err)
+	}
+	content = "z" // 2 run で fetch したら内容が変わる。skip なら内容保持のはず。
+
+	results = downloadFilesParallel(c, target, entries, "webp", 1, recordedSizes(db, root, 125))
+	if len(results) != 1 || !results[0].skipped || results[0].err != "" {
+		t.Fatalf("run 2 must report skipped: got %v", results)
+	}
+	if calls != 1 {
+		t.Errorf("run 2 must not call remote fetch: calls %d", calls)
+	}
+	data, err := os.ReadFile(results[0].path)
+	if err != nil || string(data) != "x" {
+		t.Errorf("skipped file must keep original content: err %v data %q", err, string(data))
+	}
+}
+
+func TestDownloadFilesParallelRefetchesOnSizeMismatchMissingOrUnrecorded(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	calls := 0
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte("z"), nil
+	}
+	db := openTestDB(t)
+	if err := upsertGallery(db, &GalleryInfo{ID: 126, Title: "t", Language: "all"}, "Galleries/126"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, galleryDir(root, 126))
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	galleryID := sql.NullInt64{Int64: 126, Valid: true}
+	entries := []FileEntry{{Hash: "match"}, {Hash: "mismatch"}, {Hash: "missing"}, {Hash: "unrecorded"}}
+
+	// size 一致・size 不一致・DB 記録あるが欠損・DB 記録なしの既存ファイル
+	for _, hash := range []string{"match", "mismatch", "unrecorded"} {
+		if err := os.WriteFile(filepath.Join(target, hash+".webp"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(target, "mismatch.webp"), []byte("xxx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, hash := range []string{"match", "mismatch", "missing"} {
+		if err := recordTestFileSize(db, filepath.Join(galleryDir(root, 126), hash+".webp"), galleryID, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results := downloadFilesParallel(c, target, entries, "webp", 1, recordedSizes(db, root, 126))
+	if len(results) != 4 {
+		t.Fatalf("results: got %d", len(results))
+	}
+	if !results[0].skipped {
+		t.Errorf("match must be skipped: got %v", results[0])
+	}
+	for i, result := range results[1:] {
+		if result.skipped {
+			t.Errorf("result %d must fetch: got %v", i+1, result)
+		}
+		if result.err != "" {
+			t.Errorf("result %d error: %s", i+1, result.err)
+		}
+	}
+	if calls != 3 {
+		t.Errorf("remote fetch calls: got %d want 3", calls)
+	}
+	for _, hash := range []string{"mismatch", "missing", "unrecorded"} {
+		data, err := os.ReadFile(filepath.Join(target, hash+".webp"))
+		if err != nil || string(data) != "z" {
+			t.Errorf("%s must be re-fetched: err %v data %q", hash, err, string(data))
+		}
+	}
+}
+
+// A-10 実測（明示テストモード）。docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md に
+// 従い、HITOMI_HUB_LIVE=1 のときだけ実在 gallery を呼ぶ。書き込みは docs/ai/tmp/ scratch 内のみ。
+// 未設定時は skip。shard data は live gg.js の窓（約1時間）に在る分のみ解けるため、窓Membership
+// 漏れ・polarity drift で run 1 が 404 の場合は skip（合格条件の live 固定は窓 data が解ける時のみ）。
+func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
+	if os.Getenv("HITOMI_HUB_LIVE") == "" {
+		t.Skip("explicit test mode: set HITOMI_HUB_LIVE=1")
+	}
+	dataDir = dataRoot()
+	scratch := filepath.Join(dataRoot(), "docs", "ai", "tmp", "assess-20261103-1220", "a10-live")
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := openDB(filepath.Join(scratch, "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{GalleryDir: "Galleries"} // VT 無効: 外部呼出しは hitomi のみ
+	client := &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: defaultHitomiConfig()}
+	warnGG(loadGG(client))
+	info, err := client.Gallery(4294614)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Files) < 2 {
+		t.Fatalf("live gallery too small: %d files", len(info.Files))
+	}
+	target := filepath.Join(scratch, galleryDir(scratch, info.ID))
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := upsertGallery(db, info, galleryDir(scratch, info.ID)); err != nil {
+		t.Fatal(err)
+	}
+
+	run1 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, nil)
+	written1 := 0
+	summary := map[string]int{}
+	state := &RateState{}
+	for _, result := range run1 {
+		if result.err != "" {
+			if strings.Contains(result.err, "status 404") {
+				t.Skipf("run 1 remote fetch 404: shard window membership / gg switch polarity drift (see docs/ai/tasks/2026-11-03-a10-download-existing-check.md); raw: %s", result.err)
+			}
+			t.Fatalf("run 1 error: %s", result.err)
+		}
+		if result.skipped {
+			t.Fatalf("run 1 must not skip: got %v", result)
+		}
+		written1++
+		if err := recordPage(db, info.ID, result.page, result.hash); err != nil {
+			t.Fatal(err)
+		}
+		if status := processFile(db, cfg, state, scratch, result.path, summary, nil); status == "" {
+			t.Fatalf("run 1 processFile failed: %s", result.path)
+		}
+	}
+	calls1 := liveImageCalls(client)
+	if len(run1) != 2 || written1 != len(run1) || calls1 != int64(len(run1)) {
+		t.Fatalf("run 1 evidence: attempted %d written %d image calls %d", len(run1), written1, calls1)
+	}
+
+	run2 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, recordedSizes(db, scratch, info.ID))
+	skipped2 := 0
+	for _, result := range run2 {
+		if result.err != "" {
+			t.Fatalf("run 2 error: %s", result.err)
+		}
+		if !result.skipped {
+			t.Fatalf("run 2 must skip existing recorded file: got %v", result)
+		}
+		skipped2++
+	}
+	calls2 := liveImageCalls(client) - calls1
+	if skipped2 != len(run2) || calls2 != 0 {
+		t.Fatalf("run 2 evidence: skipped %d image calls %d", skipped2, calls2)
+	}
+	t.Logf("A-10 live evidence: run1 attempted=%d written=%d image calls=%d, run2 attempted=%d skipped=%d image calls=%d, metrics=%v",
+		len(run1), written1, calls1, len(run2), skipped2, calls2, client.metricsSnapshot())
+}
+
+func liveImageCalls(c *Client) int64 {
+	metric, ok := c.metricsSnapshot()["image"].(map[string]int64)
+	if !ok {
+		return 0
+	}
+	return metric["calls"]
 }
 
 func TestReadStateFavoriteAndQuery(t *testing.T) {

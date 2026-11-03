@@ -434,13 +434,35 @@ func verifyMissing(db *sql.DB, root string) (int, error) {
 }
 
 type downloadEntryResult struct {
-	page  int
-	path  string
-	hash  string
-	err   string
+	page    int
+	path    string
+	hash    string
+	err     string
+	skipped bool
 }
 
-func downloadFilesParallel(client *Client, target string, entries []FileEntry, format string, maxConcurrent int) []downloadEntryResult {
+// recordedSizes は scan 済み file の size を DB から absolute path で引ける map として読む。
+// download の既存確認（A-10）で skip 判定に使う。DB に記録のない file は size 一致を
+// 客観的に確認できないため、fetch 対象に残す。
+func recordedSizes(db *sql.DB, root string, galleryID int) map[string]int64 {
+	rows, err := db.Query("SELECT path, size FROM files WHERE gallery_id = ?", galleryID)
+	if err != nil {
+		return map[string]int64{}
+	}
+	out := map[string]int64{}
+	for rows.Next() {
+		var path string
+		var size int64
+		if err := rows.Scan(&path, &size); err != nil {
+			continue
+		}
+		out[filepath.Join(root, path)] = size
+	}
+	rows.Close()
+	return out
+}
+
+func downloadFilesParallel(client *Client, target string, entries []FileEntry, format string, maxConcurrent int, expected map[string]int64) []downloadEntryResult {
 	if len(entries) == 0 {
 		return []downloadEntryResult{}
 	}
@@ -471,6 +493,12 @@ func downloadFilesParallel(client *Client, target string, entries []FileEntry, f
 
 			entry := entries[idx]
 			path := filepath.Join(target, entry.Hash+"."+format)
+			if want, ok := expected[path]; ok {
+				if info, err := os.Stat(path); err == nil && info.Size() == want {
+					results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, skipped: true}
+					continue
+				}
+			}
 			body, err := client.getImage(context.Background(), StorageURL(entry.Hash, format, client.GG()), [2]int64{-1, -1})
 			if err != nil {
 				results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: err.Error()}
@@ -824,11 +852,16 @@ func main() {
 			limit = f.limit
 		}
 
-		results := downloadFilesParallel(client, target, info.Files[:limit], format, 4)
+		results := downloadFilesParallel(client, target, info.Files[:limit], format, 4, recordedSizes(db, root, info.ID))
 		written := 0
+		skipped := 0
 		for _, result := range results {
 			if result.err != "" {
 				fmt.Fprintf(os.Stderr, "download: %s\n", result.err)
+				continue
+			}
+			if result.skipped {
+				skipped++
 				continue
 			}
 			written++
@@ -837,7 +870,7 @@ func main() {
 			}
 			processFile(db, cfg, state, root, result.path, summary, nil)
 		}
-		printJSON(map[string]any{"gallery_id": info.ID, "attempted": len(results), "written": written, "summary": summary})
+		printJSON(map[string]any{"gallery_id": info.ID, "attempted": len(results), "written": written, "skipped": skipped, "summary": summary})
 	case "export":
 		id, err := targetID(f)
 		if err != nil {
