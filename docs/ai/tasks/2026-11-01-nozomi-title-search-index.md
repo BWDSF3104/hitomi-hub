@@ -28,6 +28,8 @@ hitomi に server-side の全文検索 API はなく、client は `hash_term`（
 
 `app/check.go` + `hub.exe check`。`bookmark_queries` を 1 回引いて `galleries` に無い id だけを記録し `last_run_at` を更新。multi-term は term ごとの nozomi 集合の共通部分（`TestSearchQueryIntersectsTermsAndLanguage` で lock）。`language:` term は fetch せず lang を設定し、単独 `language:x` は `/n/index-<lang>.nozomi`（`nozomiPathParts` を term 単位に修正）。`notify` 列は現行実装では未使用。
 
+> 整合注記（D-06・2026-11-03）: 「`language:` term は fetch せず lang を設定」は 2026-11-01（checkpoint 10）時点の歴史的記述。現行 `termIDs`（`app/searchhtml.go`）は language term で lang を設定後に自前 dataset（`/n/index-<lang>.nozomi`）を 1 回 fetch する（C-04・commit `4c25b1f`: positive pre-scan で language を first term fetch へ反映、同一 area/tag の redundant term fetch を skip）。この行の歴史的記述は保持し、正典基準（C-04 現挙動）へ寄せる。
+
 ### エクスポート（cbz・pdf）
 
 `app/export.go` + `app/pdf.go` + `hub.exe export`。page 順は新設の `pageorder`（download 時に記録）、無ければ `files` 行の rowid 順。entry 名 `NNN_<hash>.<ext>`・zip は Store。`hit`/`scan_error`/`missing` は skip。`--out` は root 内限定。

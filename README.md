@@ -10,7 +10,7 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 
 ## 現状
 
-実装済み: 構造検査・ハッシュ評判・検索（nozomi）・gallery メタ・ダウンロード・既読・お気に入り・保存検索。UI は未実装。
+実装済み: 構造検査・ハッシュ評判・検索（nozomi）・gallery メタ・ダウンロード・既読・お気に入り・保存検索・ビューア（1 ページ Web UI）。UI の full 判定は local full → persistent full cache → remote full → 404 時のみ EnsureGG で 1 回再試行 → `no_full`（正典: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`）。TN display fallback は禁止。TN の表示源は search-card cover 専用で、`#reader` / `#thumbs` の表示源ではない。
 
 `src/scan.py` はスキャン層の参照実装（stdlib のみ）、`app/` は製品形（単体静的バイナリ・pure-Go）で、status 語彙と finding 文字列は一致させている。
 
@@ -44,7 +44,7 @@ hitomi-hub/
 │   ├── check.go               # 保存検索の新着追跡（term ごとの集合の共通部分・last_run_at）
 │   ├── export.go              # cbz エクスポート（page 順・Store・hit/scan_error skip）
 │   ├── pdf.go                 # pdf エクスポート（webp/png/jpeg decoder・FlateDecode の raw RGB）
-│   ├── viewer.go              # ビューア（1 ページ Web・local-first・path guard）
+│   ├── viewer.go              # ビューア（1 ページ Web・full 判定 local-first・TN display fallback 禁止・path guard）
 │   ├── ui.html                # embed される単一ページ（外部 asset なし）
 │   ├── ggset.go               # gg.js（ltn）から生成した sharding 集合
 │   ├── *_test.go
