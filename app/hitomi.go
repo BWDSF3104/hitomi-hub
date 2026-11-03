@@ -118,6 +118,10 @@ func negativeNoFullKey(hash, format string, gg GG) string {
 	return b.String()
 }
 
+func imageFetchKey(hash, format string, gg GG) string {
+	return negativeNoFullKey(hash, format, gg)
+}
+
 func (c *Client) canUseNegativeNoFull(hash, format string, gg GG) bool {
 	key := negativeNoFullKey(hash, format, gg)
 

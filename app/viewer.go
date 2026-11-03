@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -31,6 +32,10 @@ type viewer struct {
 	infoCache       map[int]*GalleryInfo
 	infoCacheMu     sync.Mutex
 
+	imageFetchMu          sync.Mutex
+	imageFetchGroup       map[string]*imageFetchCall
+	imageFetchJoinObserver func(hashFormatKey string)
+
 	cacheWriteMu              sync.Mutex
 	cacheWriteGroup           map[string]*cacheWriteCall
 	cacheWriteAttemptCount    int
@@ -44,6 +49,12 @@ type viewer struct {
 type cacheWriteCall struct {
 	done   chan struct{}
 	result error
+}
+
+type imageFetchCall struct {
+	body []byte
+	err  error
+	done chan struct{}
 }
 
 func newViewer(db *sql.DB, cfg Config, root string) *viewer {
@@ -634,6 +645,44 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	writeNoTN(w, format)
 }
 
+func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg GG) ([]byte, error) {
+	key := imageFetchKey(hash, format, gg)
+
+	v.imageFetchMu.Lock()
+	if v.imageFetchGroup == nil {
+		v.imageFetchGroup = map[string]*imageFetchCall{}
+	}
+	if call := v.imageFetchGroup[key]; call != nil {
+		if v.imageFetchJoinObserver != nil {
+			v.imageFetchJoinObserver(key)
+		}
+		v.imageFetchMu.Unlock()
+		select {
+		case <-call.done:
+			return call.body, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	call := &imageFetchCall{done: make(chan struct{})}
+	v.imageFetchGroup[key] = call
+	v.imageFetchMu.Unlock()
+
+	body, err := v.client.getImage(context.WithoutCancel(ctx), StorageURL(hash, format, gg), [2]int64{-1, -1})
+	call.body = body
+	call.err = err
+
+	v.imageFetchMu.Lock()
+	if v.imageFetchGroup[key] == call {
+		delete(v.imageFetchGroup, key)
+	}
+	v.imageFetchMu.Unlock()
+
+	close(call.done)
+	return body, err
+}
+
 func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
 	if !validHash(hash) {
@@ -660,7 +709,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := v.client.getImage(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
+	body, err := v.fetchFullImageOnce(r.Context(), hash, format, gg)
 	if err == nil {
 		v.client.clearNegativeNoFull(hash, format, gg)
 		writeImage(w, format, body, "miss")
@@ -675,7 +724,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		gg = v.client.GG()
 
 		if source == "live" && !sameGG(initialGG, gg) {
-			body, err = v.client.getImage(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
+			body, err = v.fetchFullImageOnce(r.Context(), hash, format, gg)
 			if err == nil {
 				v.client.clearNegativeNoFull(hash, format, gg)
 				writeImage(w, format, body, "miss")

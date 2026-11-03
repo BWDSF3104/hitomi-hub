@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -485,6 +486,143 @@ func TestViewerImageProxyDoesNotCacheNetworkErrorAsNegativeNoFull(t *testing.T) 
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
 	if rec.Code != http.StatusBadGateway || len(urls) != 2 {
 		t.Fatalf("network error should be rechecked: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+}
+
+func TestViewerImageProxyFetchDedupsConcurrentRemoteFetch(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	joined := make(chan struct{}, 1)
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			close(started)
+		}
+		<-release
+		return []byte("data"), nil
+	}
+
+	rec1 := httptest.NewRecorder()
+	rec2 := httptest.NewRecorder()
+
+	var first sync.WaitGroup
+	var second sync.WaitGroup
+	first.Add(1)
+	second.Add(1)
+
+	go func() {
+		defer first.Done()
+		v.handler().ServeHTTP(rec1, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	}()
+
+	<-started
+
+	v.imageFetchJoinObserver = func(key string) {
+		joined <- struct{}{}
+	}
+	go func() {
+		defer second.Done()
+		v.handler().ServeHTTP(rec2, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	}()
+
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second concurrent request did not join the first fetch group")
+	}
+
+	close(release)
+	first.Wait()
+	second.Wait()
+
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent same imageProxy key should fetch once, got %d", calls.Load())
+	}
+	if rec1.Code != http.StatusOK || rec2.Code != http.StatusOK || rec1.Body.String() != "data" || rec2.Body.String() != "data" {
+		t.Fatalf("dedup fetch response: code1 %d body1 %q code2 %d body2 %q", rec1.Code, rec1.Body.String(), rec2.Code, rec2.Body.String())
+	}
+	if rec1.Header().Get("x-cache") != "miss" || rec2.Header().Get("x-cache") != "miss" {
+		t.Fatalf("dedup fetch x-cache should preserve remote miss semantics: header1 %q header2 %q", rec1.Header().Get("x-cache"), rec2.Header().Get("x-cache"))
+	}
+}
+
+func TestViewerImageProxyFetchDedupDoesNotPropagateWaiterCancellationToLeader(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+
+	var calls atomic.Int32
+	key := imageFetchKey(sampleHash, "webp", snapshotGG())
+	v.imageFetchGroup = map[string]*imageFetchCall{
+		key: {done: make(chan struct{})},
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	canceledRec := httptest.NewRecorder()
+	v.handler().ServeHTTP(canceledRec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil).WithContext(canceledCtx))
+	if canceledRec.Code != http.StatusBadGateway || calls.Load() != 0 {
+		t.Fatalf("canceled waiter should fail without propagating to leader or refetching: code %d body %q calls %d", canceledRec.Code, canceledRec.Body.String(), calls.Load())
+	}
+
+	call := v.imageFetchGroup[key]
+	call.body = []byte("data")
+	call.err = nil
+	close(call.done)
+
+	normalRec := httptest.NewRecorder()
+	v.handler().ServeHTTP(normalRec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if normalRec.Code != http.StatusOK || normalRec.Body.String() != "data" || calls.Load() != 0 {
+		t.Fatalf("normal waiter should use leader result without extra remote fetch: code %d body %q calls %d", normalRec.Code, normalRec.Body.String(), calls.Load())
+	}
+	if normalRec.Header().Get("x-cache") != "miss" {
+		t.Fatalf("normal waiter x-cache should preserve remote miss semantics: got %q", normalRec.Header().Get("x-cache"))
+	}
+}
+
+func TestViewerFetchFullImageOnceGroupKeyUsesHashFormatAndGG(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+
+	gg := viewerFixtureGG()
+	ggOther := GG{Bucket: "1793494803/", CaseSet: map[int]bool{2488: true}, Source: gg.Source}
+
+	baseKey := imageFetchKey(sampleHash, "webp", gg)
+	if baseKey != negativeNoFullKey(sampleHash, "webp", gg) {
+		t.Fatalf("image fetch key must use negative cache boundary fields: got %q want %q", baseKey, negativeNoFullKey(sampleHash, "webp", gg))
+	}
+	if imageFetchKey(sampleHash, "avif", gg) == baseKey {
+		t.Fatalf("image fetch key must separate format")
+	}
+	if imageFetchKey(sampleHash, "webp", ggOther) == baseKey {
+		t.Fatalf("image fetch key must separate gg")
+	}
+
+	var calls atomic.Int32
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls.Add(1)
+		return []byte("data"), nil
+	}
+
+	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "webp", gg); err != nil {
+		t.Fatal(err)
+	}
+	if len(v.imageFetchGroup) != 0 {
+		t.Fatalf("image fetch group must be cleared after leader completes: got %v", v.imageFetchGroup)
+	}
+	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "avif", gg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "webp", ggOther); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("different format or gg should not join the same fetch group: got %d", calls.Load())
 	}
 }
 
