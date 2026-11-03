@@ -48,6 +48,7 @@
 - scratch viewer（8732）`/api/search?term=cat` の metrics に `gg` group: `calls=1, network_ms=444`（live gg.js 取得の客観的証拠）。経過 9.10s。
 - viewer `/api/image/35fd0c2ab0521c4baabb55d58e3d0ac076ac5e11fa979874d15e127e33592e5f?format=webp` → `200` / `x-cache: miss` / 139238 bytes（`no_full` でない、1.30s）。`/api/image/137a33922ba807c8b53b88c02f317122076271fbeac388e1f18dfa6417cbe1cf?format=webp` → `200` / `x-cache: miss` / 155314 bytes。
 - 実機確認の書き込みは scratch 内（`scratch/cache/images`・`scratch/Galleries`）のみ。canonical server は停止→再 build した exe で `http://127.0.0.1:8731` に復旧済み（稼働中）。
+- 本項目分単独コミット: `574a659`（`app/main.go`・`app/main_test.go`・本タスク記録・`current-task.tsv`）。push 済み。
 
 ## 完了時 Memory Bank 操作
 
