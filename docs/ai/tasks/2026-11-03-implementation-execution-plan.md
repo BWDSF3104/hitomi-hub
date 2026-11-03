@@ -105,7 +105,7 @@
 
 ## 第4実行（2026-11-03・判断承認後・D-02単独実施）
 
-- D-02 合格（ユーザー直接指示で実施順28のD-02部分のみ先行実施）。単独commitは `.gitignore`、`app/main.go`、`app/main_test.go`、D-02記録、decision、`current-task.tsv`参照行削除。
+- D-02 合格（ユーザー直接指示で実施順28のD-02部分のみ先行実施）。単独commit `ef2d038`（push済み）は `.gitignore`、`app/main.go`、`app/main_test.go`、D-02記録、decision、`current-task.tsv`参照行削除。
 - 決定: `config.json` を非追跡の正典config pathとし、`config.example.json` はkeyなしで追跡維持。既定は `<data-dir>/config.json`、明示 `--config` 優先、`config.json` 不在時のみ `config.example.json` fallback。`.gitignore` に `config.json` / `secrets/` 追加。keyはcommit・記録・報告へ書かない。
 - 検証: `app`で `go vet .` clean・`go test -count=1 -timeout 300s .` ok 41.711s（追加テスト含む）。canonical exe再build。ルートで `python -m pytest tests/ -v` 38 passed 3.64s（freshness含む）。UI未変更のためserver実機確認なし。`config.json`はgit statusで非追跡、`config.example.json`はkeyなしで追跡維持。
 - 判断解決: D-02を除く残判断項目はユーザー推奨承認で確定。確定方針は `docs/ai/decisions/2026-11-03-implementation-judgment-approval.md`。D-01のignore追加、D-06 docs修正、A-04/D-09/D-10 hitomi準拠確認、C-10 test gate inject、B-06/B-07 parity/Python側対応は未実施。

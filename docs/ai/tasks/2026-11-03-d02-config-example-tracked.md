@@ -30,7 +30,7 @@
   - `TestResolveConfigPathFallsBackToExampleWhenConfigJSONMissing`
 - ルートで `python -m pytest tests/ -v` → 38 passed in 3.64s（`test_canonical_build_freshness.py` を含む。UI未変更のため server起動確認なし。canonical exeは再build済み）。
 - canonical exe再build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → canonical serverは開始時未稼働のまま。
-- commitはD-02単独commit（`.gitignore`、`app/main.go`、`app/main_test.go`、D-02記録、decision、`current-task.tsv`参照行削除）。commit IDは `git log` の該当commit。
+- commitはD-02単独commit `ef2d038`（push済み: `.gitignore`、`app/main.go`、`app/main_test.go`、D-02記録、decision、`current-task.tsv`参照行削除）。
 
 ## 完了時 Memory Bank 操作
 
