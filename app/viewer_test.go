@@ -1399,6 +1399,9 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 	if !strings.Contains(storeBody, `galleryId === current.id && backgroundGalleryId === galleryId`) {
 		t.Errorf("storeFullCache should update strip DOM only for the current background target: got %q", storeBody)
 	}
+	if strings.Contains(storeBody, `revokeFullObjectUrls();`) {
+		t.Errorf("storeFullCache should not revoke all object URLs for stale background writes: got %q", storeBody)
+	}
 	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
 	if loadStart < 0 {
 		t.Fatalf("loadFullImage function not found")
@@ -1659,8 +1662,16 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	if !strings.Contains(s, `async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {`) || !strings.Contains(s, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(s, `r.headers.get("x-cache")`) || !strings.Contains(s, `URL.createObjectURL(blob)`) || !strings.Contains(s, `img.src = objectUrl`) {
 		t.Errorf("ui should replace placeholder display from a no-store fetched full image bytes, while counting TN separately: got %q", s)
 	}
-	if !strings.Contains(s, `let fullObjectUrls = new Set();`) || !strings.Contains(s, `function revokeFullObjectUrls() {`) || !strings.Contains(s, `revokeFullObjectUrls();`) {
-		t.Errorf("ui should keep a bounded object URL cache and revoke stored object URLs when the cache is cleared: got %q", s)
+	if !strings.Contains(s, `let fullObjectUrls = new Set();`) || !strings.Contains(s, `const fullObjectUrlLru = new Map();`) || !strings.Contains(s, `function revokeFullObjectUrl(key) {`) || !strings.Contains(s, `function evictFullObjectUrls(skipKey = "") {`) || !strings.Contains(s, `if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) { evictFullObjectUrls(key); }`) {
+		t.Errorf("ui should keep a bounded object URL cache and revoke only LRU entries outside current display/search/gallery: got %q", s)
+	}
+	storeStart := strings.Index(s, "function storeFullCache(entry, status, objectUrl, galleryId = current.id) {")
+	if storeStart < 0 {
+		t.Fatalf("storeFullCache function not found")
+	}
+	storeBody := s[storeStart:strings.Index(s, "\nasync function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {")]
+	if strings.Contains(storeBody, `revokeFullObjectUrls();`) {
+		t.Errorf("storeFullCache should not revoke all object URLs when a 2001st entry arrives: got %q", storeBody)
 	}
 	if !strings.Contains(s, `const fullCache = new Map();`) || !strings.Contains(s, `const prefetchedEntries = new Map();`) || !strings.Contains(s, `function cachedFullSrc(entry, galleryId = current.id) {`) || !strings.Contains(s, `function storeFullCache(entry, status, objectUrl, galleryId = current.id) {`) {
 		t.Errorf("ui should store full-image cache entries instead of revoking every display cache on re-render: got %q", s)
@@ -1718,6 +1729,52 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 	}
 	if strings.Contains(s, `await ensureBackgroundPrefetch`) {
 		t.Errorf("showPage should not block on background prefetch: got %q", s)
+	}
+}
+
+func TestEmbeddedUIObjectUrlLruEvictsOnlyOldestUnprotected(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	for _, want := range []string{
+		`const fullObjectUrlLru = new Map();`,
+		`const currentDisplayObjectUrlKeys = new Set();`,
+		`const currentSearchObjectUrlKeys = new Set();`,
+		`const currentGalleryObjectUrlKeys = new Set();`,
+		`function isFullObjectUrlProtected(key) { return currentDisplayObjectUrlKeys.has(key) || currentSearchObjectUrlKeys.has(key) || currentGalleryObjectUrlKeys.has(key); }`,
+		`function revokeFullObjectUrl(key) {`,
+		`URL.revokeObjectURL(objectUrl);`,
+		`fullObjectUrlLru.delete(key);`,
+		`activeObjectUrlKeys.delete(key);`,
+		`prefetchedEntries.delete(key);`,
+		`function evictFullObjectUrls(skipKey = "") {`,
+		`while (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {`,
+		`for (const key of fullObjectUrlLru.keys()) {`,
+		`if (!key || key === skipKey) continue;`,
+		`if (isFullObjectUrlProtected(key)) continue;`,
+		`revokeFullObjectUrl(key);`,
+		`if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) { evictFullObjectUrls(key); }`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("objectURL LRU must revoke only the oldest unprotected key, got %q", want)
+		}
+	}
+	if strings.Contains(s, `revokeFullObjectUrls();`) {
+		t.Errorf("objectURL LRU should not revoke all stored object URLs when the cache limit is crossed: got %q", s)
+	}
+	for _, want := range []string{
+		`currentDisplayObjectUrlKeys.clear();`,
+		`currentSearchObjectUrlKeys.clear();`,
+		`currentGalleryObjectUrlKeys.clear();`,
+		`markDisplayObjectUrlKey(img.dataset.key);`,
+		`markSearchObjectUrlKey(key);`,
+		`markGalleryObjectUrlKey(key);`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("current display/search/gallery objectURL keys must be protected from LRU eviction, got %q", want)
+		}
 	}
 }
 

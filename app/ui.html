@@ -219,6 +219,10 @@ const SEARCH_CARD_CONCURRENCY = 4;
 const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";
 const MAX_FULL_CACHE_ENTRIES = 2000;
 let fullObjectUrls = new Set();
+const fullObjectUrlLru = new Map();
+const currentDisplayObjectUrlKeys = new Set();
+const currentSearchObjectUrlKeys = new Set();
+const currentGalleryObjectUrlKeys = new Set();
 const fullCache = new Map();
 const prefetchedEntries = new Map();
 const countsByGallery = new Map();
@@ -368,6 +372,7 @@ function recordImageDisplayPassFromImg(img, galleryId = current.id) {
   const sourceType = img.dataset.sourceType || sourceTypeByEntry.get(img.dataset.key);
   if (!sourceType) return;
   if (img.dataset.gallery && img.dataset.gallery !== String(galleryId)) return;
+  if (sourceType === "objectURL") markDisplayObjectUrlKey(img.dataset.key);
   if (img.naturalWidth > 0) {
     displayPassByEntry.set(img.dataset.key, true);
     setSourceTypeFromKey(img.dataset.key, sourceType);
@@ -382,6 +387,65 @@ function attachDisplayLoadHandlers(container) {
     img.addEventListener("load", () => recordImageDisplayPassFromImg(img));
   }
 }
+
+function markDisplayObjectUrlKey(key) {
+  if (key) currentDisplayObjectUrlKeys.add(key);
+}
+
+function markSearchObjectUrlKey(key) {
+  if (key) currentSearchObjectUrlKeys.add(key);
+}
+
+function markGalleryObjectUrlKey(key) {
+  if (key) currentGalleryObjectUrlKeys.add(key);
+}
+
+function isFullObjectUrlProtected(key) { return currentDisplayObjectUrlKeys.has(key) || currentSearchObjectUrlKeys.has(key) || currentGalleryObjectUrlKeys.has(key); }
+
+function decrementPrefetchedCountForKey(key) {
+  if (!prefetchedEntries.has(key)) return;
+  const status = prefetchedEntries.get(key);
+  const galleryId = Number(String(key).split("|")[0]);
+  const counts = getGalleryCounts(galleryId);
+  if (status === "tn" || status === "no_tn") counts.tnDone--;
+  else if (status === "no_full") counts.noFullDone--;
+  else if (status === "error") counts.errorDone--;
+  else counts.fullDone--;
+  prefetchedEntries.delete(key);
+}
+
+function revokeFullObjectUrl(key) {
+  const cached = fullCache.get(key);
+  if (!cached) return;
+  const objectUrl = cached.objectUrl;
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    fullObjectUrls.delete(objectUrl);
+  }
+  cached.objectUrl = null;
+  fullObjectUrlLru.delete(key);
+  activeObjectUrlKeys.delete(key);
+  sourceStatusByEntry.delete(key);
+  sourceTypeByEntry.delete(key);
+  decrementPrefetchedCountForKey(key);
+  renderPrefetchStatus();
+}
+
+function evictFullObjectUrls(skipKey = "") {
+  while (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
+    let evicted = false;
+    for (const key of fullObjectUrlLru.keys()) {
+      if (!key || key === skipKey) continue;
+      if (isFullObjectUrlProtected(key)) continue;
+      revokeFullObjectUrl(key);
+      evicted = true;
+      break;
+    }
+    if (!evicted) break;
+  }
+  renderPrefetchStatus();
+}
+
 function getGalleryCounts(galleryId) {
   if (!countsByGallery.has(galleryId)) {
     countsByGallery.set(galleryId, { fullDone: 0, tnDone: 0, noFullDone: 0, errorDone: 0, total: 0 });
@@ -770,21 +834,22 @@ function entrySource(entry, galleryId = current.id, force = false) {
 }
 function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
-  if (objectUrl && statusIsViewerDisplaySource(status) && !fullObjectUrls.has(objectUrl)) {
-    fullObjectUrls.add(objectUrl);
-    activeObjectUrlKeys.add(key);
-  }
-  fullCache.set(key, { status, objectUrl });
-  setSourceStatus(entry, status, galleryId);
   if (objectUrl && statusIsViewerDisplaySource(status)) {
+    if (!fullObjectUrls.has(objectUrl)) fullObjectUrls.add(objectUrl);
+    activeObjectUrlKeys.add(key);
+    fullObjectUrlLru.delete(key);
+    fullObjectUrlLru.set(key, objectUrl);
+    fullCache.set(key, { status, objectUrl });
+    setSourceStatus(entry, status, galleryId);
     setSourceType(entry, "objectURL", galleryId);
     if (galleryId === current.id && backgroundGalleryId === galleryId) {
       updateThumbCache(key, objectUrl);
     }
+    if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) { evictFullObjectUrls(key); }
+    return;
   }
-  if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
-    revokeFullObjectUrls();
-  }
+  fullCache.set(key, { status, objectUrl });
+  setSourceStatus(entry, status, galleryId);
 }
 
 async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {
@@ -828,6 +893,10 @@ function revokeFullObjectUrls() {
     URL.revokeObjectURL(objectUrl);
   }
   fullObjectUrls.clear();
+  fullObjectUrlLru.clear();
+  currentDisplayObjectUrlKeys.clear();
+  currentSearchObjectUrlKeys.clear();
+  currentGalleryObjectUrlKeys.clear();
   activeObjectUrlKeys.clear();
   for (const cached of fullCache.values()) {
     if (cached) cached.objectUrl = null;
@@ -917,6 +986,7 @@ function renderReader() {
   const container = document.getElementById("reader");
   if (!container || !current.id) return;
   renderGeneration++;
+  currentDisplayObjectUrlKeys.clear();
   const items = readerItems();
   container.className = readerClass(items[0]);
   const parts = [];
@@ -932,6 +1002,7 @@ function renderReader() {
     } else if (sourceType === "objectURL") {
       setSourceType(entry, sourceType, current.id);
       setSourceStatus(entry, sourceStatusByEntry.get(key) || fullCache.get(key).status || "cache", current.id);
+      markDisplayObjectUrlKey(key);
     }
     const marker = entry.local ? " title='local'" : "";
     const alt = item.page + (entry.local ? "・local" : "");
@@ -1103,6 +1174,7 @@ async function showPage() {
 }
 function renderStrip() {
   const parts = [];
+  currentGalleryObjectUrlKeys.clear();
   const items = stripItems();
   const group = stripGroupPage(items);
   renderStripControls(items, group);
@@ -1121,6 +1193,7 @@ function renderStrip() {
     } else if (sourceType === "objectURL") {
       setSourceType(entry, sourceType, current.id);
       setSourceStatus(entry, sourceStatusByEntry.get(key) || fullCache.get(key).status || "cache", current.id);
+      markGalleryObjectUrlKey(key);
     }
     const marker = entry.local ? " title='local'" : "";
     const localMark = entry.local ? "・local" : "";
@@ -1257,6 +1330,8 @@ function renderSearchCard(r) {
   searchCardCache.set(r.id, r);
   setSearchTitleGroup(r);
   const key = r.files && r.files[0] ? fullCacheKey(r.files[0], r.id) : "";
+  const coverSrc = searchCardCoverSource(r);
+  if (key && coverSrc) markSearchObjectUrlKey(key);
   const thumbnail = r.thumbnail || "";
   const tags = (r.tags || []).join(", ");
   const tagsTitle = tags ? " title='" + escapeHTML(tags) + "'" : "";
@@ -1312,6 +1387,7 @@ function restoreSearchState() {
   renderSearchPageStatus();
   if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
   status.textContent = "検索結果復元: " + state.query;
+    currentSearchObjectUrlKeys.clear();
     results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
   loadSearchCards(ids, searchGeneration);
 }
@@ -1426,7 +1502,8 @@ async function runSearch() {
     renderSearchPageStatus();
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
     status.textContent = "検索完了・カード読み込み " + ids.length + "件";
-  results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+    currentSearchObjectUrlKeys.clear();
+    results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
     saveSearchState({ query, lang, page, ids, total: data.total });
     history.replaceState(null, "", searchRoute(query, page));
     await loadSearchCards(ids, searchGen);
