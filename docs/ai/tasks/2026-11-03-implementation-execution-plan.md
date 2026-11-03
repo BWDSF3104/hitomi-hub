@@ -69,6 +69,16 @@
 
 （1項目実施ごとに1行追記: ID・commit・検証結果・未確認点）
 
+- B-08 合格 commit `865c325`（push 済み）。基準: entry 名を `/` `\` で分割し segment 完全一致の `..` のみ hit。実測 `Vol...01.webp` → pass（Go/Python/YARA 非 hit）、`../evil.exe` → hit。go vet+test ok 36.919s、pytest 26 passed。個別記録は完了。残件（判断要）: 記録記載の `containsTraversal(name)` は実際 `app/export.go:174`（部分一致のまま・承認範囲外・未変更）→ **解決（2026-11-03 ユーザー承認）**: segment 判定の共有ユーティリティへ統一することを承認し、追加項目として実施（単独 commit）。
+- D-03 合格 commit `8962fcb`（push 済み）。unique key を `(path, sha256, rule, detail)` へ、Go `ensureSchema` に unique index 追加（schemaVersion 4、迁移は定義置換のみ・行削除禁止）。実測: 新規 Go DB で scan 2回 → findings rows 2→2 不変（INSERT OR IGNORE skip）、Go 作成 DB・canonical DB で key 一致。go test ok 37.201s、pytest 29 passed。個別記録は完了。残件（判断要）: ① 調査用 `repro.db`（rows=20・新 key 重複 group=5）は行削除なしで index 作成不可（copy で失敗実測、original 未変更）→ 重複除去か再生成の判断。② root `hitomi.db`（rows=8・旧 key）はスコープ外で未変更。③ 非破壊迁移の設計判断を `docs/ai/decisions/2026-11-03-d03-findings-unique-index-migration.md` に記録（旧暗黙 dedup を supersede）。→ **解決（2026-11-03 ユーザー承認）**: 拒否方針（c）で確定、暗黙 dedup へは戻さない。`repro.db` は `kilo-safe-remove` でゴミ箱へ（掃除）。root `hitomi.db` は次回 `ensureSchema` 実行で揃う（今すぐ手入れ不要、次回 canonical server 起動時に確認）。
+- D-04 合格 commit `38fb12b`（push 済み）。`is_pe` を `e_lfanew` 参照（seek）へ。実測: `e_lfanew=0x80` fixture（PE signature at 0x80）で `mz_without_pe_header` 非 hit（修正前は hit をスクラッチ `docs/ai/tmp/assess-20261103-1220/d04_fixture_check.py` で再現）、回帰 `0x38` pass・`0x80` signature なし hit・`e_lfanew=0` hit 維持。pytest 33 passed 3.35s（freshness 含む）。個別記録は完了。YARA 規則変更なし（規則は `MZ_Header_At_Offset0` のみ、実測上齟齬なし）。実測根拠 `Galleries\102\b.bin` は現マシン不在 → fixture 生成で代替。
+- B-01 合格 commit `c1d2c07`（push 済み）。`form#search` の暗黙 submit を `#search-submit` へ固定、prev/next・nav button に `type="button"`。実測（1280x900 fresh tab・canonical exe 再 build + server 8731）: page 2 で `female:catgirl` + Enter → `GET /api/search?...page=2` 200、`#page` 2 維持、prev/next クリックは `setSearchPage` で page 3/2 実測。go vet clean、go test ok 36.930s（固定テスト `TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit`）、pytest 33 passed。スクショ Drive `I:\マイドライブ\kilo\b01-confirm-1280x900-enter-page2.png`。個別記録は完了。残件（判断要）: nav（`#pagenum`）上 Enter の挙動が prev 暗黙発火 → submit event（no-op）へ変化。→ **解決（2026-11-03 ユーザー承認）**: no-op（検索固定）で確定。nav の page 跳转は別項目。`docs/ai/decisions/2026-11-03-b01-nav-enter-noop.md`。
+
+## 実行打ち切り（2026-11-03）→ 再開
+
+- 委譲は実施順4（B-08）〜実施順7（B-01）の4件で停止。B-01 の nav Enter 挙動変更が判断要であり、以後の B-03 は同一 `app/ui.html`（fav/complete handler・form submit セマンティクス）に依存するため、記録から無関係と確認できず打ち切り。実施順8 以降（B-03・B-09・B-05・A-15・A-10・A-07a …）は未実施。
+- **2026-11-03 判断解決・再開**: B-08 の export 判定統一・D-03 の拒否方針・B-01 の nav Enter no-op をユーザー承認（推奨案どおり）。B-08 追加項目（`app/export.go` の segment 判定統一）を実施し、以後は実施順8（B-03）から順次委譲。B-09（`newTabMode`・修飾キー click）は方針確認必要のまま保留。
+
 ## Verification
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
