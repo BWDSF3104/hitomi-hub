@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import zipfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -213,8 +214,11 @@ def vt_lookup(sha256: str, cfg: dict, state: dict, fetch=None, conn=None) -> dic
     url = "https://www.virustotal.com/api/v3/files/%s" % sha256
     if fetch is None:
         req = urllib.request.Request(url, headers={"x-apikey": key})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.load(resp)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.load(resp)
+        except urllib.error.HTTPError as exc:
+            result = ({}, exc.code)
     else:
         result = fetch(url, key)
     if isinstance(result, tuple):
