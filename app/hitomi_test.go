@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -546,6 +547,73 @@ func TestRateGatePerRequest(t *testing.T) {
 	}
 	if c.last.IsZero() {
 		t.Error("gate did not record request time")
+	}
+}
+
+// A-06: gate 中の ctx キャンセルで呼出が直ちに return すること。
+// 本番 gate interval（1000ms）は変更せず、mocked fetch（cancel 後は呼ばれない）で確認する。
+func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	if c.cfg.MinIntervalMS != 1000 {
+		t.Fatalf("production gate interval must remain 1000ms: got %d", c.cfg.MinIntervalMS)
+	}
+	calls := 0
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte{}, nil
+	}
+	if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}); err != nil {
+		t.Fatal(err)
+	}
+	beforeCancel := calls
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	_, err := c.get(ctx, "https://ltn."+hitomiDomain+"/y", [2]int64{0, 3})
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error: got %v", err)
+	}
+	if elapsed >= 250*time.Millisecond {
+		t.Errorf("gate elapsed: got %s, expected immediate return despite 1000ms interval", elapsed)
+	}
+	if calls != beforeCancel {
+		t.Errorf("fetch calls after cancellation: got %d (expected no call beyond %d)", calls, beforeCancel)
+	}
+	if c.last.IsZero() {
+		t.Error("gate did not record request time")
+	}
+}
+
+// A-06: retry backoff sleep 中の ctx キャンセルで呼出が直ちに return すること。
+// backoff を長め（5000ms）に固定し、待機完了との区別をelapsedで証明する（本番既定 2000ms は変更しない）。
+func TestRetryBackoffReturnsImmediatelyOnContextCancellation(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1
+	c.cfg.MaxRetries = 3
+	c.cfg.RetryBackoffMS = 5000
+	var requests int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&requests, 1) == 1 {
+			cancel()
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c.http = srv.Client()
+	start := time.Now()
+	_, err := c.fetchRemoteWithGate(ctx, srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.last)
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error: got %v", err)
+	}
+	if elapsed >= time.Second {
+		t.Errorf("backoff elapsed: got %s, expected immediate return despite 5000ms backoff", elapsed)
+	}
+	if requests != 1 {
+		t.Errorf("requests after cancellation: got %d, retry must not continue", requests)
 	}
 }
 

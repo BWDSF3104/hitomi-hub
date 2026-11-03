@@ -276,12 +276,21 @@ func (c *HitomiConfig) UnmarshalJSON(data []byte) error {
 }
 
 func (c *Client) gate() {
-	c.gateForInterval(c.cfg.MinIntervalMS, &c.last)
+	_ = c.gateForInterval(context.Background(), c.cfg.MinIntervalMS, &c.last)
 }
 
-func (c *Client) gateForInterval(intervalMS int, last *time.Time) {
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
+
+func (c *Client) gateForInterval(ctx context.Context, intervalMS int, last *time.Time) error {
 	if last == nil || intervalMS <= 0 {
-		return
+		return nil
 	}
 	c.mu.Lock()
 	now := time.Now()
@@ -290,11 +299,11 @@ func (c *Client) gateForInterval(intervalMS int, last *time.Time) {
 		next := last.Add(wait)
 		*last = next
 		c.mu.Unlock()
-		time.Sleep(next.Sub(now))
-		return
+		return sleepCtx(ctx, next.Sub(now))
 	}
 	*last = now
 	c.mu.Unlock()
+	return nil
 }
 
 func (c *Client) get(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -309,7 +318,10 @@ func (c *Client) getWithGate(ctx context.Context, rawurl string, rng [2]int64, i
 	if c.fetch != nil {
 		kind := classifyFetchURL(rawurl)
 		gateStart := time.Now()
-		c.gateForInterval(intervalMS, last)
+		if err := c.gateForInterval(ctx, intervalMS, last); err != nil {
+			c.recordMetric(kind, time.Since(gateStart), 0, 0, 0)
+			return nil, err
+		}
 		gateWait := time.Since(gateStart)
 		networkStart := time.Now()
 		body, err := c.fetch(ctx, rawurl, rng)
@@ -324,7 +336,10 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
 		gateStart := time.Now()
-		c.gateForInterval(intervalMS, last)
+		if err := c.gateForInterval(ctx, intervalMS, last); err != nil {
+			c.recordMetric(kind, time.Since(gateStart), 0, 0, 0)
+			return nil, err
+		}
 		gateWait := time.Since(gateStart)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", rawurl, nil)
@@ -333,7 +348,9 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 			retrySleep := time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
 			c.recordMetric(kind, gateWait, 0, 0, retrySleep)
 			if attempt < c.cfg.MaxRetries {
-				time.Sleep(retrySleep)
+				if err := sleepCtx(ctx, retrySleep); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
@@ -352,7 +369,9 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 			retrySleep := time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
 			c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, 0, retrySleep)
 			if attempt < c.cfg.MaxRetries {
-				time.Sleep(retrySleep)
+				if err := sleepCtx(ctx, retrySleep); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
@@ -366,7 +385,9 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 			retrySleep := time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
 			c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, time.Duration(decodeMS)*time.Millisecond, retrySleep)
 			if attempt < c.cfg.MaxRetries {
-				time.Sleep(retrySleep)
+				if err := sleepCtx(ctx, retrySleep); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
@@ -384,7 +405,9 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 		c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, time.Duration(decodeMS)*time.Millisecond, retrySleep)
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
 			if attempt < c.cfg.MaxRetries {
-				time.Sleep(retrySleep)
+				if err := sleepCtx(ctx, retrySleep); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
