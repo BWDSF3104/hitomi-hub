@@ -255,6 +255,9 @@ function escapeHTML(s) {
 function targetAttr() {
   return newTabMode ? " target='_blank'" : "";
 }
+function newTabHref(hash) {
+  return newTabMode ? window.location.pathname + window.location.search + hash : hash;
+}
 function route(id, page, second) {
   if (second) return "#/g/" + id + "/page/" + page + "-" + second;
   return "#/g/" + id + "/page/" + page;
@@ -1598,18 +1601,21 @@ document.addEventListener("fullscreenerror", () => {
     updateAfterFullscreenChange();
   }
 });
-document.getElementById("results").addEventListener("click", async (e) => {
+async function handleCardClick(e) {
   const t = e.target.closest("[data-id][data-page]");
   if (!t) return;
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
-  await openGallery(Number(t.dataset.id), Number(t.dataset.page));
-});
-document.getElementById("thumbs").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-id][data-page]");
-  if (!t) return;
-  e.preventDefault();
-  await openGallery(Number(t.dataset.id), Number(t.dataset.page));
-});
+  const id = Number(t.dataset.id);
+  const page = Number(t.dataset.page);
+  if (newTabMode) {
+    window.open(newTabHref(route(id, page)), "_blank");
+    return;
+  }
+  await openGallery(id, page);
+}
+document.getElementById("results").addEventListener("click", handleCardClick);
+document.getElementById("thumbs").addEventListener("click", handleCardClick);
 window.addEventListener("resize", () => {
   if (!current.id) return;
   renderReader();

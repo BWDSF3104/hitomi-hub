@@ -1229,6 +1229,9 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 	if !strings.Contains(s, `const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";`) || !strings.Contains(s, `function targetAttr() {`) || !strings.Contains(s, `target='_blank'`) {
 		t.Errorf("ui should support a query-param new-tab policy while preserving same-tab hash routes: got %q", s)
 	}
+	if !strings.Contains(s, `function newTabHref(hash) {`) || !strings.Contains(s, `window.location.pathname + window.location.search + hash`) {
+		t.Errorf("new-tab mode must build an absolute URL for same-document fragment links because target is ignored on fragment-only navigation: got %q", s)
+	}
 	renderStart := strings.Index(s, "function renderSearchCard(r) {")
 	renderBody := s[renderStart:strings.Index(s, "\nasync function loadSearchCardCover(r, searchGen = searchGeneration) {")]
 	if !strings.Contains(renderBody, `targetAttr()`) {
@@ -1243,6 +1246,38 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 	stripBody := s[stripStart:strings.Index(s, "\nfunction highlightStrip() {")]
 	if !strings.Contains(stripBody, `targetAttr()`) {
 		t.Errorf("strip links should use the new-tab query policy: got %q", stripBody)
+	}
+	handlerStart := strings.Index(s, "async function handleCardClick(e) {")
+	if handlerStart < 0 {
+		t.Fatalf("ui should have a shared card click handler for #results and #thumbs: got %q", s)
+	}
+	handlerEnd := strings.Index(s, "\ndocument.getElementById(\"results\").addEventListener(\"click\", handleCardClick);")
+	if handlerEnd <= handlerStart {
+		t.Fatalf("card click handler must be wired to #results: got %q", s)
+	}
+	handlerBody := s[handlerStart:handlerEnd]
+	guard := `if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;`
+	guardAt := strings.Index(handlerBody, guard)
+	preventAt := strings.Index(handlerBody, `e.preventDefault();`)
+	if guardAt < 0 || preventAt < 0 {
+		t.Errorf("card click handler must keep the modifier-key native passthrough and plain-click preventDefault: got %q", handlerBody)
+	} else if guardAt > preventAt {
+		t.Errorf("modifier-key clicks must return before preventDefault so native new-tab behavior stays: got %q", handlerBody)
+	}
+	openAt := strings.Index(handlerBody, `window.open(newTabHref(route(id, page)), "_blank");`)
+	galleryAt := strings.Index(handlerBody, `await openGallery(id, page);`)
+	if openAt < 0 || galleryAt < 0 {
+		t.Errorf("card click handler must open a new tab in new-tab mode and keep same-tab openGallery otherwise: got %q", handlerBody)
+	} else {
+		if !strings.Contains(handlerBody, `if (newTabMode) {`) {
+			t.Errorf("the new-tab branch must depend on newTabMode: got %q", handlerBody)
+		}
+		if openAt > galleryAt {
+			t.Errorf("new-tab mode must open the new tab and return before same-tab openGallery: got %q", handlerBody)
+		}
+	}
+	if !strings.Contains(s, `document.getElementById("results").addEventListener("click", handleCardClick);`) || !strings.Contains(s, `document.getElementById("thumbs").addEventListener("click", handleCardClick);`) {
+		t.Errorf("the shared card click handler must be wired to #results and #thumbs: got %q", s)
 	}
 	if !strings.Contains(s, `window.addEventListener("hashchange"`) {
 		t.Errorf("same-tab hashchange routing must remain available when new-tab mode is not requested: got %q", s)
