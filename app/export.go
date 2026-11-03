@@ -171,8 +171,11 @@ func hashOf(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
+// containsTraversal は scan 側の共有ユーティリティ containsDotDotSegment（segment 完全一致）を使う。
+// export 名 `%03d_%s.%s` で `..` segment になり得ないが、部分一致誤検知（例 `Vol...01.webp`）を避ける。
+// separator `/` の除外分岐は既存の意味を維持する。
 func containsTraversal(name string) bool {
-	return strings.Contains(name, "..") || strings.Contains(name, "/")
+	return containsDotDotSegment(name) || strings.Contains(name, "/")
 }
 
 func withinRoot(root, path string) bool {

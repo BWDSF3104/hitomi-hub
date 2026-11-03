@@ -229,6 +229,64 @@ func TestExportPDFPageObjectDictCountsAreBalanced(t *testing.T) {
 	}
 }
 
+func TestExportTraversalUsesSharedSegmentCriteria(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		want bool
+	}{
+		{"Vol...01.webp", false},
+		{"..evil.webp", false},
+		{"normal.webp", false},
+		{"../evil.exe", true},
+		{"a/../b.webp", true},
+		{"a\\..\\b.webp", true},
+		{"normal/01.webp", true},
+	} {
+		if got := containsTraversal(c.name); got != c.want {
+			t.Errorf("containsTraversal(%q): got %v want %v", c.name, got, c.want)
+		}
+	}
+	for _, name := range []string{"Vol...01.webp", "..evil.webp", "normal.webp", "../evil.exe", "a/../b.webp", "a\\..\\b.webp"} {
+		if containsTraversal(name) != containsDotDotSegment(name) {
+			t.Errorf("criterion drift: containsTraversal(%q) != containsDotDotSegment(%q)", name, name)
+		}
+	}
+}
+
+func TestExportCBZExportsLegitDotDotName(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	if err := recordDiscovered(db, 5, "Galleries/5"); err != nil {
+		t.Fatal(err)
+	}
+	writeExportFile(t, root, "Galleries/5/Vol...01.webp", []byte("webp-bytes"))
+	if err := recordFile(db, filepath.Join("Galleries", "5", "Vol...01.webp"), validGalleryID(5), "0", 10, "webp", "webp", "not_evaluated", "structural"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := exportCBZ(db, exportTestCfg(), root, 5, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["entries"] != 1 {
+		t.Fatalf("export: %v", result)
+	}
+	if result["skipped"].(map[string]int)["path_traversal"] != 0 {
+		t.Fatalf("skipped: %v", result["skipped"])
+	}
+	file, err := os.Open(result["output"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := zip.NewReader(file, zipStatSize(t, result["output"].(string)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reader.File) != 1 || reader.File[0].Name != "001_Vol...01.webp" {
+		t.Fatalf("zip entries: %v", namesOf(reader.File))
+	}
+}
+
 func TestExportRefusesOutputOutsideRoot(t *testing.T) {
 	db := openTestDB(t)
 	root := t.TempDir()

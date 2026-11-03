@@ -3,7 +3,7 @@
 **Status**: 完了
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
+**Next Action**: B-08追加（export の segment 判定統一）実施完了・本コミットへpush
 
 ## 意図 / 背景
 
@@ -21,6 +21,13 @@ zip entry 名の `..` 判定が部分一致のため、正当な名前（`Vol...
 - `rules/structural.yar` の `Zip_Path_Traversal`: `contains ".."` を `matches /(^|[\/\\])\.\.([\/\\]|$)/` へ変更（YARA-X では `for any entry in zip.entries : ( ... )` の括弧が必要。`entry.file_path matches $seg` 形式は構文エラー、インライン regex は有効と実測確認）。
 
 食い違い（実装前に確認）: 記録は `app/scan.go:132` を `containsTraversal(name)` と記載するが、実際の scan.go の判定はインラインで、`containsTraversal` は `app/export.go:174`（export 名のガード）にある。承認範囲は `app/scan.go` のため scan.go 側のみ segment 化し、export.go の部分一致判定は変更していない（export 名は `%03d_%s.%s` 生成で `..` segment になり得ないが、基準は旧来的な部分一致のまま）。
+
+追加実施（2026-11-03・実行固有ID assess-20261103-1220・判断解決済み commit `a8e9f6e` の承認項目):
+
+- 統一内容: `app/export.go` の `containsTraversal` を部分一致 `strings.Contains(name, "..")` から、`app/scan.go` 導入済みの共有ユーティリティ `containsDotDotSegment`（separator `/` `\` で分割し segment 完全一致）を呼ぶ形へ統一。判定式: `containsDotDotSegment(name) || strings.Contains(name, "/")`。
+- 維持: separator `/` 除外分岐は既存の意味のまま（`normal/01.webp` は hit 維持）。export 名生成ロジック `%03d_%s.%s`・除外条件（hit/scan_error skip 等）は変更なし。scan.go の判定基準・YARA 規則・Python 参照実装は変更なし。
+- 固定テスト: `app/export_test.go` に `TestExportTraversalUsesSharedSegmentCriteria`（7 name + drift 固定: separator を含まない name で `containsTraversal` == `containsDotDotSegment`）、`TestExportCBZExportsLegitDotDotName`（e2e 回帰: `Vol...01.webp` を除外せず `001_Vol...01.webp` として export。統一前は part match 誤検知で path_traversal skip だった）。既存 export テスト（hit status の export 除外 = `TestExportCBZUsesPageOrderAndSkipsHit`）は変更せず挙動を保全。
+- e2e 限界（実測により）: export 名は `hashOf`（= `filepath.Base`）由来の hash に `%03d_` 接頭辞と ext を付けるため、生成名が単独 `..` segment になり得ない。`../evil.exe` の hit は関数レベルで固定。hit の export 除外は status 経由の既存テストで固定。
 
 テスト（合格条件固定）:
 - `app/scan_test.go`: `TestZipDotDotIsPathSegmentOnly`（9 entry 名 + status 2 件）
@@ -44,7 +51,27 @@ zip entry 名の `..` 判定が部分一致のため、正当な名前（`Vol...
 
 3実装の判定基準は segment 完全一致で一致（上表＋テスト表の同一 entry 名集合で確認）。
 
-未変更・判断要: `app/export.go:174` の部分一致 `containsTraversal`（上記）。UI 変更なし、画面確認は該当なし。
+未変更・判断要: `app/export.go:174` の部分一致 `containsTraversal`（上記）。UI 変更なし、画面確認は該当なし。（→ 2026-11-03 判断解決・追加実施済み。commit `a8e9f6e` で承認、下記追加実測）
+
+B-08 追加の実測（2026-11-03・assess-20261103-1220・commit `a8e9f6e` 基準）:
+
+1. `go vet . && go test -count=1 -timeout 300s .`（app）: `ok hitomi-hub/app 37.066s`。既存 export テスト 5 件含め全 PASS（既存挙動が壊れないことを回帰実測）。
+2. 追加 2 テスト個別: `TestExportTraversalUsesSharedSegmentCriteria` PASS 0.00s、`TestExportCBZExportsLegitDotDotName` PASS 0.12s。
+3. `python -m pytest tests/ -v`（root）: `33 passed in 3.55s`（`tests/test_canonical_build_freshness.py` 2 件 PASS 含む。UI 未変更のため exe 再 build 不要）。
+4. 関数レベル実測（`containsTraversal` の hit/no-hit。合格条件の `Vol...01.webp` 非 hit / `../evil.exe` hit を固定）:
+
+| name | containsTraversal | 根拠 |
+|---|---|---|
+| `Vol...01.webp` | false | segment `Vol...01.webp`（部分一致誤検知解消） |
+| `..evil.webp` | false | segment `..evil.webp` |
+| `normal.webp` | false | 非 hit |
+| `../evil.exe` | true | segment `..` 完全一致 |
+| `a/../b.webp` | true | segment `..` |
+| `a\..\b.webp` | true | segment `..` |
+| `normal/01.webp` | true | `/` 除外分岐の既存意味維持 |
+
+   drift 固定: 上記のうち separator を含まない 6 name で `containsTraversal(name) == containsDotDotSegment(name)`（scan 側共有ユーティリティと同一基準）。
+5. e2e 実測: gallery 5 / 実ファイル `Vol...01.webp`（status `not_evaluated`）→ export `entries=1`・`skipped` の `path_traversal=0`・zip entry 名 `001_Vol...01.webp`（統一前は部分一致誤検知で除外だった）。hit status による export 除外は既存テスト `TestExportCBZUsesPageOrderAndSkipsHit` で保全。
 
 ## 完了時 Memory Bank 操作
 
