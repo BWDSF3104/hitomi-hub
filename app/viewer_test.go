@@ -226,6 +226,34 @@ func TestViewerPOSTSecurityAllowsLoopbackJSONAndRejectsCrossOriginText(t *testin
 	}
 }
 
+func TestViewerPOSTSecurityBracketIPv6HostIsSameOrigin(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":125,"files":[]}`)
+
+	rec := httptest.NewRecorder()
+	req := jsonPOSTRequest("/api/fav", `{"gallery_id":0}`)
+	req.Host = "[::1]:8731"
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bracket ipv6 host treated as cross-origin: code %d body %q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = jsonPOSTRequest("/api/fav", `{"gallery_id":0}`)
+	req.Host = "localhost"
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("localhost control: code %d body %q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = jsonPOSTRequest("/api/fav", `{"gallery_id":0}`)
+	req.Host = "evil.example"
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("external host regression: code %d body %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestViewerImageProxyServesSameOriginWebp(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {

@@ -135,21 +135,15 @@ func isLoopbackHost(raw string) bool {
 	if host == "" {
 		return false
 	}
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return true
-	}
-	if host == "[::1]" {
-		return true
-	}
-	if name, port, ok := strings.Cut(host, ":"); ok {
-		if name == "localhost" || name == "127.0.0.1" || name == "::1" {
-			return port != ""
-		}
-		if name == "[::1]" {
-			return port != ""
+	name, _, err := net.SplitHostPort(host)
+	if err != nil {
+		name = host
+		if strings.HasPrefix(name, "[") {
+			name = strings.TrimSuffix(name, "]")
+			name = strings.TrimPrefix(name, "[")
 		}
 	}
-	return false
+	return name == "localhost" || name == "127.0.0.1" || name == "::1"
 }
 
 func startView(v *viewer, listener net.Listener) error {
