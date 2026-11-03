@@ -7,7 +7,9 @@ docs/ai/tasks/2026-11-03-a04-plain-term-lang.md	進行中	引き継ぎ完了。�
 docs/ai/tasks/2026-11-03-a06-sleep-ctx-aware.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a07a-cache-write-magic-check.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a09-serve-stored-image-full-read.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-a10-download-existing-check.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
+ar o=0/case→1 と 10:00/12:00窓 
+ar o=1/case→0 を実測）。mapping方向(0→w1/atn,1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は 
+ar o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
 docs/ai/tasks/2026-11-03-a11-pdf-raw-rgb-memory.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a12-sha256-every-scan.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a13-scan-pdf-keys-string-alloc.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
@@ -15,7 +17,6 @@ docs/ai/tasks/2026-11-03-c05-cache-limits.md	進行中	引き継ぎ完了。実�
 docs/ai/tasks/2026-11-03-b04-acquisition-title-sanitize.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b06-vt-empty-results.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b07-yara-failure-overwrites-pass.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-b09-newtab-click-handler.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b10-python-vt-httperror.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-c04-language-double-fetch.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-c06-strip-rebuild.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）

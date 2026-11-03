@@ -3,7 +3,7 @@
 **Status**: 完了
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: live 実測再測で合格条件1〜3成立（run1 attempted=3 written=3・run2 skipped=3 remote呼出0・回帰 written=2）。単独 commit（`app/hitomi_test.go`・本記録）+ push 済み・commit ID は commit 後に追記。項目 close（`task_manager.py end`）。tsv は記録 commit で親が分離。窓 rotation の注記: faithful parse が窓ごとに初期o・case代入を読むため app URL と live 200 の一致は窓によらず維持（mapping 方向 0→w1/atn・1→w2/btn は固定）
+**Next Action**: commit 済み（5d846b4・単独 commit+push・live 実測合格）。項目 close 済み（tsv 行削除は分離 commit 扱い）。窓 rotation 注記: faithful parse が窓ごとに初期o・case代入を読むため app 構築 URL と live 200 の一致は窓によらず維持（mapping 方向 0→w1/atn・1→w2/btn 固定）。
 ar o=0/case→1 と 10:00/12:00窓 
 ar o=1/case→0 を実測）。mapping方向(0→w1/atn,1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は 
 ar o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
