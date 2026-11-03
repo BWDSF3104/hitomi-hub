@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: C-05/A-14合格commit52ffde2。実施順20 C-04から単独commit/pushで順次実施
+**Next Action**: C-04合格commit4c25b1f。実施順21のC-06から単独commit/pushで順次実施
 
 ## 意図 / 背景
 
@@ -126,6 +126,8 @@
 - C-05/A-14 合格・close commit `52ffde2`（push済み）。機械確認: HEAD `52ffde2`、ツリーは `app/app.exe` と `app/docs/` untrackedのみ、個別Status完了と子報告一致。
 - 残件記録: `indexTopCache`/`noFullCache`/`versions` は承認範囲外で unbounded のまま。known-issues記録のみ。本項目はclose済みで、この残件は実施順20以降の項目と依存なし。
 - 次の実施順20項目は C-04: `docs/ai/tasks/2026-11-03-c04-language-double-fetch.md`。
+- C-04 合格・close commit `4c25b1f`（push済み）。機械確認: HEAD `4c25b1f`、ツリーは `app/app.exe` と `app/docs/` untrackedのみ、個別Status完了と子報告一致。残件として remote実測（nozomi calls 1→1）未確認、multiple positive language path first-winsは未テスト。本項目はmock testで合格条件固定済みで、実施順21以降と依存なし。
+- 次の実施順21項目群のうち C-06 を単独項目として委譲: `docs/ai/tasks/2026-11-03-c06-strip-rebuild.md`。
 
 ## Verification
 
