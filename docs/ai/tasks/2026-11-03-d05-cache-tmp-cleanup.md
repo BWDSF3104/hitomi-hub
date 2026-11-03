@@ -1,6 +1,6 @@
 # D-05: cache 書き込みの temp 掃除がない
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
 **Next Action**: 調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
