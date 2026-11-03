@@ -9,3 +9,5 @@ scratch/
 output/
 docs/ai/tmp/
 cache/
+config.json
+secrets/

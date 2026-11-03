@@ -199,6 +199,19 @@ func loadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+func resolveConfigPath(dataDir, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+
+	primary := filepath.Join(dataDir, "config.json")
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+
+	return filepath.Join(dataDir, "config.example.json")
+}
+
 func resolveRoot(explicit string) string {
 	if explicit != "" {
 		abs, err := filepath.Abs(explicit)
@@ -710,7 +723,7 @@ func main() {
 	f := &flags{}
 	fsFlags.StringVar(&f.root, "root", "", "workspace root (default: cwd)")
 	fsFlags.StringVar(&f.gallery, "gallery-dir", "", "gallery dir under root (default: Galleries)")
-	fsFlags.StringVar(&dataDir, "data-dir", "", "data files (schema.sql, rules/, config.example.json)")
+	fsFlags.StringVar(&dataDir, "data-dir", "", "data files (schema.sql, rules/, config.json, fallback config.example.json)")
 	fsFlags.BoolVar(&f.noVT, "no-vt", false, "skip VirusTotal lookup")
 	fsFlags.BoolVar(&f.verify, "verify", false, "mark recorded files that no longer exist")
 	fsFlags.StringVar(&f.term, "term", "", "search term (nozomi)")
@@ -729,17 +742,14 @@ func main() {
 	fsFlags.IntVar(&f.port, "port", 0, "viewer port (default 8731)")
 	fsFlags.StringVar(&f.format, "format", "cbz", "export format: cbz | pdf")
 	fsFlags.StringVar(&f.out, "out", "", "export output file (default Galleries/<id>.<format>)")
-	fsFlags.StringVar(&f.config, "config", "", "config JSON path (default <data-dir>/config.example.json)")
+	fsFlags.StringVar(&f.config, "config", "", "config JSON path (default <data-dir>/config.json, fallback config.example.json if missing)")
 	_ = fsFlags.Parse(args)
 
 	if dataDir == "" {
 		dataDir = filepath.Dir(executablePath())
 	}
 	root := resolveRoot(f.root)
-	cfgPath := filepath.Join(dataDir, "config.example.json")
-	if f.config != "" {
-		cfgPath = f.config
-	}
+	cfgPath := resolveConfigPath(dataDir, f.config)
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config: "+err.Error())

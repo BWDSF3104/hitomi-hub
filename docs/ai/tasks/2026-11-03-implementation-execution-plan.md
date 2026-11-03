@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 実施開始指示待ち。指示後は優先4 B-08から1項目ずつサブエージェントで実施し、結果を本タスクと個別タスクへ逐次反映
+**Next Action**: D-02単独commit実施済み。推奨方針は確定。次の実施順18 A-03から項目単独commit・単独検証で順次実施。判断項目は実施前に方針変更提案のみ。
 
 ## 意図 / 背景
 
@@ -59,7 +59,7 @@
 | 25 | A-09 | `serveStoredImage` 全読み・Range・304・Content-Range 評価（必要なら部分的 stream/conditional） | Go | 未実施 |
 | 26 | A-13 | `ScanPDFKeys` の `string(data)` key allocation 回避 | Go | 未実施 |
 | 27 | C-10 | `go test` gate sleep をテスト専用 config で 0 にする案の評価のみ（本番ゲート間隔を変えない） | 案評価のみ | 未実施 |
-| 28 | D-01/D-02/D-08 | `.gitignore`、config.example 秘密扱い、production 未使用コード整理 | trivial | 未実施 |
+| 28 | D-01/D-02/D-08 | `.gitignore`、config.example 秘密扱い、production 未使用コード整理 | trivial | D-02実施済み（単独commit）。D-01/D-08未実施 |
 | 29 | D-06 | gg case 方向、TN fallback 古記述、check 説明、README UI 記述修正 | docs 修正は承認後 | 未実施 |
 | 30 | D-07 | `test_canonical_build_freshness.py` の clean clone / CI 前提固定 | tests | 未実施 |
 | 31 | A-12 | SHA256 全件毎回計算（原優先表外・個別タスクあり） | 低優先 | 未実施 |
@@ -102,6 +102,14 @@
 - A-02/C-03 合格 commit `42f1765`（push 済み）。`recordDiscovered` を request あたり 1 transaction へ（`recordDiscoveredBatch`、CLI search 1 tx、search handler record phase batch 1 呼び出し、external call は tx 外）。実測: request1 = 1 commit（修正前 25）、empty ids = 0、2回目行数不変（D-03 の unique key・`INSERT OR IGNORE` 意味維持）。`X-Search-Timing` record 935 → 45ms/38ms（canonical server・rebuilt exe・scratch root）。go test ok 39.958s、pytest 38 passed。機械的確認 ✓。報告した解釈: 承認スコープは `app/main.go` だが合格条件成立のため `app/viewer.go` の call site 1 行を変更。`recordDiscovered` 引数 `dbExec` → `execer` interface 群（テスト fake 用最小構成）。
 - 委譲上限5件（A-07a・B-06・B-07・B-10・A-02/C-03）で終了。実施順18以降（A-03、A-14/C-05、C-04、C-06/C-07/C-09、A-11、A-04/D-09/D-10、A-06、A-09、A-13、C-10、D-01/D-02/D-08、D-06、D-07、A-12、B-04）は未実施。
 - API key 保管: `scratch/virustotal-api.key`（`.gitignore:8` の `scratch/` で非追跡）。アプリは config の `api_key` → env `VIRUSTOTAL_API_KEY` の順で読む。key はコミット対象ファイル・記録・報告へ書かない（grep で確認済み）。`output/`（別端末へのコピー用）へ key を入れない。未追跡 artifact: `app/app.exe`。
+
+## 第4実行（2026-11-03・判断承認後・D-02単独実施）
+
+- D-02 合格（ユーザー直接指示で実施順28のD-02部分のみ先行実施）。単独commitは `.gitignore`、`app/main.go`、`app/main_test.go`、D-02記録、decision、`current-task.tsv`参照行削除。
+- 決定: `config.json` を非追跡の正典config pathとし、`config.example.json` はkeyなしで追跡維持。既定は `<data-dir>/config.json`、明示 `--config` 優先、`config.json` 不在時のみ `config.example.json` fallback。`.gitignore` に `config.json` / `secrets/` 追加。keyはcommit・記録・報告へ書かない。
+- 検証: `app`で `go vet .` clean・`go test -count=1 -timeout 300s .` ok 41.711s（追加テスト含む）。canonical exe再build。ルートで `python -m pytest tests/ -v` 38 passed 3.64s（freshness含む）。UI未変更のためserver実機確認なし。`config.json`はgit statusで非追跡、`config.example.json`はkeyなしで追跡維持。
+- 判断解決: D-02を除く残判断項目はユーザー推奨承認で確定。確定方針は `docs/ai/decisions/2026-11-03-implementation-judgment-approval.md`。D-01のignore追加、D-06 docs修正、A-04/D-09/D-10 hitomi準拠確認、C-10 test gate inject、B-06/B-07 parity/Python側対応は未実施。
+- 次の実施順18項目以降はplanの承認範囲と合格条件に従う。最も近い独立項目は実施順18 A-03。
 
 ## Verification
 

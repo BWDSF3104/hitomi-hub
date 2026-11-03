@@ -404,6 +404,29 @@ func TestMigrateSchemaRefusesDuplicatesWithoutDeletingRows(t *testing.T) {
 	}
 }
 
+func TestResolveConfigPathPrefersNonTrackedConfigJSONAndFallsBackToExample(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(primary, []byte(`{"api_key":"test"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveConfigPath(dir, ""); got != primary {
+		t.Fatalf("config.json should be preferred: got %q want %q", got, primary)
+	}
+
+	explicit := filepath.Join(dir, "explicit.json")
+	if got := resolveConfigPath(dir, explicit); got != explicit {
+		t.Fatalf("explicit path must survive: got %q want %q", got, explicit)
+	}
+}
+
+func TestResolveConfigPathFallsBackToExampleWhenConfigJSONMissing(t *testing.T) {
+	dir := t.TempDir()
+	if got := resolveConfigPath(dir, ""); got != filepath.Join(dir, "config.example.json") {
+		t.Fatalf("missing config.json should fall back to config.example.json: got %q", got)
+	}
+}
+
 func TestLoadConfigPreservesUseLiveGGWhenOmitted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":1000}}`), 0o644); err != nil {
