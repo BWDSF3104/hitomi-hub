@@ -3,7 +3,10 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 実装・mock固定テスト合格。live CLI実測は gg.js switch polarity 反転（M()がlive cases内→w2を組み、実測w1=200/w2=404）でblock・未検証。polarity是正の判断（单独項目）後に実在gallery再測→コミット→終了
+**Next Action**: polarity是正: decision側の固定は成立せず（live gg.js 構造が窓 rotation: 11-03 11:38Z に var o=0/case→1 窓、10:00/12:00窓に var o=1/case→0 を実測）。mapping方向(0→w1/atn, 1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は var o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
+ar o=0/case→1 と 10:00/12:00窓 
+ar o=1/case→0 を実測）。mapping方向(0→w1/atn,1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は 
+ar o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
 
 ## 意図 / 背景
 
@@ -27,6 +30,8 @@
 
 判断点（持ち帰り・実装なし）: 2026-11-03 実測で live `gg.js` switch polarity が decision `2026-11-01-ggset-generation-and-drift.md` line 15（cases 内 → 0 → `w1`）どおり（`var o = 1; switch → o = 0; break`）だが、`GG.M()`（case → 1 → `w2`）とテスト fixture（`var o = 0; case → o = 1`）は 11-01 構造基準で反転。実測: live cases 内 hash（gallery 4301537 file 1、g=2557）は `w1` で 200（320782 bytes）、hub 構築の `w2` URL は 404。この反転により hub CLI download は現状 live で 404 となり「1 回目に attempted と written が一致」の実測が成立しない（shard URL 組み立て変更は承認範囲外。单独項目・decision 更新要）。
 
+polarity是正項目結果（2026-11-03・assess-20261103-1220・code 変更なし）: 承認 premise（fresh live 実測 = decision 側）が 11:38Z 実測で不成立。fresh live `gg.js`（bucket `1793703601/`・cases 1984）は `m: function(g) { var o = 0; switch (g) { case 1284: ... case 1736: o = 1; break; } return o; }`（cases 内 → 1 → `w2`/`btn`）で現行 code・fixture と一致し decision line 15 と矛盾。窓 data 実測（gallery 4301695 全 50 files・11:00窓）: in-case hash `w2`=200/`w1`=404、out-of-case hash `w1`=200/`w2`=404（p8）。同一 hash `e3ee8d44...735fd9`（g=2557）は 10:00窓（`var o = 1`/case→`o = 0`）で `w1`=200、12:00窓（同構造）で live 側 `w1`=200 → 構造（初期 o・case 代入）が窓ごとに rotation。mapping 方向（0→`w1`/`atn`、1→`w2`/`btn`）は固定で有効。TN subdomain `atn`/`btn` は双方 200（p4・interchangeable）。現行 code の片側固定はどちらへ反転させても半分の窓で同じ失敗 → polarity 反転は実施せず。正典修正は faithful parse（`parseGG` に初期 o・case 代入保持、`M()` faithful 化、`gen_ggset.py` 観測 polarity 生成）＝ユーザー承認判断点。記録: decision `2026-11-03-gg-case-polarity-correction.md`（line 15 の構造主張を supersede）、known-issues `2026-11-03-gg-polarity-inverted-vs-live-ggjs.md`。作業前チェック読了: `2026-11-01-root-and-tn-display-correction-policy.md`、`2026-11-01-fast-nonblocking-viewer-policy.md`、`2026-11-01-ggset-generation-and-drift.md`。
+
 ## Verification
 
 - `go vet . && go test -count=1 -timeout 300s .`（app）: ok `37.563s`（新固定テスト含む）。明示モード live test は 404 drift により skip。
@@ -39,6 +44,7 @@
   - probe scripts: `docs/ai/tmp/assess-20261103-1220/a10_probe.py`/`a10_probe2.py`/`a10_probe3.py`/`a10_probe4.py`/`a10_seed.py`。live gg `b=1793700002/`・cases 2112・`var o = 1`（cases → `o = 0`）。in-case hash `e3ee8d...`(g=2557): `w1`=200 / `w2`=404。
 - 判定: 実装・mock 固定テスト・pytest は合格。live CLI 実測は gg polarity 反転で block → 項目は進行中 maintained（合格扱いせず）。M()/fixture polarity の是正判断後に live 再測して閉じる。
 - commit 前再検証（2026-11-03 commit 時・scratch script `docs/ai/tmp/assess-20261103-1220/a10_reverify.ps1`）: `go vet . && go test -count=1 -timeout 300s .`（app）ok `37.941s`（go 節 elapsed `41.669s`）。`python -m pytest tests/ -v`（ルート）33 passed `3.61s`（`test_canonical_build_freshness.py` 含む。`ui.html` 変更なし → exe 再 build 不要）。
+- polarity是正項目検証（2026-11-03・code 変更なし）: `go vet . && go test -count=1 -timeout 300s .`（app）ok `38.339s`。`python -m pytest tests/ -v` 33 passed `4.28s`。canonical exe 再 build + server 8731 起動（scratch root `polarity-live-root`・scratch dataDir・製品 output/永続 cache 非汚染）: `var o = 1` 窓（12:00窓）では CLI download gallery 4301695 → `attempted=50 written=0`（全 404。code 側 URL が live 側と逆）、viewer `/api/image/<hash>?format=webp` → `404` `x-cache: no_full` → A-10 合格条件この窓未成立（窓依存）。`var o = 0` 窓（11:00窓・p8）は live 側=code 側一致（全 file 200）で条件成立。server は再 build exe で 8731 のまま稼働継続。
 - commit: 2026-11-03 ユーザー承認により A-10 分（`app/main.go`・`app/hitomi_test.go`・本記録）のみ単独 commit＋push。live gg polarity 反転で live 実測未検証のまま・項目は進行中 maintained（close せず）。`docs/ai/current-task.tsv`（B-09 行削除混在）は分離 commit へ回すため非含。判断点の polarity 反転は单独項目として別途是正予定、是正後に実在 gallery で live 実測（1回目 attempted==written）を再測して閉じる。
 
 ## 完了時 Memory Bank 操作
