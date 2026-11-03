@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 第6実行C-09完了（commit 55b848f・push済み）。次の実行は実施順22（A-11）から1項目ずつ順次
+**Next Action**: 残項目推奨承認（decision 2026-11-03-remaining-item-recommendations-approved）。実施順: A-13→A-06→C-10→D-07→D-06 → A-11→A-09 → 判断項目（A-04/D-09/D-10 hitomi準拠確認、B-06/B-07 parity、P2 #8/#9）。実施開始指示待ち
 
 ## 意図 / 背景
 
@@ -138,6 +138,12 @@
 ## 第6実行（2026-11-03・C-09単独）
 
 - C-09 合格・close commit `55b848f`（push済み）。機械確認: HEAD `55b848f`、ツリー clean、個別Status完了と子報告一致（mocked fetch harness 16 checks・固定テスト `TestEmbeddedUIDebouncesReadAndListsToSingleCall`・実機 page移動5回→post/list各1回・Drive `I:\マイドライブ\kilo\2026-11-03-c09-page-move-debounce.png`）。観察（判断なし）: showLists debounce化でopen/searchのlist表示が最大250ms遅延（設計通り・display path不変）。次の実行は実施順22（A-11）から1項目ずつ順次。
+
+## 残項目判断解決（2026-11-03・ユーザー推奨承認）
+
+- 実施順22以降の判定推奨をユーザー承認。正典記録は `docs/ai/decisions/2026-11-03-remaining-item-recommendations-approved.md`。承認は方針確定であり実施開始指示ではない。
+- 確定方針: A-11 streaming（pageごと encode+sequential write）、A-09 stream+304/206、A-13 `bytes.Contains`、A-06 ctx-aware select、C-10 test 専用 gate inject（本番1000ms不変）、D-07 exe 不在時 skip（test 内 build 不採用）、D-08 production 未使用削除・テスト参照は移動・`pageSource` 変更なし・`app/ui.html:1458` no-op 削除、B-04 check 側を `acquisitionTitleName` へ、A-12 `scan_cache(sha256,size,mtime)` skip（不一致は再ハッシュ安全側）、D-06 docs 側 faithful parse 基準へ（README 具体行は実物確認後）、A-04/D-09/D-10 hitomi 準拠確認後に hitomi 挙動へ、B-06 残件 Go 側 empty results 基準の小修正、B-07 残件① Python 側を Go 表現へ、manual full-image retry は再現条件確認まで保留、P2 #8 AVIF は PDF embed 対象外と明示（decoder 追加なし）、P2 #9 は用途定義後に列削除か placeholder 明示で閉じる。
+- 承認済みの実施順（plan 表の旧順に優先して適用）: ① A-13 → A-06 → C-10 → D-07 → D-06、② A-11 → A-09、③ 判断項目（A-04/D-09/D-10 hitomi 準拠確認、B-06/B-07 parity、P2 #8/#9）は実施開始指示後に順次。
 
 ## Verification
 
