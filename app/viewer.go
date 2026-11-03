@@ -651,8 +651,18 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gg := v.client.GG()
+	initialGG := gg
+	force := r.URL.Query().Get("force") == "1"
+	if force {
+		v.client.clearNegativeNoFull(hash, format, gg)
+	} else if v.client.canUseNegativeNoFull(hash, format, gg) {
+		writeNoFull(w, format)
+		return
+	}
+
 	body, err := v.client.getImage(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
 	if err == nil {
+		v.client.clearNegativeNoFull(hash, format, gg)
 		writeImage(w, format, body, "miss")
 		if cacheErr == nil && len(body) > 0 {
 			_ = v.writeImageCacheAtomically(cachePath, body)
@@ -662,9 +672,12 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 
 	if strings.Contains(err.Error(), "status 404") {
 		source := v.client.EnsureGG(r.Context(), true)
-		if source == "live" && !sameGG(gg, v.client.GG()) {
-			body, err = v.client.getImage(r.Context(), StorageURL(hash, format, v.client.GG()), [2]int64{-1, -1})
+		gg = v.client.GG()
+
+		if source == "live" && !sameGG(initialGG, gg) {
+			body, err = v.client.getImage(r.Context(), StorageURL(hash, format, gg), [2]int64{-1, -1})
 			if err == nil {
+				v.client.clearNegativeNoFull(hash, format, gg)
 				writeImage(w, format, body, "miss")
 				if cacheErr == nil && len(body) > 0 {
 					_ = v.writeImageCacheAtomically(cachePath, body)
@@ -672,12 +685,15 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if strings.Contains(err.Error(), "status 404") {
+				v.client.rememberNegativeNoFull(hash, format, gg)
 				writeNoFull(w, format)
 				return
 			}
 			http.Error(w, "image: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+
+		v.client.rememberNegativeNoFull(hash, format, gg)
 		writeNoFull(w, format)
 		return
 	}

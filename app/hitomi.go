@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 // hitomi の data 正典（ltn）。公式 API は無い。正典ドメインは ltn の common.js（domain2）から
 const hitomiDomain = "gold-usergeneratedcontent.net"
 const galleriesPerPage = 25
+const negativeNoFullCacheTTL = 5 * time.Minute
 
 type HitomiConfig struct {
 	MinIntervalMS int    `json:"min_interval_ms"`
@@ -85,11 +87,79 @@ type Client struct {
 	indexNodeCache  map[string]*indexNodeCacheEntry
 	indexDataCache  map[string]indexDataCacheEntry
 	indexCacheMu    sync.Mutex
+	noFullCache     map[string]time.Time
+	noFullCacheMu   sync.Mutex
 }
 
 func defaultHitomiConfig() HitomiConfig {
 	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true}
+}
+
+func negativeNoFullKey(hash, format string, gg GG) string {
+	values := make([]int, 0, len(gg.CaseSet))
+	for value := range gg.CaseSet {
+		values = append(values, value)
+	}
+	sort.Ints(values)
+
+	var b strings.Builder
+	b.WriteString(hash)
+	b.WriteByte('|')
+	b.WriteString(format)
+	b.WriteByte('|')
+	b.WriteString(gg.Source)
+	b.WriteByte('|')
+	b.WriteString(gg.Bucket)
+	for _, value := range values {
+		b.WriteByte('|')
+		b.WriteString(strconv.Itoa(value))
+	}
+	return b.String()
+}
+
+func (c *Client) canUseNegativeNoFull(hash, format string, gg GG) bool {
+	key := negativeNoFullKey(hash, format, gg)
+
+	c.noFullCacheMu.Lock()
+	defer c.noFullCacheMu.Unlock()
+
+	if c.noFullCache == nil {
+		return false
+	}
+	storedAt, ok := c.noFullCache[key]
+	if !ok {
+		return false
+	}
+	if time.Since(storedAt) >= negativeNoFullCacheTTL {
+		delete(c.noFullCache, key)
+		return false
+	}
+	return true
+}
+
+func (c *Client) clearNegativeNoFull(hash, format string, gg GG) {
+	key := negativeNoFullKey(hash, format, gg)
+
+	c.noFullCacheMu.Lock()
+	defer c.noFullCacheMu.Unlock()
+
+	if c.noFullCache == nil {
+		return
+	}
+	delete(c.noFullCache, key)
+}
+
+func (c *Client) rememberNegativeNoFull(hash, format string, gg GG) {
+	key := negativeNoFullKey(hash, format, gg)
+
+	c.noFullCacheMu.Lock()
+	defer c.noFullCacheMu.Unlock()
+
+	if c.noFullCache == nil {
+		c.noFullCache = make(map[string]time.Time)
+	}
+	c.noFullCache[key] = time.Now()
 }
 
 func (c *HitomiConfig) UnmarshalJSON(data []byte) error {

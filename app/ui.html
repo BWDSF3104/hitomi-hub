@@ -758,12 +758,14 @@ function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecoun
   renderPrefetchStatus();
 }
 
-function entrySource(entry, galleryId = current.id) {
+function entrySource(entry, galleryId = current.id, force = false) {
   const formats = entry.local_formats || [];
   if (formats.length) {
     return "/files/" + galleryId + "/" + entry.hash + "." + formats[0];
   }
-  return "/api/image/" + entry.hash + "?format=" + encodeURIComponent(entryFormat(entry, galleryId)) + "&gallery=" + encodeURIComponent(galleryId);
+  let src = "/api/image/" + entry.hash + "?format=" + encodeURIComponent(entryFormat(entry, galleryId)) + "&gallery=" + encodeURIComponent(galleryId);
+  if (force) src += "&force=1";
+  return src;
 }
 function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   const key = fullCacheKey(entry, galleryId);
@@ -784,7 +786,7 @@ function storeFullCache(entry, status, objectUrl, galleryId = current.id) {
   }
 }
 
-async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {
+async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return "error";
   const key = fullCacheKey(entry, galleryId);
   const cached = fullCache.get(key);
@@ -795,7 +797,7 @@ async function prefetchPageImage(entry, signal, galleryId = current.id, allowRec
     updatePrefetchCounts("local", entry, galleryId, allowRecount);
     return "local";
   }
-  const fullSrc = entrySource(entry, galleryId);
+  const fullSrc = entrySource(entry, galleryId, force);
   const r = await fetch(fullSrc, { cache: "no-store", signal });
   if (signal.aborted) return "error";
   if (galleryId !== current.id || backgroundGalleryId !== galleryId) return "error";
@@ -1025,7 +1027,7 @@ async function manualRetryFailedFullImages() {
       manualRetryingKeys.add(key);
 
       try {
-        await prefetchPageImage(entry, signal, current.id, true);
+        await prefetchPageImage(entry, signal, current.id, true, true);
 
         const img = reader && reader.querySelector("img[data-hash=\"" + entry.hash + "\"]");
         if (img) await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);

@@ -357,6 +357,7 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
@@ -377,6 +378,113 @@ func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testi
 	cacheFile := filepath.Join(v.cacheRoot, sampleHash+".webp")
 	if _, err := os.Stat(cacheFile); err == nil {
 		t.Errorf("image proxy should not persist TN as full-image cache: %s", cacheFile)
+	}
+}
+
+func TestViewerImageProxyNegativeNoFullCacheReducesRepeatStorageFetches(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		return nil, errors.New("status 404 for " + rawurl)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
+		t.Fatalf("first negative no_full request: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
+		t.Fatalf("negative no_full cache hit should avoid storage fetch: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+
+	key := negativeNoFullKey(sampleHash, "webp", v.client.GG())
+	v.client.noFullCache[key] = time.Now().Add(-negativeNoFullCacheTTL - time.Second)
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 2 {
+		t.Fatalf("expired negative no_full cache should recheck storage: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+}
+
+func TestViewerImageProxyForceBypassesNegativeNoFullCache(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		return nil, errors.New("status 404 for " + rawurl)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
+		t.Fatalf("first negative no_full request: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp&force=1", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 2 {
+		t.Fatalf("force manual retry should bypass negative no_full cache: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+}
+
+func TestViewerImageProxyNegativeNoFullKeyChangesWhenGGChanges(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		return nil, errors.New("status 404 for " + rawurl)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
+		t.Fatalf("first negative no_full request: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+
+	v.client.gg = GG{
+		Bucket:  "1793494803/",
+		Source:  "snapshot",
+		CaseSet: map[int]bool{2488: true, 1184: false},
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 2 {
+		t.Fatalf("changed gg should use a different negative no_full key: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+}
+
+func TestViewerImageProxyDoesNotCacheNetworkErrorAsNegativeNoFull(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		return nil, errors.New("network error")
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("x-cache") != "" || len(urls) != 1 {
+		t.Fatalf("network error should not create negative no_full cache: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	if rec.Code != http.StatusBadGateway || len(urls) != 2 {
+		t.Fatalf("network error should be rechecked: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
 }
 
@@ -1048,7 +1156,7 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 	if !strings.Contains(s, `prefetchQueueKeys`) || !strings.Contains(s, `backgroundGalleryId !== current.id`) || !strings.Contains(s, `startBackgroundWorkers(signal)`) {
 		t.Errorf("ui should keep a stable background queue and only recompute it when the gallery target changes: got %q", s)
 	}
-	if !strings.Contains(s, `function entrySource(entry, galleryId = current.id) {`) || !strings.Contains(s, `entry.local_formats`) {
+	if !strings.Contains(s, `function entrySource(entry, galleryId = current.id, force = false) {`) || !strings.Contains(s, `entry.local_formats`) {
 		t.Errorf("ui should use entry local_formats and remote TN/full format for background prefetch: got %q", s)
 	}
 	if !strings.Contains(s, `prefetchedEntries`) || !strings.Contains(s, `countsByGallery`) {
@@ -1129,7 +1237,7 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 	if updateStart < 0 {
 		t.Fatalf("updatePrefetchCounts function not found")
 	}
-	updateEnd := strings.Index(s, "\nfunction entrySource(entry, galleryId = current.id) {")
+	updateEnd := strings.Index(s, "\nfunction entrySource(entry, galleryId = current.id, force = false) {")
 	if updateEnd < 0 {
 		t.Fatalf("updatePrefetchCounts body end not found")
 	}
@@ -1137,7 +1245,7 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 	if !strings.Contains(updateBody, `galleryId !== current.id`) || !strings.Contains(updateBody, `backgroundGalleryId !== galleryId`) {
 		t.Errorf("updatePrefetchCounts should not write status for stale gallery/background targets: got %q", updateBody)
 	}
-	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {")
+	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {")
 	if prefetchStart < 0 {
 		t.Fatalf("prefetchPageImage function not found")
 	}
@@ -1149,7 +1257,7 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 	if storeStart < 0 {
 		t.Fatalf("storeFullCache function not found")
 	}
-	storeBody := s[storeStart:strings.Index(s, "\nasync function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {")]
+	storeBody := s[storeStart:strings.Index(s, "\nasync function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {")]
 	if !strings.Contains(storeBody, `galleryId === current.id && backgroundGalleryId === galleryId`) {
 		t.Errorf("storeFullCache should update strip DOM only for the current background target: got %q", storeBody)
 	}
@@ -1844,7 +1952,7 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 		t.Fatalf("manualRetryFailedFullImages function not found")
 	}
 	manualBody := s[manualStart:strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")]
-	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `if (sourceStatusByEntry.get(key) !== "error" && sourceStatusByEntry.get(key) !== "no_full") continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
+	if !strings.Contains(manualBody, `if (manualRetryRunning) return;`) || !strings.Contains(manualBody, `if (manualRetryingKeys.has(key)) continue;`) || !strings.Contains(manualBody, `if (sourceStatusByEntry.get(key) !== "error" && sourceStatusByEntry.get(key) !== "no_full") continue;`) || !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true, true);`) || !strings.Contains(manualBody, `await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`) {
 		t.Errorf("manual retry must be manual-only, combined error/no_full targeted, re-entrancy protected, and use generation-guarded loadFullImage/prefetchPageImage with allowRecount: got %q", manualBody)
 	}
 }
@@ -1864,7 +1972,7 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 	}
 
 	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")
-	updateEnd := strings.Index(s, "\nfunction entrySource(entry, galleryId = current.id) {")
+	updateEnd := strings.Index(s, "\nfunction entrySource(entry, galleryId = current.id, force = false) {")
 	if updateStart < 0 || updateEnd < 0 {
 		t.Fatalf("updatePrefetchCounts function not found")
 	}
@@ -1887,7 +1995,7 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 		}
 	}
 
-	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false) {")
+	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {")
 	prefetchEnd := strings.Index(s, "\nfunction revokeFullObjectUrls() {")
 	if prefetchStart < 0 || prefetchEnd < 0 {
 		t.Fatalf("prefetchPageImage function not found")
@@ -1918,7 +2026,7 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 	for _, want := range []string{
 		`manualRetryingKeys.add(key);`,
 		`if (sourceStatusByEntry.get(key) !== "error" && sourceStatusByEntry.get(key) !== "no_full") continue;`,
-		`await prefetchPageImage(entry, signal, current.id, true);`,
+		`await prefetchPageImage(entry, signal, current.id, true, true);`,
 		`await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);`,
 		`catch (err) {`,
 		`manualRetryingKeys.delete(key);`,
@@ -1931,6 +2039,44 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 	}
 	if !strings.Contains(s, `document.getElementById("retry-failed").addEventListener("click",`) || !strings.Contains(s, `void manualRetryFailedFullImages();`) {
 		t.Errorf("manual retry must be triggered only by an actual UI click handler: got %q", s)
+	}
+}
+
+func TestEmbeddedUIManualRetryUsesForceQueryInEntrySource(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	entryStart := strings.Index(s, "function entrySource(entry, galleryId = current.id, force = false) {")
+	entryEnd := strings.Index(s, "\nfunction storeFullCache(entry, status, objectUrl, galleryId = current.id) {")
+	if entryStart < 0 || entryEnd < 0 || entryStart > entryEnd {
+		t.Fatalf("entrySource force path not found")
+	}
+	entryBody := s[entryStart:entryEnd]
+	if !strings.Contains(entryBody, `if (force) src += "&force=1";`) {
+		t.Errorf("manual retry entry source must add force query only for manual retry: got %q", entryBody)
+	}
+
+	prefetchStart := strings.Index(s, "async function prefetchPageImage(entry, signal, galleryId = current.id, allowRecount = false, force = false) {")
+	prefetchEnd := strings.Index(s, "\nfunction revokeFullObjectUrls() {")
+	if prefetchStart < 0 || prefetchEnd < 0 || prefetchStart > prefetchEnd {
+		t.Fatalf("prefetchPageImage force path not found")
+	}
+	prefetchBody := s[prefetchStart:prefetchEnd]
+	if !strings.Contains(prefetchBody, `const fullSrc = entrySource(entry, galleryId, force);`) {
+		t.Errorf("prefetchPageImage must pass force to entrySource without changing normal prefetch behavior: got %q", prefetchBody)
+	}
+
+	manualStart := strings.Index(s, "async function manualRetryFailedFullImages() {")
+	manualEnd := strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")
+	if manualStart < 0 || manualEnd < 0 || manualStart > manualEnd {
+		t.Fatalf("manualRetryFailedFullImages function not found")
+	}
+	manualBody := s[manualStart:manualEnd]
+	if !strings.Contains(manualBody, `await prefetchPageImage(entry, signal, current.id, true, true);`) {
+		t.Errorf("manual retry should call force-bypass prefetchPageImage: got %q", manualBody)
 	}
 }
 
@@ -2659,6 +2805,7 @@ func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
 func TestImageProxyCacheStateIsNotTN(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
 	fullPath, err := safeCachePath(v.cacheRoot, sampleHash, "webp")
 	if err != nil {
 		t.Fatal(err)
