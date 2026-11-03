@@ -762,6 +762,101 @@ func TestViewerInfoCacheConcurrentHandlersDoNotWriteUnprotectedMap(t *testing.T)
 	}
 }
 
+func TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	fetches := 0
+	v.infoCacheMaxEntries = 2
+	v.infoCacheMaxBytes = 1000
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		id := strings.TrimSuffix(strings.TrimPrefix(rawurl, "https://ltn."+hitomiDomain+"/galleries/"), ".js")
+		return []byte("var galleryinfo = {\"id\":\"" + id + "\",\"title\":\"T\",\"files\":[]}"), nil
+	}
+
+	// Windows clock granularity can tie same-instant timestamps. Fix access order
+	// explicitly after each insert so LRU eviction order is deterministic.
+	base := time.Now()
+	for i, id := range []int{1, 2, 3} {
+		if _, err := v.info(id); err != nil {
+			t.Fatalf("info %d: %s", id, err)
+		}
+		if entry, ok := v.infoCache[id]; ok {
+			entry.lastAccess = base.Add(time.Duration(-30+10*i) * time.Second)
+		}
+	}
+	if len(v.infoCache) != 2 {
+		t.Fatalf("entry limit 2 should evict oldest entry: len %d", len(v.infoCache))
+	}
+	if _, ok := v.infoCache[1]; ok {
+		t.Error("oldest entry should be evicted when entry limit is crossed")
+	}
+	if c := v.infoCache[2]; c == nil || c.info.ID != 2 {
+		t.Error("second entry should remain")
+	}
+	if c := v.infoCache[3]; c == nil || c.info.ID != 3 {
+		t.Error("newest entry should remain")
+	}
+	if v.infoCacheBytes > v.infoCacheMaxBytes {
+		t.Errorf("info cache memory must stay below cap: bytes %d", v.infoCacheBytes)
+	}
+
+	// LRU: hit updates access order. Next insert must evict 3 (stale access), not 2.
+	if _, err := v.info(2); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
+	}
+	if _, err := v.info(4); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.infoCache[3]; ok {
+		t.Error("stale-access entry must be evicted by LRU order")
+	}
+	if c := v.infoCache[2]; c == nil || c.info.ID != 2 {
+		t.Error("recently accessed entry must survive LRU eviction")
+	}
+
+	// Evicted key is not a cache hit anymore: it refetches and memory stays bounded.
+	if _, err := v.info(1); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 5 {
+		t.Errorf("evicted key must refetch: fetches %d", fetches)
+	}
+	if len(v.infoCache) > 2 || v.infoCacheBytes > v.infoCacheMaxBytes {
+		t.Errorf("memory must stay below cap after refetch insert: len %d bytes %d", len(v.infoCache), v.infoCacheBytes)
+	}
+}
+
+func TestViewerInfoCacheSizeCapBoundsMemory(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.infoCacheMaxEntries = 10
+	v.infoCacheMaxBytes = 20
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		id := strings.TrimSuffix(strings.TrimPrefix(rawurl, "https://ltn."+hitomiDomain+"/galleries/"), ".js")
+		return []byte("var galleryinfo = {\"id\":\"" + id + "\",\"title\":\"T\",\"files\":[]}"), nil
+	}
+
+	for _, id := range []int{1, 2, 3} {
+		if _, err := v.info(id); err != nil {
+			t.Fatalf("info %d: %s", id, err)
+		}
+		if v.infoCacheBytes > v.infoCacheMaxBytes {
+			t.Fatalf("size cap must keep memory below cap after insert %d: bytes %d", id, v.infoCacheBytes)
+		}
+	}
+	if len(v.infoCache) != 2 {
+		t.Fatalf("size cap should evict oldest entries: len %d", len(v.infoCache))
+	}
+	if _, ok := v.infoCache[1]; ok {
+		t.Error("oldest entry should be evicted by size cap")
+	}
+	if c := v.infoCache[3]; c == nil || c.info.ID != 3 {
+		t.Error("newest entry should remain within size cap")
+	}
+}
+
 func TestViewerThumbProxyUsesRealTNPathAndContent(t *testing.T) {
 	var gotURL string
 	v, _ := newTestViewer(t, "")

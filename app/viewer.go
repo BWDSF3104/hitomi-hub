@@ -30,8 +30,11 @@ type viewer struct {
 	galleryRoot     string
 	cacheRoot       string
 	acquisitionRoot string
-	infoCache       map[int]*GalleryInfo
+	infoCache       map[int]*infoCacheEntry
 	infoCacheMu     sync.Mutex
+	infoCacheBytes  int
+	infoCacheMaxEntries int
+	infoCacheMaxBytes   int
 
 	imageFetchMu          sync.Mutex
 	imageFetchGroup       map[string]*imageFetchCall
@@ -67,8 +70,43 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		cacheRoot:       filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
 		acquisitionRoot: filepath.Join(root, orDefault(cfg.AcquisitionDir, "acquisition")),
 		client:          &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
-		infoCache:       map[int]*GalleryInfo{},
+		infoCache:       map[int]*infoCacheEntry{},
 	}
+}
+
+const (
+	defaultInfoCacheMaxEntries = 256
+	defaultInfoCacheMaxBytes   = 4 << 20
+)
+
+type infoCacheEntry struct {
+	info       *GalleryInfo
+	lastAccess time.Time
+}
+
+func (e *infoCacheEntry) entrySize() int {
+	n := 8
+	for _, s := range []string{e.info.Title, e.info.JapaneseTitle, e.info.Language, e.info.Type, e.info.URL} {
+		n += len(s)
+	}
+	for _, group := range [][]string{e.info.Tags, e.info.Artists, e.info.Groups, e.info.Characters} {
+		for _, s := range group {
+			n += len(s)
+		}
+	}
+	for _, f := range e.info.Files {
+		n += len(f.Hash) + len(f.Name) + 24
+	}
+	n += 8 * len(e.info.SceneIndexes)
+	return n
+}
+
+func (e *infoCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+
+// putInfoCacheLocked must be called with infoCacheMu held.
+func (v *viewer) putInfoCacheLocked(id int, entry *infoCacheEntry) {
+	maxEntries, maxBytes := boundedMax(v.infoCacheMaxEntries, v.infoCacheMaxBytes, defaultInfoCacheMaxEntries, defaultInfoCacheMaxBytes)
+	boundedCachePut(v.infoCache, &v.infoCacheBytes, maxEntries, maxBytes, id, entry)
 }
 
 func (v *viewer) handler() http.Handler {
@@ -898,17 +936,23 @@ func (v *viewer) query(w http.ResponseWriter, r *http.Request) {
 
 func (v *viewer) info(id int) (*GalleryInfo, error) {
 	v.infoCacheMu.Lock()
-	cached, ok := v.infoCache[id]
-	v.infoCacheMu.Unlock()
+	entry, ok := v.infoCache[id]
 	if ok {
-		return cached, nil
+		entry.lastAccess = time.Now()
+		v.infoCacheMu.Unlock()
+		return entry.info, nil
 	}
+	v.infoCacheMu.Unlock()
 	info, err := v.client.Gallery(id)
 	if err != nil {
 		return nil, err
 	}
 	v.infoCacheMu.Lock()
-	v.infoCache[id] = info
+	if v.infoCache == nil {
+		v.infoCache = map[int]*infoCacheEntry{}
+	}
+	now := time.Now()
+	v.putInfoCacheLocked(id, &infoCacheEntry{info: info, lastAccess: now})
 	v.infoCacheMu.Unlock()
 	return info, nil
 }

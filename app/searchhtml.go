@@ -78,6 +78,7 @@ func (c *Client) SearchNozomiParts(area, tag, lang string) ([]int, error) {
 
 	c.searchCacheMu.Lock()
 	if entry, ok := c.searchCache[key]; ok && time.Since(entry.fetchedAt) < searchCacheTTL {
+		entry.lastAccess = time.Now()
 		c.searchCacheMu.Unlock()
 		return copyInts(entry.ids), nil
 	}
@@ -94,9 +95,10 @@ func (c *Client) SearchNozomiParts(area, tag, lang string) ([]int, error) {
 
 	c.searchCacheMu.Lock()
 	if c.searchCache == nil {
-		c.searchCache = map[string]searchCacheEntry{}
+		c.searchCache = map[string]*searchCacheEntry{}
 	}
-	c.searchCache[key] = searchCacheEntry{ids: copyInts(ids), fetchedAt: time.Now()}
+	now := time.Now()
+	c.putSearchCacheLocked(key, &searchCacheEntry{ids: copyInts(ids), fetchedAt: now, lastAccess: now})
 	c.searchCacheMu.Unlock()
 
 	return ids, nil

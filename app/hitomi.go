@@ -38,14 +38,61 @@ const indexVersionTTL = time.Hour
 const searchCacheTTL = time.Hour
 const topCacheTTL = time.Hour
 
+// C-05/A-14: cache は entry 数上限（LRU）と size cap を持つ。hit 時に access order を
+// 更新し、insert 後に上限超過分を最も古い access から eviction する。既定は conservative。
+const (
+	defaultSearchCacheMaxEntries    = 256
+	defaultSearchCacheMaxBytes      = 8 << 20
+	defaultIndexDataCacheMaxEntries = 512
+	defaultIndexDataCacheMaxBytes   = 8 << 20
+	defaultIndexNodeCacheMaxEntries = 1024
+	defaultIndexNodeCacheMaxBytes   = 1 << 20
+)
+
 type singleflightCall struct {
 	done chan struct{}
 }
 
-type searchCacheEntry struct {
-	ids       []int
-	fetchedAt time.Time
+type boundedCacheEntry interface {
+	entrySize() int
+	lastAccessed() time.Time
 }
+
+func boundedCachePut[K comparable, E boundedCacheEntry](cache map[K]E, totalBytes *int, maxEntries, maxBytes int, key K, entry E) {
+	cache[key] = entry
+	*totalBytes += entry.entrySize()
+	for len(cache) > maxEntries || *totalBytes > maxBytes {
+		var oldestKey K
+		var oldest time.Time
+		for k, e := range cache {
+			if oldest.IsZero() || e.lastAccessed().Before(oldest) {
+				oldest = e.lastAccessed()
+				oldestKey = k
+			}
+		}
+		*totalBytes -= cache[oldestKey].entrySize()
+		delete(cache, oldestKey)
+	}
+}
+
+func boundedMax(maxEntries, maxBytes, defaultEntries, defaultBytes int) (int, int) {
+	if maxEntries <= 0 {
+		maxEntries = defaultEntries
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultBytes
+	}
+	return maxEntries, maxBytes
+}
+
+type searchCacheEntry struct {
+	ids        []int
+	fetchedAt  time.Time
+	lastAccess time.Time
+}
+
+func (e *searchCacheEntry) entrySize() int { return len(e.ids) * 8 }
+func (e *searchCacheEntry) lastAccessed() time.Time { return e.lastAccess }
 
 type indexTopCacheEntry struct {
 	node      *bnode
@@ -53,14 +100,22 @@ type indexTopCacheEntry struct {
 }
 
 type indexNodeCacheEntry struct {
-	node      *bnode
-	fetchedAt time.Time
+	node       *bnode
+	fetchedAt  time.Time
+	lastAccess time.Time
 }
 
+func (e *indexNodeCacheEntry) entrySize() int { return maxNodeSize }
+func (e *indexNodeCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+
 type indexDataCacheEntry struct {
-	ids       []int
-	fetchedAt time.Time
+	ids        []int
+	fetchedAt  time.Time
+	lastAccess time.Time
 }
+
+func (e *indexDataCacheEntry) entrySize() int { return len(e.ids) * 8 }
+func (e *indexDataCacheEntry) lastAccessed() time.Time { return e.lastAccess }
 
 type Client struct {
 	http           *http.Client
@@ -80,15 +135,40 @@ type Client struct {
 	ggForceAt      time.Time
 	singleflight   map[string]*singleflightCall
 	metrics        map[string]*FetchMetric
-	searchCache    map[string]searchCacheEntry
+	searchCache    map[string]*searchCacheEntry
 	searchCacheMu  sync.Mutex
+	searchCacheBytes int
+	searchCacheMaxEntries int
+	searchCacheMaxBytes   int
 	indexTopCache   map[string]*indexTopCacheEntry
 	indexTopCacheMu sync.Mutex
 	indexNodeCache  map[string]*indexNodeCacheEntry
-	indexDataCache  map[string]indexDataCacheEntry
+	indexNodeCacheBytes int
+	indexNodeCacheMaxEntries int
+	indexNodeCacheMaxBytes   int
+	indexDataCache  map[string]*indexDataCacheEntry
+	indexDataCacheBytes int
+	indexDataCacheMaxEntries int
+	indexDataCacheMaxBytes   int
 	indexCacheMu    sync.Mutex
 	noFullCache     map[string]time.Time
 	noFullCacheMu   sync.Mutex
+}
+
+// put helpers must be called with the owning cache mutex held.
+func (c *Client) putSearchCacheLocked(key string, entry *searchCacheEntry) {
+	maxEntries, maxBytes := boundedMax(c.searchCacheMaxEntries, c.searchCacheMaxBytes, defaultSearchCacheMaxEntries, defaultSearchCacheMaxBytes)
+	boundedCachePut(c.searchCache, &c.searchCacheBytes, maxEntries, maxBytes, key, entry)
+}
+
+func (c *Client) putIndexDataCacheLocked(key string, entry *indexDataCacheEntry) {
+	maxEntries, maxBytes := boundedMax(c.indexDataCacheMaxEntries, c.indexDataCacheMaxBytes, defaultIndexDataCacheMaxEntries, defaultIndexDataCacheMaxBytes)
+	boundedCachePut(c.indexDataCache, &c.indexDataCacheBytes, maxEntries, maxBytes, key, entry)
+}
+
+func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry) {
+	maxEntries, maxBytes := boundedMax(c.indexNodeCacheMaxEntries, c.indexNodeCacheMaxBytes, defaultIndexNodeCacheMaxEntries, defaultIndexNodeCacheMaxBytes)
+	boundedCachePut(c.indexNodeCache, &c.indexNodeCacheBytes, maxEntries, maxBytes, key, entry)
 }
 
 func defaultHitomiConfig() HitomiConfig {

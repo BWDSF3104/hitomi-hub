@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
@@ -42,6 +43,117 @@ func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 	}
 	if len(ids3) != 3 || ids3[0] != 10 || ids3[1] != 20 || ids3[2] != 30 {
 		t.Fatalf("cache must not be mutated by caller slice: %v", ids3)
+	}
+}
+
+func TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 2, searchCacheMaxBytes: 1024}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		switch {
+		case strings.Contains(rawurl, "female:yuri"):
+			return beIDs([]uint32{10}), nil
+		case strings.Contains(rawurl, "male:yuri"):
+			return beIDs([]uint32{20}), nil
+		case strings.Contains(rawurl, "female:cosplay"):
+			return beIDs([]uint32{30}), nil
+		case strings.Contains(rawurl, "female:lolita"):
+			return beIDs([]uint32{40}), nil
+		}
+		return nil, nil
+	}
+
+	// Windows clock granularity can tie same-instant timestamps. Fix access order
+	// explicitly after each insert so LRU eviction order is deterministic.
+	base := time.Now()
+	if _, err := c.SearchNozomiParts("tag", "female:yuri", "all"); err != nil {
+		t.Fatal(err)
+	}
+	c.searchCache["tag|female:yuri|all"].lastAccess = base.Add(-30 * time.Second)
+	if _, err := c.SearchNozomiParts("tag", "male:yuri", "all"); err != nil {
+		t.Fatal(err)
+	}
+	c.searchCache["tag|male:yuri|all"].lastAccess = base.Add(-20 * time.Second)
+	if _, err := c.SearchNozomiParts("tag", "female:cosplay", "all"); err != nil {
+		t.Fatal(err)
+	}
+	c.searchCache["tag|female:cosplay|all"].lastAccess = base.Add(-10 * time.Second)
+	if len(c.searchCache) != 2 {
+		t.Fatalf("entry limit 2 should evict oldest entry: len %d", len(c.searchCache))
+	}
+	if _, ok := c.searchCache["tag|female:yuri|all"]; ok {
+		t.Error("oldest entry should be evicted when entry limit is crossed")
+	}
+	if _, ok := c.searchCache["tag|male:yuri|all"]; !ok {
+		t.Error("second entry should remain")
+	}
+	if _, ok := c.searchCache["tag|female:cosplay|all"]; !ok {
+		t.Error("newest entry should remain")
+	}
+	if c.searchCacheBytes > c.searchCacheMaxBytes {
+		t.Errorf("search cache memory must stay below cap: bytes %d", c.searchCacheBytes)
+	}
+
+	// LRU: hit updates access order. Insert D must evict C (stale access), not B (accessed).
+	if _, err := c.SearchNozomiParts("tag", "male:yuri", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
+	}
+	if _, err := c.SearchNozomiParts("tag", "female:lolita", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.searchCache["tag|female:cosplay|all"]; ok {
+		t.Error("stale-access entry must be evicted by LRU order")
+	}
+	if _, ok := c.searchCache["tag|male:yuri|all"]; !ok {
+		t.Error("recently accessed entry must survive LRU eviction")
+	}
+
+	// Evicted key is not a TTL hit anymore: it refetches.
+	if _, err := c.SearchNozomiParts("tag", "female:yuri", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 5 {
+		t.Errorf("evicted key must refetch, memory stays bounded: fetches %d bytes %d", fetches, c.searchCacheBytes)
+	}
+	if len(c.searchCache) > 2 || c.searchCacheBytes > c.searchCacheMaxBytes {
+		t.Errorf("memory must stay below cap after refetch insert: len %d bytes %d", len(c.searchCache), c.searchCacheBytes)
+	}
+}
+
+func TestSearchCacheSizeCapBoundsMemory(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 10, searchCacheMaxBytes: 40}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		switch {
+		case strings.Contains(rawurl, "female:yuri"):
+			return beIDs([]uint32{10, 11, 12, 13, 14}), nil
+		case strings.Contains(rawurl, "male:yuri"):
+			return beIDs([]uint32{20, 21, 22, 23, 24}), nil
+		default:
+			return beIDs([]uint32{30, 31, 32, 33, 34}), nil
+		}
+	}
+
+	if _, err := c.SearchNozomiParts("tag", "female:yuri", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SearchNozomiParts("tag", "male:yuri", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SearchNozomiParts("tag", "female:cosplay", "all"); err != nil {
+		t.Fatal(err)
+	}
+	if c.searchCacheBytes > c.searchCacheMaxBytes {
+		t.Fatalf("size cap must keep memory below cap: bytes %d", c.searchCacheBytes)
+	}
+	if len(c.searchCache) != 1 {
+		t.Fatalf("size cap should evict oldest entries: len %d", len(c.searchCache))
+	}
+	if _, ok := c.searchCache["tag|female:cosplay|all"]; !ok {
+		t.Error("newest entry should remain within size cap")
 	}
 }
 

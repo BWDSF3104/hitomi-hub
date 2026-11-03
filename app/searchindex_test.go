@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -314,6 +315,178 @@ func TestIndexIDsCachesInternalNodeAndDataForSameTerm(t *testing.T) {
 	}
 	if fetches != 4 || dataFetches != 1 {
 		t.Fatalf("internal node and data cache should not refetch within TTL: fetches %d data fetches %d", fetches, dataFetches)
+	}
+}
+
+func TestIndexDataCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), indexDataCacheMaxEntries: 2, indexDataCacheMaxBytes: 200}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		return append([]byte{0, 0, 0, 1}, beID(uint32(rng[0]))...), nil
+	}
+
+	// Windows clock granularity can tie same-instant timestamps. Fix access order
+	// explicitly after each insert so LRU eviction order is deterministic.
+	base := time.Now()
+	for i, offset := range []int64{100, 200, 300} {
+		if _, err := c.indexDataIDsCached("galleries", "v1", offset, 8); err != nil {
+			t.Fatalf("indexDataIDsCached %d: %s", offset, err)
+		}
+		if entry, ok := c.indexDataCache[fmt.Sprintf("galleries|v1|%d|8", offset)]; ok {
+			entry.lastAccess = base.Add(time.Duration(-30+10*i) * time.Second)
+		}
+	}
+	if len(c.indexDataCache) != 2 {
+		t.Fatalf("entry limit 2 should evict oldest entry: len %d", len(c.indexDataCache))
+	}
+	if _, ok := c.indexDataCache["galleries|v1|100|8"]; ok {
+		t.Error("oldest entry should be evicted when entry limit is crossed")
+	}
+	if _, ok := c.indexDataCache["galleries|v1|200|8"]; !ok {
+		t.Error("second entry should remain")
+	}
+	if _, ok := c.indexDataCache["galleries|v1|300|8"]; !ok {
+		t.Error("newest entry should remain")
+	}
+	if c.indexDataCacheBytes > c.indexDataCacheMaxBytes {
+		t.Errorf("index data cache memory must stay below cap: bytes %d", c.indexDataCacheBytes)
+	}
+
+	// LRU: hit updates access order. Next insert must evict 300 (stale access), not 200.
+	if _, err := c.indexDataIDsCached("galleries", "v1", 200, 8); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
+	}
+	if _, err := c.indexDataIDsCached("galleries", "v1", 400, 8); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.indexDataCache["galleries|v1|300|8"]; ok {
+		t.Error("stale-access entry must be evicted by LRU order")
+	}
+	if _, ok := c.indexDataCache["galleries|v1|200|8"]; !ok {
+		t.Error("recently accessed entry must survive LRU eviction")
+	}
+
+	// Evicted key is not a TTL hit anymore: it refetches and memory stays bounded.
+	if _, err := c.indexDataIDsCached("galleries", "v1", 100, 8); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 5 {
+		t.Errorf("evicted key must refetch: fetches %d", fetches)
+	}
+	if len(c.indexDataCache) > 2 || c.indexDataCacheBytes > c.indexDataCacheMaxBytes {
+		t.Errorf("memory must stay below cap after refetch insert: len %d bytes %d", len(c.indexDataCache), c.indexDataCacheBytes)
+	}
+}
+
+func TestIndexDataCacheSizeCapBoundsMemory(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig(), indexDataCacheMaxEntries: 10, indexDataCacheMaxBytes: 20}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return append([]byte{0, 0, 0, 1}, beID(uint32(rng[0]))...), nil
+	}
+
+	for _, offset := range []int64{100, 200, 300} {
+		if _, err := c.indexDataIDsCached("galleries", "v1", offset, 8); err != nil {
+			t.Fatalf("indexDataIDsCached %d: %s", offset, err)
+		}
+		if c.indexDataCacheBytes > c.indexDataCacheMaxBytes {
+			t.Fatalf("size cap must keep memory below cap after insert %d: bytes %d", offset, c.indexDataCacheBytes)
+		}
+	}
+	if len(c.indexDataCache) != 2 {
+		t.Fatalf("size cap should evict oldest entries: len %d", len(c.indexDataCache))
+	}
+	if _, ok := c.indexDataCache["galleries|v1|100|8"]; ok {
+		t.Error("oldest entry should be evicted by size cap")
+	}
+	if _, ok := c.indexDataCache["galleries|v1|300|8"]; !ok {
+		t.Error("newest entry should remain within size cap")
+	}
+}
+
+func TestIndexNodeCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), indexNodeCacheMaxEntries: 2, indexNodeCacheMaxBytes: 1000}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		return beNode(1, [][]byte{{byte(rng[0]), 0, 0, 0}}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1)), nil
+	}
+
+	// Windows clock granularity can tie same-instant timestamps. Fix access order
+	// explicitly after each insert so LRU eviction order is deterministic.
+	base := time.Now()
+	for i, addr := range []uint64{100, 200, 300} {
+		if _, err := c.indexNodeCached("galleries", "v1", addr); err != nil {
+			t.Fatalf("indexNodeCached %d: %s", addr, err)
+		}
+		if entry, ok := c.indexNodeCache[fmt.Sprintf("galleries|v1|%d", addr)]; ok {
+			entry.lastAccess = base.Add(time.Duration(-30+10*i) * time.Second)
+		}
+	}
+	if len(c.indexNodeCache) != 2 {
+		t.Fatalf("entry limit 2 should evict oldest entry: len %d", len(c.indexNodeCache))
+	}
+	if _, ok := c.indexNodeCache["galleries|v1|100"]; ok {
+		t.Error("oldest entry should be evicted when entry limit is crossed")
+	}
+	if c.indexNodeCacheBytes > c.indexNodeCacheMaxBytes {
+		t.Errorf("index node cache memory must stay below cap: bytes %d", c.indexNodeCacheBytes)
+	}
+
+	// LRU: hit updates access order. Next insert must evict 300 (stale access), not 200.
+	if _, err := c.indexNodeCached("galleries", "v1", 200); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
+	}
+	if _, err := c.indexNodeCached("galleries", "v1", 400); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.indexNodeCache["galleries|v1|300"]; ok {
+		t.Error("stale-access entry must be evicted by LRU order")
+	}
+	if _, ok := c.indexNodeCache["galleries|v1|200"]; !ok {
+		t.Error("recently accessed entry must survive LRU eviction")
+	}
+
+	// Evicted key is not a TTL hit anymore: it refetches and memory stays bounded.
+	if _, err := c.indexNodeCached("galleries", "v1", 100); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 5 {
+		t.Errorf("evicted key must refetch: fetches %d", fetches)
+	}
+	if len(c.indexNodeCache) > 2 || c.indexNodeCacheBytes > c.indexNodeCacheMaxBytes {
+		t.Errorf("memory must stay below cap after refetch insert: len %d bytes %d", len(c.indexNodeCache), c.indexNodeCacheBytes)
+	}
+}
+
+func TestIndexNodeCacheSizeCapBoundsMemory(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig(), indexNodeCacheMaxEntries: 10, indexNodeCacheMaxBytes: 1000}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return beNode(1, [][]byte{{byte(rng[0]), 0, 0, 0}}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1)), nil
+	}
+
+	for _, addr := range []uint64{100, 200, 300} {
+		if _, err := c.indexNodeCached("galleries", "v1", addr); err != nil {
+			t.Fatalf("indexNodeCached %d: %s", addr, err)
+		}
+		if c.indexNodeCacheBytes > c.indexNodeCacheMaxBytes {
+			t.Fatalf("size cap must keep memory below cap after insert %d: bytes %d", addr, c.indexNodeCacheBytes)
+		}
+	}
+	if len(c.indexNodeCache) != 2 {
+		t.Fatalf("size cap should evict oldest entries: len %d", len(c.indexNodeCache))
+	}
+	if _, ok := c.indexNodeCache["galleries|v1|100"]; ok {
+		t.Error("oldest entry should be evicted by size cap")
+	}
+	if _, ok := c.indexNodeCache["galleries|v1|300"]; !ok {
+		t.Error("newest entry should remain within size cap")
 	}
 }
 

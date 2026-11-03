@@ -277,6 +277,7 @@ func (c *Client) indexNodeCached(field, version string, addr uint64) (*bnode, er
 
 	c.indexCacheMu.Lock()
 	if entry, ok := c.indexNodeCache[key]; ok && time.Since(entry.fetchedAt) < topCacheTTL {
+		entry.lastAccess = time.Now()
 		c.indexCacheMu.Unlock()
 		return entry.node, nil
 	}
@@ -295,7 +296,8 @@ func (c *Client) indexNodeCached(field, version string, addr uint64) (*bnode, er
 	if c.indexNodeCache == nil {
 		c.indexNodeCache = map[string]*indexNodeCacheEntry{}
 	}
-	c.indexNodeCache[key] = &indexNodeCacheEntry{node: node, fetchedAt: time.Now()}
+	now := time.Now()
+	c.putIndexNodeCacheLocked(key, &indexNodeCacheEntry{node: node, fetchedAt: now, lastAccess: now})
 	c.indexCacheMu.Unlock()
 	return node, nil
 }
@@ -308,6 +310,7 @@ func (c *Client) indexDataIDsCached(field, version string, offset, length int64)
 
 	c.indexCacheMu.Lock()
 	if entry, ok := c.indexDataCache[key]; ok && time.Since(entry.fetchedAt) < topCacheTTL {
+		entry.lastAccess = time.Now()
 		c.indexCacheMu.Unlock()
 		return copyIDs(entry.ids), nil
 	}
@@ -324,9 +327,10 @@ func (c *Client) indexDataIDsCached(field, version string, offset, length int64)
 
 	c.indexCacheMu.Lock()
 	if c.indexDataCache == nil {
-		c.indexDataCache = map[string]indexDataCacheEntry{}
+		c.indexDataCache = map[string]*indexDataCacheEntry{}
 	}
-	c.indexDataCache[key] = indexDataCacheEntry{ids: copyIDs(ids), fetchedAt: time.Now()}
+	now := time.Now()
+	c.putIndexDataCacheLocked(key, &indexDataCacheEntry{ids: copyIDs(ids), fetchedAt: now, lastAccess: now})
 	c.indexCacheMu.Unlock()
 	return copyIDs(ids), nil
 }
