@@ -598,19 +598,26 @@ func TestSafeThumbnailCachePathUsesVariantAndStaysInsideThumbCache(t *testing.T)
 	}
 }
 
-func TestViewerThumbProxyUsesFullCacheBeforeTN(t *testing.T) {
+func TestViewerThumbProxyTNOnlyDoesNotServeFullCache(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(v.cacheRoot, sampleHash+".webp"), []byte("cache bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, sampleHash+".webp"), []byte("full bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if strings.Contains(rawurl, "tn.") {
+			return []byte("tn"), nil
+		}
+		return []byte("full"), nil
+	}
+
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "cache bytes" || rec.Header().Get("x-cache") != "cache" {
-		t.Errorf("thumbProxy should serve full cache before remote TN: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn" {
+		t.Errorf("TN-only thumbProxy should serve TN, not full cache: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
 }
 
@@ -643,15 +650,13 @@ func TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit(t *testing.T)
 	}
 }
 
-func TestViewerThumbProxyFallsBackToLocalWhenTNMissingAndLocalExists(t *testing.T) {
+func TestViewerThumbProxyTNFailureDoesNotUseLocalOrFullFallback(t *testing.T) {
 	v, galleryRoot := newTestViewer(t, "")
-	var gotURL string
-	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
-		gotURL = rawurl
-		if strings.Contains(rawurl, "tn.") {
-			return nil, errors.New("tn missing")
-		}
-		return []byte("cdn"), nil
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, sampleHash+".webp"), []byte("full bytes"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(galleryRoot, "4252697"), 0o755); err != nil {
 		t.Fatal(err)
@@ -660,14 +665,26 @@ func TestViewerThumbProxyFallsBackToLocalWhenTNMissingAndLocalExists(t *testing.
 		t.Fatal(err)
 	}
 
+	var urls []string
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "tn.") {
+			return nil, errors.New("tn missing")
+		}
+		return []byte("full"), nil
+	}
+
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697&variant=smalltn", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "local" {
-		t.Fatalf("TN missing local fallback: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("x-cache") != "no_tn" || rec.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("TN failure response: code %d header x-cache %q cache-control %q", rec.Code, rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
+	}
+	if len(urls) != 1 || !strings.Contains(urls[0], "tn.") {
+		t.Fatalf("TN failure must not fall back to full or local image: got %v", urls)
 	}
 	wantTN := "https://\x62\x74\x6e.gold-usergeneratedcontent.net/\x77\x65\x62\x70smalltn/9/b8/" + sampleHash + ".\x77\x65\x62\x70"
-	if gotURL != wantTN {
-		t.Errorf("TN smalltn path: got %q want %q", gotURL, wantTN)
+	if urls[0] != wantTN {
+		t.Errorf("TN smalltn path: got %q want %q", urls[0], wantTN)
 	}
 }
 
@@ -706,7 +723,7 @@ func TestViewerGalleryFilesIncludeLocalAndHitomiFlags(t *testing.T) {
 	}
 }
 
-func TestViewerThumbProxyFallsBackToFullImageWhenTNMissing(t *testing.T) {
+func TestViewerThumbProxyTNFailureHeadersDoNotTreatNoTNAsFull(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	var urls []string
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -719,14 +736,14 @@ func TestViewerThumbProxyFallsBackToFullImageWhenTNMissing(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "full" {
-		t.Fatalf("fallback thumb: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("x-cache") != "no_tn" || rec.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("TN failure headers: code %d x-cache %q cache-control %q", rec.Code, rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
 	}
 	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" {
-		t.Fatalf("fallback thumb headers: %q %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
+		t.Fatalf("TN failure image headers: content-type %q cross-origin %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"))
 	}
-	if len(urls) != 2 || !strings.Contains(urls[0], "tn.") || strings.Contains(urls[1], "tn.") {
-		t.Fatalf("fallback fetch order: got %v", urls)
+	if len(urls) != 1 || !strings.Contains(urls[0], "tn.") {
+		t.Fatalf("TN failure fetch count must stay TN-only: got %v", urls)
 	}
 }
 
@@ -1842,8 +1859,8 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 	if !strings.Contains(s, `function renderRetryButtonState() {`) || !strings.Contains(s, `button.disabled = manualRetryRunning || !current.id || !(Number(counts.errorDone) > 0 || Number(counts.noFullDone) > 0);`) {
 		t.Errorf("retry button should use combined error/no_full state with current gallery and manual-run guard: got %q", s)
 	}
-	if !strings.Contains(s, `function statusIsViewerDisplaySource(status) {`) || !strings.Contains(s, `status !== "tn" && status !== "tn-cache" && status !== "no_full" && status !== "error"`) {
-		t.Errorf("display source must continue to reject error, no_full, and TN: got %q", s)
+	if !strings.Contains(s, `function statusIsViewerDisplaySource(status) {`) || !strings.Contains(s, `status !== "tn" && status !== "tn-cache" && status !== "no_tn" && status !== "no_full" && status !== "error"`) {
+		t.Errorf("display source must continue to reject error, no_full, no_tn, and TN: got %q", s)
 	}
 
 	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")
@@ -1854,12 +1871,12 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 	updateBody := s[updateStart:updateEnd]
 	for _, want := range []string{
 		`if (allowRecount && prefetchedEntries.has(key)) {`,
-		`if (oldStatus === "tn") counts.tnDone--;`,
+		`if (oldStatus === "tn" || oldStatus === "no_tn") counts.tnDone--;`,
 		`else if (oldStatus === "no_full") counts.noFullDone--;`,
 		`else if (oldStatus === "error") counts.errorDone--;`,
 		`else counts.fullDone--;`,
 		`prefetchedEntries.set(key, status);`,
-		`if (status === "tn") counts.tnDone++;`,
+		`if (status === "tn" || status === "no_tn") counts.tnDone++;`,
 		`else if (status === "no_full") counts.noFullDone++;`,
 		`else if (status === "error") counts.errorDone++;`,
 		`else counts.fullDone++;`,

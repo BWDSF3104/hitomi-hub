@@ -10,7 +10,6 @@ docs/ai/tasks/2026-11-03-a05-search-card-sequential.md	進行中	調査（assess
 docs/ai/tasks/2026-11-03-a06-sleep-ctx-aware.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a07a-cache-write-magic-check.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a07b-fetch-dedup-singleflight.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
-docs/ai/tasks/2026-11-03-a08-tn-fallback-to-full.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a09-serve-stored-image-full-read.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a10-download-existing-check.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a11-pdf-raw-rgb-memory.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
@@ -44,3 +43,4 @@ docs/ai/tasks/2026-11-03-d07-canonical-build-test-premise.md	進行中	調査（
 docs/ai/tasks/2026-11-03-d08-unused-code.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-d09-orderby-popular-ignored.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-d10-plain-term-underscore.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
+docs/ai/tasks/2026-11-03-assess-20261103-1220-implementation-targets.md	進行中	remote task 43項目の実施対象と設計承認3件の条件を統合して実装タスクへ引き継ぐ

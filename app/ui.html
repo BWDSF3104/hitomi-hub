@@ -334,7 +334,7 @@ function localDirectSrc(entry, galleryId = current.id) {
 }
 
 function statusIsViewerDisplaySource(status) {
-  return status !== "tn" && status !== "tn-cache" && status !== "no_full" && status !== "error";
+  return status !== "tn" && status !== "tn-cache" && status !== "no_tn" && status !== "no_full" && status !== "error";
 }
 
 function entrySourceType(entry, galleryId = current.id) {
@@ -734,12 +734,12 @@ function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecoun
   const counts = getGalleryCounts(galleryId);
   if (allowRecount && prefetchedEntries.has(key)) {
     const oldStatus = prefetchedEntries.get(key);
-    if (oldStatus === "tn") counts.tnDone--;
+    if (oldStatus === "tn" || oldStatus === "no_tn") counts.tnDone--;
     else if (oldStatus === "no_full") counts.noFullDone--;
     else if (oldStatus === "error") counts.errorDone--;
     else counts.fullDone--;
     prefetchedEntries.set(key, status);
-    if (status === "tn") counts.tnDone++;
+    if (status === "tn" || status === "no_tn") counts.tnDone++;
     else if (status === "no_full") counts.noFullDone++;
     else if (status === "error") counts.errorDone++;
     else counts.fullDone++;

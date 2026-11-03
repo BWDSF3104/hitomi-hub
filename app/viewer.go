@@ -617,11 +617,6 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	format := resolveFormat(v.cfg, r.URL.Query().Get("format"))
 	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
 
-	fullCachePath, fullCacheErr := safeCachePath(v.cacheRoot, hash, format)
-	if fullCacheErr == nil && v.serveStoredImage(w, format, fullCachePath, "cache") {
-		return
-	}
-
 	thumbCachePath, thumbCacheErr := safeThumbnailCachePath(v.cacheRoot, hash, format, variant)
 	if thumbCacheErr == nil && v.serveStoredImage(w, format, thumbCachePath, "tn-cache") {
 		return
@@ -636,10 +631,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if v.serveLocalImage(w, r, hash, format) {
-		return
-	}
-	v.imageProxy(w, r)
+	writeNoTN(w, format)
 }
 
 func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
@@ -697,6 +689,13 @@ func writeNoFull(w http.ResponseWriter, format string) {
 	w.Header().Set("cache-control", "no-store")
 	w.Header().Set("x-cache", "no_full")
 	w.WriteHeader(http.StatusNotFound)
+}
+
+func writeNoTN(w http.ResponseWriter, format string) {
+	setImageHeaders(w, format)
+	w.Header().Set("cache-control", "no-store")
+	w.Header().Set("x-cache", "no_tn")
+	w.WriteHeader(http.StatusBadGateway)
 }
 
 func setImageHeaders(w http.ResponseWriter, format string) {

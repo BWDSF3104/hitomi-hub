@@ -1,5 +1,7 @@
 # Operation priority and placeholder policy
 
+**Superseded by**: `2026-11-03-a08-tn-only-thumb-proxy.md`
+
 Date: 2026-11-01
 
 - UI display/navigation must not wait for image download.

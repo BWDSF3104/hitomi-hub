@@ -1,5 +1,7 @@
 # hitomi work page TN variant rendering
 
+**Superseded by**: `2026-11-03-a08-tn-only-thumb-proxy.md`
+
 - Date: 2026-11-01
 - Status: implemented
 
