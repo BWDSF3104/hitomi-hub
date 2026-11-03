@@ -1635,6 +1635,63 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIDebouncesResizeRenderToSingleCall(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	handlerStart := strings.Index(s, "window.addEventListener(\"resize\", () => {")
+	if handlerStart < 0 {
+		t.Fatalf("resize handler not found")
+	}
+	handlerBody := s[handlerStart:strings.Index(s, "\nwindow.addEventListener(\"keydown\", async (e) => {")]
+	if !strings.Contains(handlerBody, `const resizeOpenGen = openGeneration;`) {
+		t.Errorf("resize handler should capture the open generation at event time so a stale burst cannot render for a replaced gallery: got %q", handlerBody)
+	}
+	clearIndex := strings.Index(handlerBody, `clearTimeout(resizeDebounceTimer)`)
+	setTimeoutIndex := strings.Index(handlerBody, `setTimeout(() => {`)
+	renderIndex := strings.Index(handlerBody, `renderReader();`)
+	if clearIndex < 0 || setTimeoutIndex < 0 || clearIndex >= setTimeoutIndex {
+		t.Errorf("consecutive resize events should coalesce to one debounced run: got %q", handlerBody)
+	}
+	if !strings.Contains(s, `const resizeDebounceMs = 150;`) || !strings.Contains(handlerBody, `}, resizeDebounceMs);`) {
+		t.Errorf("resize should debounce with the 150ms delay constant: got %q", handlerBody)
+	}
+	if renderIndex < 0 || renderIndex < setTimeoutIndex {
+		t.Errorf("renderReader should only run inside the debounced timer callback, not synchronously per event: got %q", handlerBody)
+	}
+	if strings.Count(handlerBody, `renderReader();`) != 1 {
+		t.Errorf("debounced run should call renderReader exactly once per burst: got %q", handlerBody)
+	}
+	guardIndex := strings.Index(handlerBody, `if (!current.id || resizeOpenGen !== openGeneration) return;`)
+	if guardIndex < 0 || guardIndex >= renderIndex {
+		t.Errorf("debounced run should return on stale generation before rendering: got %q", handlerBody)
+	}
+	if !strings.Contains(handlerBody, `if (!current.id) return;`) {
+		t.Errorf("resize handler should keep the no-gallery early return: got %q", handlerBody)
+	}
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
+	if loadStart < 0 {
+		t.Fatalf("loadFullImage function not found")
+	}
+	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	if !strings.Contains(loadBody, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(loadBody, `const blob = await r.blob();`) || !strings.Contains(loadBody, `const objectUrl = URL.createObjectURL(blob);`) || !strings.Contains(loadBody, `img.src = objectUrl;`) {
+		t.Errorf("debounce must not change the objectURL display path: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration`) || !strings.Contains(loadBody, `URL.revokeObjectURL(objectUrl)`) {
+		t.Errorf("stale async render/write guard on the objectURL display path must be maintained: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `r.headers.get("x-cache")`) {
+		t.Errorf("TN display fallback disabled and x-cache full cache judgement must be unchanged: got %q", loadBody)
+	}
+	renderStart := strings.Index(s, "function renderReader() {")
+	renderBody := s[renderStart:strings.Index(s, "\nasync function runPriority(displayed, signal) {")]
+	if !strings.Contains(renderBody, `renderGeneration++;`) || !strings.Contains(renderBody, `data-render='`) {
+		t.Errorf("renderGeneration guard must be maintained for the debounced render: got %q", renderBody)
+	}
+}
+
 func TestEmbeddedUIPageMovementKeepsStripNodes(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

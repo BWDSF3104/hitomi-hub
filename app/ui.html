@@ -1628,12 +1628,20 @@ async function handleCardClick(e) {
 }
 document.getElementById("results").addEventListener("click", handleCardClick);
 document.getElementById("thumbs").addEventListener("click", handleCardClick);
+const resizeDebounceMs = 150;
+let resizeDebounceTimer = null;
 window.addEventListener("resize", () => {
   if (!current.id) return;
-  renderReader();
-  renderPosition();
-  renderViewState();
-  startFullPrefetch();
+  const resizeOpenGen = openGeneration;
+  if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+  resizeDebounceTimer = setTimeout(() => {
+    resizeDebounceTimer = null;
+    if (!current.id || resizeOpenGen !== openGeneration) return;
+    renderReader();
+    renderPosition();
+    renderViewState();
+    startFullPrefetch();
+  }, resizeDebounceMs);
 });
 window.addEventListener("keydown", async (e) => {
   if (!current.id || e.target.tagName === "INPUT") return;
