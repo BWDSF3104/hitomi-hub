@@ -216,10 +216,27 @@ func resolveRoot(explicit string) string {
 
 const schemaVersion = 4
 
+// execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // dbExec は *sql.DB と *sql.Tx の共通部分。processFile の tx 内で同じ書き込みヘルパーを使えるようにする
 type dbExec interface {
-	Exec(query string, args ...any) (sql.Result, error)
+	execer
 	QueryRow(query string, args ...any) *sql.Row
+}
+
+// txExec は Exec のみで Commit 可。dbTransactor は 1 request 分の tx を開く共通口で、
+// mocked fetch/DB で commit 回数を測るテストが fake を満たせる
+type txExec interface {
+	execer
+	Commit() error
+	Rollback() error
+}
+
+type dbTransactor interface {
+	Begin() (txExec, error)
 }
 
 func openDB(path string) (*sql.DB, error) {
@@ -797,8 +814,16 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		for _, id := range shown {
-			if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+		tx, err := db.Begin()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
+		} else {
+			for _, id := range shown {
+				if err := recordDiscovered(tx, id, galleryDir(root, id)); err != nil {
+					fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
+				}
+			}
+			if err := tx.Commit(); err != nil {
 				fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
 			}
 		}
@@ -1046,12 +1071,48 @@ func rulesFile(root string) string {
 	return filepath.Join(dataDir, "rules", "structural.yar")
 }
 
-func recordDiscovered(db dbExec, galleryID int, dir string) error {
+func recordDiscovered(db execer, galleryID int, dir string) error {
 	_, err := db.Exec(`INSERT INTO galleries (gallery_id, title, lang, dir, first_seen, last_seen)
 		VALUES (?, NULL, NULL, ?, ?, ?)
 		ON CONFLICT(gallery_id) DO UPDATE SET last_seen = excluded.last_seen`,
 		galleryID, dir, nowISO(), nowISO())
 	return err
+}
+
+// recordDiscoveredBatch は 1 request（1 saved query）分の ids を 1 transaction で記録する。
+// external fetch は tx の外で完了してから呼ぶ。ids が空のときは tx を開かない（commit 0）。
+func recordDiscoveredBatch(db *sql.DB, ids []int, root string) error {
+	return recordDiscoveredBatchTx(&sqlTransactor{db}, ids, root)
+}
+
+// sqlTransactor は *sql.DB を dbTransactor へ橋渡しする。テスト fake が同じ口を満たせる
+type sqlTransactor struct {
+	db *sql.DB
+}
+
+func (s *sqlTransactor) Begin() (txExec, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+func recordDiscoveredBatchTx(t dbTransactor, ids []int, root string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := t.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		if err := recordDiscovered(tx, id, galleryDir(root, id)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func listRows(db *sql.DB, kind string) ([]map[string]any, error) {

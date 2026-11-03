@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -593,5 +594,204 @@ func TestFindCommandKeepsFlagValues(t *testing.T) {
 	}
 	if !valueFlags["config"] {
 		t.Errorf("--config must be registered as a value flag")
+	}
+}
+
+// A-02/C-03 合格条件テスト: commit 回数を dbTransactor fake で objectively 測る（mocked fetch/DB）。
+// autocommit の 1 Exec = 1 implicit commit、tx 内 Exec は commit に数えず、tx Commit を 1 commit として計上する。
+
+type testCommitCounter struct {
+	mu     sync.Mutex
+	events []string
+	inTx   bool
+}
+
+func (c *testCommitCounter) add(event string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, event)
+}
+
+func (c *testCommitCounter) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.events...)
+}
+
+func (c *testCommitCounter) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = nil
+	c.inTx = false
+}
+
+func (c *testCommitCounter) commits() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, e := range c.events {
+		if e == "commit" || e == "exec-autocommit" {
+			n++
+		}
+	}
+	return n
+}
+
+type fakeResult struct{}
+
+func (fakeResult) LastInsertId() (int64, error) { return 1, nil }
+func (fakeResult) RowsAffected() (int64, error) { return 1, nil }
+
+type fakeExec struct {
+	counter   *testCommitCounter
+	galleries map[int]bool
+}
+
+func (f *fakeExec) Exec(query string, args ...any) (sql.Result, error) {
+	if f.counter.inTx {
+		f.counter.add("exec-in-tx")
+	} else {
+		f.counter.add("exec-autocommit")
+	}
+	if strings.Contains(query, "INSERT INTO galleries") {
+		id, ok := args[0].(int)
+		if !ok {
+			return nil, errors.New("fakeExec: gallery id arg missing")
+		}
+		f.galleries[id] = true // ON CONFLICT DO UPDATE: 既存 id は行数を増やさない
+	}
+	return fakeResult{}, nil
+}
+
+func (f *fakeExec) Commit() error {
+	if !f.counter.inTx {
+		return errors.New("fakeExec: commit outside tx")
+	}
+	f.counter.add("commit")
+	f.counter.inTx = false
+	return nil
+}
+
+func (f *fakeExec) Rollback() error {
+	if !f.counter.inTx {
+		return errors.New("fakeExec: rollback outside tx")
+	}
+	f.counter.add("rollback")
+	f.counter.inTx = false
+	return nil
+}
+
+type fakeTransactor struct {
+	fake    *fakeExec
+	counter *testCommitCounter
+}
+
+func (ft *fakeTransactor) Begin() (txExec, error) {
+	ft.counter.add("begin")
+	ft.counter.inTx = true
+	return ft.fake, nil
+}
+
+func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
+	counter := &testCommitCounter{}
+	fake := &fakeExec{counter: counter, galleries: map[int]bool{}}
+	tr := &fakeTransactor{fake: fake, counter: counter}
+	root := t.TempDir()
+	ids := make([]int, 25)
+	for i := range ids {
+		ids[i] = 1000 + i
+	}
+
+	// mocked fetch: external call は record へ入る前に完了する。event 順序で固定する
+	mockedFetch := func() []int {
+		counter.add("fetch")
+		return ids
+	}
+	got := mockedFetch()
+	if err := recordDiscoveredBatchTx(tr, got, root); err != nil {
+		t.Fatal(err)
+	}
+	events := counter.snapshot()
+	if events[0] != "fetch" {
+		t.Fatalf("external call must complete before the tx: %v", events)
+	}
+	if events[1] != "begin" || events[len(events)-1] != "commit" {
+		t.Fatalf("record phase must be one tx with 1 commit: %v", events)
+	}
+	tail := events[2 : len(events)-1]
+	if len(tail) != 25 {
+		t.Fatalf("want 25 exec-in-tx between begin and commit: %v", events)
+	}
+	for _, e := range tail {
+		if e != "exec-in-tx" {
+			t.Fatalf("no autocommit commit inside the tx: %v", events)
+		}
+	}
+	if counter.commits() != 1 {
+		t.Fatalf("commits per request: got %d events %v", counter.commits(), events)
+	}
+	if len(fake.galleries) != 25 {
+		t.Fatalf("rows: got %d", len(fake.galleries))
+	}
+
+	// 修正前の基準（1 Exec = 1 autocommit commit）: mocked DB で request あたり commit 回数が 25 になることを示す
+	counter.reset()
+	for _, id := range ids {
+		if _, err := fake.Exec(`INSERT INTO galleries (gallery_id, dir) VALUES (?, ?)`, id, galleryDir(root, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counter.commits() != 25 {
+		t.Fatalf("per-id autocommit baseline commits: got %d events %v", counter.commits(), counter.snapshot())
+	}
+
+	// 2 回目（同じ ids）も 1 commit。行数は 2 回実行で不変（unique key・INSERT OR IGNORE の意味を変えない）
+	counter.reset()
+	if err := recordDiscoveredBatchTx(tr, ids, root); err != nil {
+		t.Fatal(err)
+	}
+	if counter.commits() != 1 {
+		t.Fatalf("repeat request commits: got %d events %v", counter.commits(), counter.snapshot())
+	}
+	if len(fake.galleries) != 25 {
+		t.Errorf("rows after second pass: got %d", len(fake.galleries))
+	}
+
+	// ids が空のときは tx を開かない（修正前と同じく commit 0・書き込みなし）
+	counter.reset()
+	if err := recordDiscoveredBatchTx(tr, nil, root); err != nil {
+		t.Fatal(err)
+	}
+	if len(counter.snapshot()) != 0 {
+		t.Errorf("empty ids must not open a tx: %v", counter.snapshot())
+	}
+}
+
+// real DB 側で commit が実際に永続化する（commit 0 で終わらない）ことを openTestDB で確認する
+func TestRecordDiscoveredBatchPersistsRowsOnRealDB(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	ids := make([]int, 25)
+	for i := range ids {
+		ids[i] = 1000 + i
+	}
+	if err := recordDiscoveredBatch(db, ids, root); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := db.QueryRow("SELECT COUNT(1) FROM galleries").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 25 {
+		t.Fatalf("galleries rows: got %d", rows)
+	}
+	if err := recordDiscoveredBatch(db, ids, root); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(1) FROM galleries").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 25 {
+		t.Errorf("galleries rows after second pass: got %d", rows)
 	}
 }

@@ -1113,6 +1113,98 @@ func TestSearchHandlerIncludesMeasurementShape(t *testing.T) {
 	}
 }
 
+func TestSearchHandlerRecordsAllIDsInOneTransactionAfterFetch(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	key := hashTerm("furry")
+	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 200}}, make([]uint64, btreeOrder+1))
+	ids25 := make([]uint32, 25)
+	for i := range ids25 {
+		ids25[i] = uint32(2000 + i)
+	}
+	data := append([]byte{0, 0, 0, 25}, beIDs(ids25)...)
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		case rng[0] == 1000:
+			return data, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	var rows int
+	if err := v.db.QueryRow("SELECT COUNT(1) FROM galleries").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("rows before handler: got %d", rows)
+	}
+
+	// mocked fetch の external call は handler 内で fetch 完了後に record へ入る。request あたり commit 1 は
+	// fake harness（TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch）で固定。ここでは行数と timing 意味を確認
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=25", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search: code %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	outIDs := out["ids"].([]any)
+	if len(outIDs) != 25 {
+		t.Fatalf("ids: got %v", out)
+	}
+	batchMS := int64(out["timing"].(map[string]any)["record_ms"].(float64))
+	if err := v.db.QueryRow("SELECT COUNT(1) FROM galleries").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 25 {
+		t.Fatalf("galleries rows after handler: got %d", rows)
+	}
+
+	// 修正前パス（1 件ずつ autocommit・1 件 1 commit）の同 DB 基準と実測比較。record 部分の改善を示す
+	idsInt := make([]int, 25)
+	for i, got := range outIDs {
+		idsInt[i] = int(got.(float64))
+	}
+	loopStart := time.Now()
+	for _, id := range idsInt {
+		if err := recordDiscovered(v.db, id, galleryDir(v.root, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loopUS := time.Since(loopStart)
+	batchStart := time.Now()
+	if err := recordDiscoveredBatch(v.db, idsInt, v.root); err != nil {
+		t.Fatal(err)
+	}
+	batchUS := time.Since(batchStart)
+	// record 部分の改善の実測は commit 回数（fake harness で request あたり 1 に固定）と canonical server 実測で示す。
+	// in-process modernc では commit 1 回あたりの fsync コストが極小で wall-time 差は unstable なので、ここでは実測値を記録する
+	t.Logf("A-02 handler record phase in mock env (25 ids, same DB): header record_ms=%d, batch-tx(1 commit)=%v, per-id autocommit baseline(25 commits)=%v", batchMS, batchUS, loopUS)
+
+	// 2 回目 request: 行数不変（scan 2 回の行数意味・unique key 不変）、timing ヘッダの相位意味不変
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=25", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second search: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if err := v.db.QueryRow("SELECT COUNT(1) FROM galleries").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 25 {
+		t.Errorf("galleries rows after second request: got %d", rows)
+	}
+	header := rec.Header().Get("x-search-timing")
+	if !strings.Contains(header, "search=") || !strings.Contains(header, "record=") || !strings.Contains(header, "json=") {
+		t.Errorf("timing header phase fields must remain: got %q", header)
+	}
+}
+
 func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
 	v, _ := newTestViewer(t, galleryJSON)

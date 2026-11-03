@@ -470,9 +470,7 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	}
 	searchMS := int64(time.Since(searchStart) / time.Millisecond)
 	recordStart := time.Now()
-	for _, id := range ids {
-		_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
-	}
+	_ = recordDiscoveredBatch(v.db, ids, v.root)
 	recordMS := int64(time.Since(recordStart) / time.Millisecond)
 	jsonStart := time.Now()
 	jsonMS := int64(time.Since(jsonStart) / time.Millisecond)
