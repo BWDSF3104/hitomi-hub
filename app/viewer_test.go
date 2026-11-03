@@ -360,19 +360,20 @@ func TestNormalizeFormatAndSafeCachePath(t *testing.T) {
 func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	calls := 0
+	payload := "RIFFabcdWEBPpayload"
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
-		return []byte("RIFF"), nil
+		return []byte(payload), nil
 	}
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "RIFF" || rec.Header().Get("x-cache") != "miss" {
+	if rec.Code != http.StatusOK || rec.Body.String() != payload || rec.Header().Get("x-cache") != "miss" {
 		t.Fatalf("image proxy cache miss: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
 	cacheFile := filepath.Join(v.cacheRoot, sampleHash+".webp")
 	data, err := os.ReadFile(cacheFile)
-	if err != nil || string(data) != "RIFF" {
+	if err != nil || string(data) != payload {
 		t.Fatalf("persistent cache file: err %v data %q", err, string(data))
 	}
 
@@ -381,7 +382,7 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("cache hit should not call network: calls %d", calls)
 	}
-	if rec.Code != http.StatusOK || rec.Body.String() != "RIFF" || rec.Header().Get("x-cache") != "cache" {
+	if rec.Code != http.StatusOK || rec.Body.String() != payload || rec.Header().Get("x-cache") != "cache" {
 		t.Errorf("image proxy cache hit: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
 }
@@ -3011,7 +3012,7 @@ func assertNoCacheTempResidue(t *testing.T, cacheRoot string) {
 }
 
 func TestImageProxyCacheMissWritesAtomically(t *testing.T) {
-	payload := "RIFF full payload"
+	payload := "RIFFabcdWEBP payload"
 	v, _ := newTestViewer(t, "")
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		return []byte(payload), nil
@@ -3088,7 +3089,7 @@ func TestImageProxyCacheConcurrentWriteSingleflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := "singleflight payload"
+	payload := "RIFFabcdWEBPsingleflight"
 
 	started := make(chan struct{})
 	gate := make(chan struct{})
@@ -3151,6 +3152,7 @@ func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		payload := "RIFFabcdWEBPref"
 		injected := errors.New("inject " + stage)
 		started := make(chan struct{})
 		gate := make(chan struct{})
@@ -3174,9 +3176,9 @@ func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
 
 		first := make(chan error, 1)
 		second := make(chan error, 1)
-		go func() { first <- v.writeImageCacheAtomically(p, []byte("payload")) }()
+		go func() { first <- v.writeImageCacheAtomically(p, []byte(payload)) }()
 		<-started
-		go func() { second <- v.writeImageCacheAtomically(p, []byte("payload")) }()
+		go func() { second <- v.writeImageCacheAtomically(p, []byte(payload)) }()
 		<-joined
 		close(gate)
 
@@ -3202,7 +3204,7 @@ func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
 		v.cacheWriteFailureHook = nil
 		v.cacheCloseFailureHook = nil
 		v.cacheRenameFailureHook = nil
-		if err := v.writeImageCacheAtomically(p, []byte("payload")); err != nil {
+		if err := v.writeImageCacheAtomically(p, []byte(payload)); err != nil {
 			t.Fatalf("%s recovery attempt: %v", stage, err)
 		}
 		if v.cacheWriteAttemptCount != 2 || v.cacheRenameSuccessCount != 1 {
@@ -3263,5 +3265,56 @@ func TestImageProxyCacheStateIsNotTN(t *testing.T) {
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
 	if rec.Code != http.StatusOK || rec.Body.String() != "full bytes" || rec.Header().Get("x-cache") != "cache" {
 		t.Errorf("full cache pass is x-cache: cache only: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+}
+
+func TestImageProxyCacheMagicCheckSkipsMismatchedBytes(t *testing.T) {
+	cases := []struct {
+		format string
+		data   string
+		cached bool
+	}{
+		{"webp", "RIFFabcdWEBPpayload", true},
+		{"avif", "aaaaftypavifbrand", true},
+		{"webp", "not webp payload", false},
+		{"avif", "aaaaftypheicbrandxxx", false},
+	}
+	for _, tc := range cases {
+		v, _ := newTestViewer(t, "")
+		v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+			return []byte(tc.data), nil
+		}
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format="+tc.format, nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != tc.data || rec.Header().Get("x-cache") != "miss" {
+			t.Fatalf("magic case %s/%q: code %d body %q x-cache %q", tc.format, tc.data, rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+		}
+		cachePath, err := safeCachePath(v.cacheRoot, sampleHash, tc.format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v.cacheWriteMu.Lock()
+		attempt, rename := v.cacheWriteAttemptCount, v.cacheRenameSuccessCount
+		v.cacheWriteMu.Unlock()
+		if tc.cached {
+			got, err := os.ReadFile(cachePath)
+			if err != nil || string(got) != tc.data {
+				t.Errorf("valid magic %s must stay cached: err %v data %q", tc.format, err, string(got))
+			}
+			if attempt != 1 || rename != 1 {
+				t.Errorf("valid magic %s counts: attempt %d rename %d", tc.format, attempt, rename)
+			}
+			assertNoCacheTempResidue(t, v.cacheRoot)
+		} else {
+			if _, err := os.Stat(cachePath); err == nil {
+				t.Errorf("magic mismatch must not create cache file: %s", cachePath)
+			}
+			if attempt != 0 || rename != 0 {
+				t.Errorf("magic mismatch must not count as actual write attempt: attempt %d rename %d", attempt, rename)
+			}
+			if _, err := os.Stat(v.cacheRoot); err == nil {
+				assertNoCacheTempResidue(t, v.cacheRoot)
+			}
+		}
 	}
 }

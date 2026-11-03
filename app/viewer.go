@@ -317,7 +317,25 @@ func (v *viewer) writeImageCacheAtomically(cachePath string, data []byte) error 
 	return err
 }
 
+// matchesFormatMagic は full cache 書き込み直前の format magic 照合（A-07a）。
+// webp = RIFF(0-3)+WEBP(8-11)、avif = ftyp(4-7)+avif brand(8-11)。webp/avif 以外は現行動作維持（照合なし）。
+func matchesFormatMagic(format string, data []byte) bool {
+	switch format {
+	case "webp":
+		return len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+	case "avif":
+		return len(data) >= 12 && string(data[4:8]) == "ftyp" && string(data[8:12]) == "avif"
+	default:
+		return true
+	}
+}
+
 func (v *viewer) writeCacheFileOnce(cachePath string, data []byte) error {
+	format := normalizeFormat(filepath.Ext(cachePath))
+	if !matchesFormatMagic(format, data) {
+		return fmt.Errorf("cache magic mismatch for format %q", format)
+	}
+
 	dir := filepath.Dir(cachePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
