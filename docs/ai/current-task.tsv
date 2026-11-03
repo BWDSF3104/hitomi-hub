@@ -14,7 +14,7 @@ docs/ai/tasks/2026-11-03-a13-scan-pdf-keys-string-alloc.md	進行中	引き継�
 docs/ai/tasks/2026-11-03-c05-cache-limits.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a15-loopback-host-ipv6.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b04-acquisition-title-sanitize.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-b05-config-hitomi-default.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
+docs/ai/tasks/2026-11-03-b05-config-hitomi-default.md	完了	実装・検証完了（単独コミット・push 済み。検証記録は Verification）
 docs/ai/tasks/2026-11-03-b06-vt-empty-results.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b07-yara-failure-overwrites-pass.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b09-newtab-click-handler.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）

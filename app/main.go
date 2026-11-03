@@ -155,7 +155,7 @@ func loadConfig(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	cfg := Config{Limits: defaultLimits()}
+	cfg := Config{Limits: defaultLimits(), Hitomi: defaultHitomiConfig()}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}

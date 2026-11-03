@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -424,6 +426,68 @@ func TestLoadConfigPreservesUseLiveGGWhenOmitted(t *testing.T) {
 	}
 	if cfg.Hitomi.UseLiveGG {
 		t.Errorf("explicit use_live_gg false should remain false: got %v", cfg.Hitomi.UseLiveGG)
+	}
+}
+
+func TestLoadConfigWithoutHitomiKeyUsesLiveGGViaMock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"viewer":{"port":8732}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Hitomi.UseLiveGG {
+		t.Fatalf("config without hitomi key should default UseLiveGG true: got %v", cfg.Hitomi.UseLiveGG)
+	}
+
+	c := &Client{cfg: cfg.Hitomi}
+	calls := 0
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+	}
+	if source := c.LoadGG(context.Background()); source != "live" {
+		t.Fatalf("mock live source: got %s", source)
+	}
+	if calls != 1 {
+		t.Fatalf("mock fetch calls: got %d", calls)
+	}
+	metrics := c.metricsSnapshot()
+	metric, ok := metrics["gg"].(map[string]int64)
+	if !ok {
+		t.Fatalf("metrics gg group missing: got %v", metrics)
+	}
+	if metric["calls"] != 1 {
+		t.Errorf("metrics gg calls: got %v", metric)
+	}
+
+	path = filepath.Join(t.TempDir(), "config-false.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"use_live_gg":false}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hitomi.UseLiveGG {
+		t.Fatalf("explicit use_live_gg false should remain false: got %v", cfg.Hitomi.UseLiveGG)
+	}
+	c = &Client{cfg: cfg.Hitomi}
+	called := false
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		called = true
+		return nil, errors.New("offline")
+	}
+	if source := c.LoadGG(context.Background()); source != "snapshot" {
+		t.Fatalf("snapshot fallback source: got %s", source)
+	}
+	if called {
+		t.Errorf("explicit false must not fetch live gg.js")
+	}
+	if c.GG().Bucket != snapshotGG().Bucket {
+		t.Errorf("fallback bucket: got %s want %s", c.GG().Bucket, snapshotGG().Bucket)
 	}
 }
 
