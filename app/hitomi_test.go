@@ -793,9 +793,9 @@ func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
 			t.Fatalf("run 1 processFile failed: %s", result.path)
 		}
 	}
-	calls1 := liveImageCalls(client)
+	calls1 := liveDownloadFetchCalls(client)
 	if len(run1) != 2 || written1 != len(run1) || calls1 != int64(len(run1)) {
-		t.Fatalf("run 1 evidence: attempted %d written %d image calls %d", len(run1), written1, calls1)
+		t.Fatalf("run 1 evidence: attempted %d written %d download fetch calls %d", len(run1), written1, calls1)
 	}
 
 	run2 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, recordedSizes(db, scratch, info.ID))
@@ -809,15 +809,28 @@ func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
 		}
 		skipped2++
 	}
-	calls2 := liveImageCalls(client) - calls1
+	calls2 := liveDownloadFetchCalls(client) - calls1
 	if skipped2 != len(run2) || calls2 != 0 {
-		t.Fatalf("run 2 evidence: skipped %d image calls %d", skipped2, calls2)
+		t.Fatalf("run 2 evidence: skipped %d download fetch calls %d", skipped2, calls2)
 	}
-	t.Logf("A-10 live evidence: run1 attempted=%d written=%d image calls=%d, run2 attempted=%d skipped=%d image calls=%d, metrics=%v",
-		len(run1), written1, calls1, len(run2), skipped2, calls2, client.metricsSnapshot())
+	if tnCalls := liveTNFetchCalls(client); tnCalls != 0 {
+		t.Fatalf("download must not use TN as source: TN calls %d", tnCalls)
+	}
+	t.Logf("A-10 live evidence: run1 attempted=%d written=%d download fetch calls=%d, run2 attempted=%d skipped=%d download fetch calls=%d, TN calls=%d, metrics=%v",
+		len(run1), written1, calls1, len(run2), skipped2, calls2, liveTNFetchCalls(client), client.metricsSnapshot())
 }
 
-func liveImageCalls(c *Client) int64 {
+// download の shard full-image fetch は classifyFetchURL の "data" kind に計上される（shard URL は
+// TN path ではない）。TN（"image" kind）は download の表示源ではないので 0 のまま。
+func liveDownloadFetchCalls(c *Client) int64 {
+	metric, ok := c.metricsSnapshot()["data"].(map[string]int64)
+	if !ok {
+		return 0
+	}
+	return metric["calls"]
+}
+
+func liveTNFetchCalls(c *Client) int64 {
 	metric, ok := c.metricsSnapshot()["image"].(map[string]int64)
 	if !ok {
 		return 0
