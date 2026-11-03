@@ -105,6 +105,48 @@ def test_magic_mismatch_and_mz_without_pe(tmp_path):
     assert "mz_without_pe_header" in findings
 
 
+def make_pe_stub(path: Path, e_lfanew: int, pe_sig: bool) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = bytearray(b"\x00" * max(e_lfanew + 4, 64))
+    data[0:2] = b"MZ"
+    data[0x3C:0x40] = e_lfanew.to_bytes(4, "little")
+    if pe_sig:
+        data[e_lfanew:e_lfanew + 4] = b"PE\x00\x00"
+    path.write_bytes(bytes(data))
+    return path
+
+
+def test_pe_signature_beyond_head_window_is_not_mz_hit(tmp_path):
+    # D-04: e_lfanew >= 64（0x80）で seek 判定。合格条件: mz_without_pe_header が出ない
+    path = make_pe_stub(tmp_path / "Galleries" / "102" / "b.bin", 0x80, True)
+    _, magic, findings, status = scan.scan_file(path, CFG)
+    assert magic == "pe"
+    assert "mz_without_pe_header" not in findings
+    assert findings == []
+    assert status == "not_evaluated"
+
+
+def test_pe_signature_within_head_window_regression(tmp_path):
+    path = make_pe_stub(tmp_path / "Galleries" / "102" / "legacy.bin", 0x38, True)
+    _, _, findings, status = scan.scan_file(path, CFG)
+    assert findings == []
+    assert status == "not_evaluated"
+
+
+def test_mz_stub_claiming_offset_without_pe_still_hits(tmp_path):
+    path = make_pe_stub(tmp_path / "Galleries" / "102" / "stub.bin", 0x80, False)
+    _, _, findings, status = scan.scan_file(path, CFG)
+    assert findings == ["mz_without_pe_header"]
+    assert status == "hit"
+
+
+def test_true_mz_only_still_hits_regression(tmp_path):
+    path = make_pe_stub(tmp_path / "Galleries" / "102" / "mzonly.bin", 0, False)
+    _, _, findings, status = scan.scan_file(path, CFG)
+    assert findings == ["mz_without_pe_header"]
+    assert status == "hit"
+
+
 def test_plain_image_is_not_evaluated(tmp_path):
     path = tmp_path / "Galleries" / "127" / "001.png"
     path.parent.mkdir(parents=True, exist_ok=True)

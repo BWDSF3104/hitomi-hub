@@ -83,16 +83,24 @@ def ext_of(path: Path) -> str:
     return path.suffix.lower().lstrip(".")
 
 
-def is_pe(head: bytes) -> bool:
+def is_pe(path: Path, head: bytes) -> bool:
     if head[:2] != b"MZ":
         return False
-    try:
-        e_lfanew = int.from_bytes(head[0x3C:0x40], "little")
-    except Exception:
+    if len(head) < 0x40:
         return False
-    if e_lfanew <= 0 or e_lfanew + 4 > len(head):
+    e_lfanew = int.from_bytes(head[0x3C:0x40], "little")
+    if e_lfanew <= 0:
         return False
-    return head[e_lfanew:e_lfanew + 4] == b"PE\x00\x00"
+    if e_lfanew + 4 <= len(head):
+        signature = head[e_lfanew:e_lfanew + 4]
+    else:
+        try:
+            with path.open("rb") as fh:
+                fh.seek(e_lfanew)
+                signature = fh.read(4)
+        except OSError:
+            return False
+    return signature == b"PE\x00\x00"
 
 
 EXPECTED_MAGIC = {
@@ -158,7 +166,7 @@ def scan_file(path: Path, cfg: dict) -> tuple:
     expected = EXPECTED_MAGIC.get(ext)
     if expected and magic not in expected:
         findings.append("magic_mismatch:%s_vs_%s" % (ext, magic))
-    if magic == "pe" and not is_pe(head):
+    if magic == "pe" and not is_pe(path, head):
         findings.append("mz_without_pe_header")
     if magic == "zip" and ext in SCAN_TARGETS:
         try:
