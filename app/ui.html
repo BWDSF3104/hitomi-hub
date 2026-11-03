@@ -205,6 +205,8 @@ let lastViewMode = "double";
 let fullscreenState = "off";
 let currentPairEnd = null;
 let stripGroup = null;
+let stripRenderedGallery = null;
+let stripRenderedGroup = null;
 let prefetchAbort = null;
 let backgroundSignal = null;
 let backgroundGalleryId = null;
@@ -1162,6 +1164,7 @@ function runBackgroundReadAndLists(showGen, openGen) {
 
 async function showPage() {
   if (!current.id) return;
+  refreshStrip();
   const entry = current.files[current.page - 1];
   if (!entry) {
     document.getElementById("note").textContent = "page out of range";
@@ -1173,8 +1176,6 @@ async function showPage() {
   const displayed = readerItems().filter((item) => item.entry);
   renderReader();
   ensureBackgroundPrefetch(displayed);
-  renderStrip();
-  highlightStrip();
   document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   renderPosition();
@@ -1188,6 +1189,8 @@ function renderStrip() {
   currentGalleryObjectUrlKeys.clear();
   const items = stripItems();
   const group = stripGroupPage(items);
+  stripRenderedGallery = current.id;
+  stripRenderedGroup = group;
   renderStripControls(items, group);
   const start = (group - 1) * 50;
   const end = Math.min(start + 50, items.length);
@@ -1221,9 +1224,21 @@ function highlightStrip() {
     img.classList.toggle("current", pages.includes(Number(img.dataset.page)));
   });
 }
+function refreshStrip() {
+  const items = stripItems();
+  const group = stripGroupPage(items);
+  if (stripRenderedGallery === current.id && group === stripRenderedGroup) {
+    highlightStrip();
+    return false;
+  }
+  renderStrip();
+  return true;
+}
 async function openGallery(id, page, second) {
   const gen = ++openGeneration;
   stripGroup = null;
+  stripRenderedGallery = null;
+  stripRenderedGroup = null;
   if (prefetchAbort) prefetchAbort.abort();
   if (backgroundSignal) backgroundSignal.abort();
   backgroundGalleryId = null;
@@ -1237,7 +1252,6 @@ async function openGallery(id, page, second) {
     setGalleryMeta(fullCardData);
     await showPage();
     if (gen !== openGeneration) return;
-    renderStrip();
     await showLists(showGeneration, gen);
     return;
   }
@@ -1248,7 +1262,6 @@ async function openGallery(id, page, second) {
     setGalleryMeta(cached);
     await showPage();
     if (gen !== openGeneration) return;
-    renderStrip();
     await showLists(showGeneration, gen);
     return;
   }
@@ -1263,7 +1276,6 @@ async function openGallery(id, page, second) {
   currentPairEnd = second || null;
   await showPage();
   if (gen !== openGeneration) return;
-  renderStrip();
   await showLists(showGeneration, gen);
 }
 async function showLists(showGen, openGen) {

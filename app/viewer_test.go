@@ -1608,8 +1608,8 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	if !strings.Contains(showBody, `const showGen = ++showGeneration;`) || !strings.Contains(showBody, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
 		t.Errorf("showPage should ignore stale async reader updates: got %q", showBody)
 	}
-	if !strings.Contains(showBody, `renderStrip();`) || !strings.Contains(showBody, `highlightStrip();`) {
-		t.Errorf("showPage should render strip immediately before waiting for async read updates: got %q", showBody)
+	if !strings.Contains(showBody, `refreshStrip();`) {
+		t.Errorf("showPage should update the strip immediately before waiting for async read updates: got %q", showBody)
 	}
 	if strings.Contains(showBody, `await post("/api/read"`) || strings.Contains(showBody, `await showLists()`) {
 		t.Errorf("showPage display path should not block on post read or showLists: got %q", showBody)
@@ -1632,6 +1632,52 @@ func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
 	renderBody := s[renderStart:strings.Index(s, "\nasync function runPriority(displayed, signal) {")]
 	if !strings.Contains(renderBody, `renderGeneration++;`) || !strings.Contains(renderBody, `data-render='`) {
 		t.Errorf("renderReader should mark the current render generation: got %q", renderBody)
+	}
+}
+
+func TestEmbeddedUIPageMovementKeepsStripNodes(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	if !strings.Contains(s, `let stripRenderedGallery = null;`) || !strings.Contains(s, `let stripRenderedGroup = null;`) {
+		t.Errorf("ui should track the rendered strip window per gallery: got %q", s)
+	}
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+	if !strings.Contains(showBody, `refreshStrip();`) || strings.Contains(showBody, `renderStrip();`) {
+		t.Errorf("showPage page movement should update strip via refreshStrip only, not full rebuild: got %q", showBody)
+	}
+	refreshStart := strings.Index(s, "function refreshStrip() {")
+	if refreshStart < 0 {
+		t.Fatalf("refreshStrip function not found")
+	}
+	refreshBody := s[refreshStart:strings.Index(s, "\nasync function openGallery(id, page, second) {")]
+	if !strings.Contains(refreshBody, `stripRenderedGallery === current.id && group === stripRenderedGroup`) || !strings.Contains(refreshBody, `highlightStrip();`) {
+		t.Errorf("refreshStrip should change only the active class when the rendered group window is unchanged: got %q", refreshBody)
+	}
+	if strings.Index(refreshBody, `highlightStrip();`) > strings.Index(refreshBody, `renderStrip();`) {
+		t.Errorf("refreshStrip should return after highlight-only before any full rebuild: got %q", refreshBody)
+	}
+	renderStart := strings.Index(s, "function renderStrip() {")
+	renderBody := s[renderStart:strings.Index(s, "\nfunction highlightStrip() {")]
+	if !strings.Contains(renderBody, `stripRenderedGallery = current.id;`) || !strings.Contains(renderBody, `stripRenderedGroup = group;`) {
+		t.Errorf("renderStrip should record the rendered gallery and group window: got %q", renderBody)
+	}
+	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
+	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
+	if !strings.Contains(openBody, `stripRenderedGallery = null;`) || !strings.Contains(openBody, `stripRenderedGroup = null;`) {
+		t.Errorf("openGallery should reset strip rebuild state so gallery open rebuilds once: got %q", openBody)
+	}
+	if strings.Contains(openBody, `renderStrip();`) {
+		t.Errorf("openGallery should not rebuild the strip again after showPage: got %q", openBody)
+	}
+	if !strings.Contains(s, `function highlightStrip() {`) || !strings.Contains(s, `img.classList.toggle("current"`) {
+		t.Errorf("highlightStrip should toggle the active class on existing strip img nodes: got %q", s)
 	}
 }
 

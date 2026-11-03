@@ -1,0 +1,35 @@
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+HARNESS = ROOT / "tests" / "strip_rebuild_dom_harness.mjs"
+
+def test_strip_rebuild_mocked_dom_page_move_keeps_img_nodes():
+    if shutil.which("node") is None:
+        pytest.fail("node toolchain is required for the mocked DOM strip rebuild test")
+
+    result = subprocess.run(["node", str(HARNESS)], capture_output=True, text=True, cwd=str(ROOT))
+    if result.returncode != 0:
+        pytest.fail("mocked DOM harness failed:\n" + result.stdout + result.stderr)
+
+    required = [
+        "gallery open does full rebuild once",
+        "page movement does not regenerate strip img nodes",
+        "strip child count unchanged on page movement",
+        "strip img nodes are the same objects (not regenerated)",
+        "active class reflects page movement on existing nodes",
+        "second page movement still highlight-only",
+        "openGallery resets strip rebuild state on open",
+        "openGallery does not rebuild the strip again after showPage",
+        "showPage updates strip via refreshStrip only",
+        "renderStrip records the rendered gallery and group window",
+        "next gallery open does full rebuild exactly once",
+        "page movement after open stays highlight-only",
+    ]
+    out = result.stdout
+    for label in required:
+        if "PASS " + label not in out:
+            pytest.fail("mocked DOM test must fix: " + label + "\ngot:\n" + out)
