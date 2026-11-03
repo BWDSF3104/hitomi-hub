@@ -33,8 +33,10 @@
 
 判断点（持ち帰り）: 記録の既存テスト名 `TestViewerImageProxyCachesBytes` は HEAD `22c5953` に存在せず（git grep 該当は本記録のみ）、実体の mocked fetch cache テスト `TestViewerImageProxyWritesPersistentCacheAndServesCacheHit` を更新対象として扱った。live server では remote が正しい magic bytes を返すため magic 不一致は mock fetch テストで実測。canonical exe の digest（`tools/VERSIONS.md`）はスコープ外のため未更新。
 
+Commit: `5fb758e`（push 済み・単独。内容: `app/viewer.go`・`app/viewer_test.go`・個別記録・`current-task.tsv` のみ。`app/docs/`・`hitomi.db-shm`・`hitomi.db-wal`・実測 scratch 未コミット。canonical exe は実機確認のため修正込みで再 build 済み（exe 非追跡））。影響疑いなし: 合格済み他項目（A-07b・C-08・B-02・B-05・A-10・polarity/faithful parse・A-15）の関与ファイル・規則は未変更（imageProxy 順序・shard URL・TN・UI full 判定・scan・config・download・YARA 回帰テスト PASS で確認）。
+
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（`task_manager.py end` 済み）
+- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし）
+- [ ] `backlog.md` の完了項目を削除（該当する場合・assess-20261103-1220 の親 Memory Bank 処理）
