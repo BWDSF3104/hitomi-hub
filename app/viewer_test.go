@@ -39,12 +39,15 @@ func TestSafeGalleryPathStaysInsideGalleryDir(t *testing.T) {
 }
 
 func viewerFixtureGG() GG {
-	// live `gg.js` の switch values は回転する。Viewer tests は snapshot の実値ではなく
-	// fixture で規則を検証する。sampleHash の value（2488）を case に含め、zeroHash（1184）を case 外にする。
+	// live `gg.js` の switch values と polarity（初期 o・case 代入）は窓ごとに rotation する。
+	// Viewer tests は snapshot の実値ではなく fixture で規則を検証する。ここは構造 A（`var o = 0`・case 代入 `o = 1`）:
+	// sampleHash の value（2488）を case に含め → m=1（`btn`/`w2`）、zeroHash（1184）を case 外 → m=0（`atn`/`w1`）。
 	return GG{
-		Bucket:  "1793494802/",
-		CaseSet: map[int]bool{2488: true},
-		Source:  "live",
+		Bucket:    "1793494802/",
+		CaseSet:   map[int]bool{2488: true},
+		InitialO:  0,
+		CaseValue: 1,
+		Source:    "live",
 	}
 }
 
@@ -664,7 +667,7 @@ func TestViewerImageProxyRefreshesGGOnceOnStorage404(t *testing.T) {
 			return nil, errors.New("image proxy must not fetch TN")
 		}
 		if strings.Contains(rawurl, "/gg.js") {
-			return []byte("var gg = { b: '1793494803/', m: function (g) { return 1; } }; case 2488:"), nil
+			return []byte("var gg = { b: '1793494803/', m: function (g) { var o = 0; switch (g) { case 2488: o = 1; break; } return o; } };"), nil
 		}
 		if !seenStorage404 {
 			seenStorage404 = true
@@ -693,7 +696,7 @@ func TestViewerImageProxyDoesNotRetryWhenGGBucketUnchanged(t *testing.T) {
 			return nil, errors.New("image proxy must not fetch TN")
 		}
 		if strings.Contains(rawurl, "/gg.js") {
-			return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+			return []byte("var gg = { b: '1793494802/', m: function (g) { var o = 0; switch (g) { case 2488: o = 1; break; } return o; } };"), nil
 		}
 		if !seenStorage404 {
 			seenStorage404 = true
@@ -718,7 +721,7 @@ func TestViewerImageProxyRetriesUsingInitialGGWhenAnotherRequestUpdatedGG(t *tes
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
 		if strings.Contains(rawurl, "/gg.js") {
-			return []byte("var gg = { b: '1793494803/', m: function (g) { return 1; } }; case 2488:"), nil
+			return []byte("var gg = { b: '1793494803/', m: function (g) { var o = 0; switch (g) { case 2488: o = 1; break; } return o; } };"), nil
 		}
 		if strings.Contains(rawurl, sampleHash+".webp") && len(urls) == 1 {
 			return nil, errors.New("status 404 for " + rawurl)

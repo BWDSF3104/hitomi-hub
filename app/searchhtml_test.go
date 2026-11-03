@@ -225,8 +225,8 @@ func TestApplySearchOrderDoesNotDoubleReverseAsc(t *testing.T) {
 func TestThumbnailURLMatchesVerifiedTNPath(t *testing.T) {
 	// TN base は format で決まる（実測 200: `77656270626967746e` / `61766966626967746e`）。
 	// `746e626967746e` は base として存在せず 404。subdomain は `a`/`b` + `tn`（gg.m で決まる）。
-	// bucket/switch values は回転するので fixture で規則を検証する（正典: `tools/gen_ggset.py`）
-	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 3:\n o = 1;\n break;\n}\nreturn o;\n}};") // live 実測構造: case 外の sampleHash（2488）→ m=0（`atn`）
+	// bucket/switch values と polarity（初期 o・case 代入）は窓ごとに rotation するので fixture で規則を検証する（正典: `tools/gen_ggset.py`）
+	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 3:\n o = 1;\n break;\n}\nreturn o;\n}};") // 構造 A（11-03 11:38Z 窓）: case 外の sampleHash（2488）→ m=0（`atn`）
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +244,14 @@ func TestThumbnailURLMatchesVerifiedTNPath(t *testing.T) {
 	got = ThumbnailURL(sampleHash, "jpeg", gg)
 	if got != "https://atn." + hitomiDomain + "/webpbigtn/9/b8/" + sampleHash + ".webp" {
 		t.Fatalf("non-TN format must fall back to webp: got %s", got)
+	}
+	// 構造 B（11-03 12:00 窓: `var o = 1`・case → `o = 0`）で subdomain が反転（base・format は不変）
+	ggFlip, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ThumbnailURL(sampleHash, "webp", ggFlip); got != "https://btn." + hitomiDomain + "/webpbigtn/9/b8/" + sampleHash + ".webp" {
+		t.Fatalf("polarity flip TN subdomain: got %s", got)
 	}
 	if fileExt("001.avif") != "avif" || fileExt("001.jpeg") != "jpg" || fileExt("001") != "webp" {
 		t.Fatalf("fileExt: %q %q %q", fileExt("001.avif"), fileExt("001.jpeg"), fileExt("001"))

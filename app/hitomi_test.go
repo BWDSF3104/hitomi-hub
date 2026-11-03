@@ -18,12 +18,18 @@ import (
 // 2026-11-01 に ltn 実測で確認した値（HTTP 200・210784 bytes）
 const sampleHash = "2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89"
 
+// faithful parse 基準の fixture。polarity は固定しない。窓ごとに観測される両構造を持つ:
+// A = `var o = 0`・case 代入 `o = 1`（11-03 11:38Z 窓）、B = `var o = 1`・case 代入 `o = 0`（11-03 12:00 窓）。
+// 同じ value に対し A と B で m が反転すること（= w1/w2・atn/btn が反転）をテストで固定する。
+const ggFixtureA = "var gg = { b: '1793494802/', m: function (g) { var o = 0; switch (g) { case 2488: o = 1; break; } return o; } };"
+const ggFixtureB = "var gg = { b: '1793494802/', m: function (g) { var o = 1; switch (g) { case 2488: o = 0; break; } return o; } };"
+
 func TestClientCacheFieldsAreMutexProtected(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		if strings.Contains(rawurl, "/gg.js") {
-			return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+			return []byte(ggFixtureA), nil
 		}
 		if strings.HasSuffix(rawurl, "/version") {
 			return []byte("1793467632"), nil
@@ -48,50 +54,72 @@ func TestClientCacheFieldsAreMutexProtected(t *testing.T) {
 }
 
 func TestCanonicalGGRuleComposition(t *testing.T) {
-	// 2026-11-01 実測の live `gg.js` 構造: `var o = 0; switch (g) { case ... o = 1; break; } return o;`
-	// cases 内の value は m=1（`w2` / `btn`）、case 外の value は m=0（`w1` / `atn`）。
-	fixture := "var gg = { m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 2488:\n o = 1;\n break;\n}\nreturn o;\n}, b: '1793494802/' };"
-	gg, err := parseGG(fixture)
+	// mapping 方向は固定（0 → `w1`/`atn`、1 → `w2`/`btn`）。polarity は窓ごとに rotation するため
+	// faithful parse が保持する。両構造で同じ value の w1/w2（atn/btn）が反転することを固定する。
+	// 構造 A: `var o = 0`・case → `o = 1`。構造 B: `var o = 1`・case → `o = 0`。
+	ggA, err := parseGG(ggFixtureA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gg.Source != "live" || gg.Bucket != "1793494802/" || len(gg.CaseSet) != 1 {
-		t.Errorf("parsed gg: got %+v", gg)
+	ggB, err := parseGG(ggFixtureB)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	inSet := sampleHash // value 2488 → fixture の case
+	inSet := sampleHash // value 2488 → 両 fixture の case
 	outSet := "21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065" // value 1286 → case 外
-	if gg.Value(inSet) != 2488 || gg.Value(outSet) != 1286 {
-		t.Errorf("gg value: %d %d", gg.Value(inSet), gg.Value(outSet))
-	}
-	if gg.M(2488) != 1 || gg.M(1286) != 0 {
-		t.Errorf("gg M: case=%d out=%d", gg.M(2488), gg.M(1286))
+	if ggA.Value(inSet) != 2488 || ggA.Value(outSet) != 1286 {
+		t.Errorf("gg value: %d %d", ggA.Value(inSet), ggA.Value(outSet))
 	}
 
-	want := "https://w2.gold-usergeneratedcontent.net/1793494802/2488/" + inSet + ".webp"
-	if got := ImageURL(inSet, "webp", "webp", gg); got != want {
-		t.Errorf("image url (m=1): got %s want %s", got, want)
+	// fixture A の polarity: 初期 o=0・case 代入=1。
+	if ggA.Source != "live" || ggA.Bucket != "1793494802/" || len(ggA.CaseSet) != 1 {
+		t.Errorf("parsed gg A: got %+v", ggA)
 	}
-	want = "https://w1.gold-usergeneratedcontent.net/1793494802/1286/" + outSet + ".webp"
-	if got := ImageURL(outSet, "webp", "webp", gg); got != want {
-		t.Errorf("image url (m=0): got %s want %s", got, want)
+	if ggA.InitialO != 0 || ggA.CaseValue != 1 || ggA.M(2488) != 1 || ggA.M(1286) != 0 {
+		t.Errorf("gg A polarity: init=%d case=%d in=%d out=%d", ggA.InitialO, ggA.CaseValue, ggA.M(2488), ggA.M(1286))
+	}
+	// fixture B の polarity: 初期 o=1・case 代入=0（A と反転）。
+	if ggB.InitialO != 1 || ggB.CaseValue != 0 || ggB.M(2488) != 0 || ggB.M(1286) != 1 {
+		t.Errorf("gg B polarity: init=%d case=%d in=%d out=%d", ggB.InitialO, ggB.CaseValue, ggB.M(2488), ggB.M(1286))
 	}
 
-	want = "https://btn." + hitomiDomain + "/webpbigtn/9/b8/" + inSet + ".webp"
-	if got := ThumbnailURL(inSet, "webp", gg); got != want {
-		t.Errorf("tn (m=1): got %s want %s", got, want)
+	// mapping 方向固定（構造 A 基準）
+	if got := ImageURL(inSet, "webp", "webp", ggA); got != "https://w2.gold-usergeneratedcontent.net/1793494802/2488/"+inSet+".webp" {
+		t.Errorf("image url A in (m=1): got %s", got)
 	}
-	want = "https://atn." + hitomiDomain + "/avifbigtn/5/06/" + outSet + ".avif"
-	if got := ThumbnailURL(outSet, "avif", gg); got != want {
-		t.Errorf("tn avif (m=0): got %s want %s", got, want)
+	if got := ImageURL(outSet, "webp", "webp", ggA); got != "https://w1.gold-usergeneratedcontent.net/1793494802/1286/"+outSet+".webp" {
+		t.Errorf("image url A out (m=0): got %s", got)
 	}
-	if strings.Contains(ThumbnailURL(outSet, "avif", gg), "tnbigtn") {
-		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(outSet, "avif", gg))
+
+	// 構造差分で同じ value の w1/w2 が反転する（A in=w2 → B in=w1、A out=w1 → B out=w2）
+	if got := ImageURL(inSet, "webp", "webp", ggB); got != "https://w1.gold-usergeneratedcontent.net/1793494802/2488/"+inSet+".webp" {
+		t.Errorf("image url B in (m=0): got %s", got)
+	}
+	if got := ImageURL(outSet, "webp", "webp", ggB); got != "https://w2.gold-usergeneratedcontent.net/1793494802/1286/"+outSet+".webp" {
+		t.Errorf("image url B out (m=1): got %s", got)
+	}
+
+	// TN subdomain も構造差分で反転（A in=b、A out=a → B in=a、B out=b）。base/format は構造に依存しない。
+	if got := ThumbnailURL(inSet, "webp", ggA); got != "https://btn."+hitomiDomain+"/webpbigtn/9/b8/"+inSet+".webp" {
+		t.Errorf("tn A in (m=1): got %s", got)
+	}
+	if got := ThumbnailURL(outSet, "avif", ggA); got != "https://atn."+hitomiDomain+"/avifbigtn/5/06/"+outSet+".avif" {
+		t.Errorf("tn A out avif (m=0): got %s", got)
+	}
+	if got := ThumbnailURL(inSet, "webp", ggB); got != "https://atn."+hitomiDomain+"/webpbigtn/9/b8/"+inSet+".webp" {
+		t.Errorf("tn B in (m=0): got %s", got)
+	}
+	if got := ThumbnailURL(outSet, "avif", ggB); got != "https://btn."+hitomiDomain+"/avifbigtn/5/06/"+outSet+".avif" {
+		t.Errorf("tn B out avif (m=1): got %s", got)
+	}
+	if strings.Contains(ThumbnailURL(outSet, "avif", ggA), "tnbigtn") {
+		t.Errorf("tn name must not appear as base: got %s", ThumbnailURL(outSet, "avif", ggA))
 	}
 }
 
 func TestEnsureGGUsesTTLAndForceRefresh(t *testing.T) {
-	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+		fixture := ggFixtureA
 	calls := 0
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1
@@ -128,7 +156,7 @@ func TestEnsureGGUsesTTLAndForceRefresh(t *testing.T) {
 }
 
 func TestEnsureGGForceMinIntervalSkipsSecondForce(t *testing.T) {
-	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+		fixture := ggFixtureA
 	calls := 0
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1
@@ -162,7 +190,7 @@ func TestEnsureGGForceMinIntervalSkipsSecondForce(t *testing.T) {
 }
 
 func TestEnsureGGSingleflightDoesNotRepeatConcurrentForce(t *testing.T) {
-	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+		fixture := ggFixtureA
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1
 	c.cfg.GGForceMinIntervalMS = 60000
@@ -191,7 +219,7 @@ func TestEnsureGGSingleflightDoesNotRepeatConcurrentForce(t *testing.T) {
 }
 
 func TestEnsureGGFailurePreservesLiveGG(t *testing.T) {
-	fixture := "var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"
+		fixture := ggFixtureA
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1
 	c.cfg.GGForceMinIntervalMS = 0
@@ -226,6 +254,26 @@ func TestSnapshotGGIsPopulatedAndUsedAsFallback(t *testing.T) {
 	if gg.Bucket == "" || len(gg.CaseSet) == 0 {
 		t.Fatalf("snapshot gg is empty: %+v", gg)
 	}
+	// snapshot は生成時点の live で観測した polarity をそのまま保持する（正典生成: `tools/gen_ggset.py`）。
+	// rotating な実値をハードコードしない。polarity 反転（case 代入 ≠ 初期 o）と M の faithful 挙動を固定する。
+	if gg.InitialO == gg.CaseValue {
+		t.Fatalf("snapshot polarity not populated (observed structure must have distinct values): %+v", gg)
+	}
+	if gg.InitialO != ggInitialO || gg.CaseValue != ggCaseValue {
+		t.Fatalf("snapshot must carry observed polarity: got init=%d case=%d want init=%d case=%d", gg.InitialO, gg.CaseValue, ggInitialO, ggCaseValue)
+	}
+	inCase := -1
+	for value := range gg.CaseSet {
+		inCase = value
+		break
+	}
+	outCase := 4096
+	for gg.CaseSet[outCase] {
+		outCase++
+	}
+	if gg.M(inCase) != gg.CaseValue || gg.M(outCase) != gg.InitialO {
+		t.Errorf("snapshot M not faithful: in=%d want %d, out=%d want %d", gg.M(inCase), gg.CaseValue, gg.M(outCase), gg.InitialO)
+	}
 
 	offline := &Client{cfg: defaultHitomiConfig()}
 	offline.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -243,7 +291,7 @@ func TestSnapshotGGIsPopulatedAndUsedAsFallback(t *testing.T) {
 		if !strings.Contains(rawurl, "/gg.js") {
 			t.Errorf("expected gg.js fetch, got %s", rawurl)
 		}
-		return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+		return []byte(ggFixtureA), nil
 	}
 	if source := live.LoadGG(context.Background()); source != "live" {
 		t.Errorf("live source: got %s", source)
@@ -344,20 +392,33 @@ func TestSearchQueryIntersectsTermsAndLanguage(t *testing.T) {
 
 func TestStorageURLUsesFormatNotNameExt(t *testing.T) {
 	// galleryinfo の name が 001.jpg でも shard 保存形式は webp（同じ hash の .jpg は 404 実測）
-	// live 実測構造では fixture の switch に sampleHash の値（2488）が無い → m=0（`w1`）
-	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 3:\n o = 1;\n break;\n}\nreturn o;\n}};")
+	// fixture の switch に sampleHash の値（2488）が無い。polarity は fixture 構造から読む（faithful parse）。
+	// 構造 A（`var o = 0`・case → `o = 1`）: case 外 → m=0（`w1`）。構造 B（`var o = 1`・case → `o = 0`）: case 外 → m=1（`w2`）。
+	ggA, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 3:\n o = 1;\n break;\n}\nreturn o;\n}};")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "https://w1.gold-usergeneratedcontent.net/1793494802/2488/" + sampleHash + ".webp"
-	if got := StorageURL(sampleHash, "webp", gg); got != want {
+	if got := StorageURL(sampleHash, "webp", ggA); got != want {
 		t.Errorf("storage url: got %s want %s", got, want)
 	}
-	if got := StorageURL(sampleHash, "", gg); got != want {
+	if got := StorageURL(sampleHash, "", ggA); got != want {
 		t.Errorf("default format: got %s", got)
 	}
-	if !strings.HasSuffix(StorageURL(sampleHash, "avif", gg), ".avif") {
-		t.Errorf("avif format: got %s", StorageURL(sampleHash, "avif", gg))
+	if !strings.HasSuffix(StorageURL(sampleHash, "avif", ggA), ".avif") {
+		t.Errorf("avif format: got %s", StorageURL(sampleHash, "avif", ggA))
+	}
+	// 構造差分で同じ hash の subdomain が w1 → w2 へ反転（format・base は不変）
+	ggB, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantB := "https://w2.gold-usergeneratedcontent.net/1793494802/2488/" + sampleHash + ".webp"
+	if got := StorageURL(sampleHash, "webp", ggB); got != wantB {
+		t.Errorf("polarity flip storage url: got %s want %s", got, wantB)
+	}
+	if got := StorageURL(sampleHash, "avif", ggB); got != "https://a2.gold-usergeneratedcontent.net/1793494802/2488/" + sampleHash + ".avif" {
+		t.Errorf("polarity flip avif (letter a, digit 2): got %s", got)
 	}
 }
 
@@ -390,12 +451,21 @@ func TestTNVariantPathsMatchHitomiWorkPage(t *testing.T) {
 	if got := ThumbnailURLVariant("21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065", "avif", "smalltn", gg); got != "https://atn." + hitomiDomain + "/avifsmalltn/5/06/21844c51814f950f39d448afca0c701a49c3c0cbd1b513ebf18e936ad9290065.avif" {
 		t.Errorf("avif TN variant: got %s", got)
 	}
+
+	// 構造差分（`var o = 1`・case → `o = 0`）で TN subdomain が atn → btn へ反転。base・variant・path は不変。
+	ggFlip, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ThumbnailURLVariant(sampleHash, "webp", "bigtn", ggFlip); got != "https://btn." + hitomiDomain + "/webpbigtn/9/b8/" + sampleHash + ".webp" {
+		t.Errorf("polarity flip TN subdomain: got %s", got)
+	}
 }
 
 func TestTNBaseUsesExactFormatBytesNotTnName(t *testing.T) {
 	// TN base は format で決まる（実測 200: webpbigtn / avifbigtn）。`746e626967746e` は存在せず 404。
-	// subdomain は gg.m で `a`/`b` + `tn`。hash の末尾は `(last)/(prev two)`。
-	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 3:\n o = 1;\n break;\n}\nreturn o;\n}};") // live 実測構造: case 外の sampleHash（2488）→ m=0（`atn`）
+	// subdomain は gg.m で `a`/`b` + `tn`（polarity は fixture 構造から読む）。hash の末尾は `(last)/(prev two)`。
+	gg, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 0;\nswitch (g) {\ncase 3:\n o = 1;\n break;\n}\nreturn o;\n}};") // 構造 A: case 外の sampleHash（2488）→ m=0（`atn`）
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,6 +485,17 @@ func TestTNBaseUsesExactFormatBytesNotTnName(t *testing.T) {
 	// TN に格納されるのは webp / avif ののみ（実測）なので、それ以外の format は webp に落ちる
 	if got := ThumbnailURL(hash, "jpeg", gg); got != "https://atn." + hitomiDomain + "/webpbigtn/9/b8/" + hash + ".webp" {
 		t.Errorf("non-TN format must fall back to webp: got %s", got)
+	}
+	// 構造差分で subdomain は反転するが base（format 由来）は反転しない
+	ggFlip, err := parseGG("var gg = { b: '1793494802/', m: function (g) {\nvar o = 1;\nswitch (g) {\ncase 3:\n o = 0;\n break;\n}\nreturn o;\n}};")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ThumbnailURL(hash, "webp", ggFlip); got != "https://btn." + hitomiDomain + "/webpbigtn/9/b8/" + hash + ".webp" {
+		t.Errorf("polarity flip TN subdomain: got %s", got)
+	}
+	if got := ThumbnailURL(hash, "avif", ggFlip); got != "https://btn." + hitomiDomain + "/avifbigtn/9/b8/" + hash + ".avif" {
+		t.Errorf("polarity flip TN avif: got %s", got)
 	}
 }
 

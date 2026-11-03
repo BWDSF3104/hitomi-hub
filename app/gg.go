@@ -8,33 +8,61 @@ import (
 	"time"
 )
 
-// GG は hitomi `gg.js` の正典値（bucket と switch values）。switch values と bucket は回転する
-// （正典スクリプト: `tools/gen_ggset.py`）。`ggset.go` はその snapshot で、live が取得できない
+// GG は hitomi `gg.js` の正典値（bucket、switch values、polarity）。switch values と bucket は
+// 回転する（正典スクリプト: `tools/gen_ggset.py`）。`ggset.go` はその snapshot で、live が取得できない
 // 場合の fallback として使う。生成時点と live がずれると shard URL が 404 になる
 // （`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`）。
+// polarity（初期 o と case 代入）は窓ごとに rotation するため固定しない。faithful parse が
+// その gg.js が実際に返す値を保持する（`docs/ai/decisions/2026-11-03-gg-faithful-parse-not-fixed-polarity.md`）。
+// mapping 方向は固定: `m = 0 → w1`/`atn`、`m = 1 → w2`/`btn`。
 type GG struct {
-	Bucket   string
-	CaseSet  map[int]bool
-	Source   string // "live" / "snapshot"
+	Bucket    string
+	CaseSet   map[int]bool
+	InitialO  int  // `var o` の初期値（live 観測・faithful parse）
+	CaseValue int  // switch 内 case 代入値（live 観測・faithful parse）
+	Source    string // "live" / "snapshot"
 }
 
 var ggBucketRe = regexp.MustCompile(`b:\s*'([^']*)'`)
 var ggCaseRe = regexp.MustCompile(`case (\d+):`)
+var ggInitialORe = regexp.MustCompile(`var o\s*=\s*(\d+)`)
+var ggSwitchRe = regexp.MustCompile(`(?s)switch\s*\(\s*g\s*\)\s*\{(.*?)\}`)
+var ggCaseAssignRe = regexp.MustCompile(`o\s*=\s*(\d+)`)
 
 func snapshotGG() GG {
-	return GG{Bucket: ggBucket, CaseSet: ggCaseSet, Source: "snapshot"}
+	return GG{Bucket: ggBucket, CaseSet: ggCaseSet, InitialO: ggInitialO, CaseValue: ggCaseValue, Source: "snapshot"}
 }
 
-// parseGG は gg.js の本文から bucket と switch values を読む。
-// 2026-11-01 実測の live `gg.js` は `var o = 0; switch (g) { <cases> o = 1; break; } return o;`。
-// よって live では cases 内の value は 1、cases 外の value は 0 を返す。
+// parseGG は gg.js の本文から bucket、switch values、polarity（初期 o と case 代入）を読む。
+// 構造は窓ごとに rotation する（`var o = 0; case → o = 1` 窓と `var o = 1; case → o = 0` 窓の
+// 両方が実測済み）。polarity を固定せず、その gg.js が実際に返す値を保持する。
 func parseGG(text string) (GG, error) {
 	m := ggBucketRe.FindStringSubmatch(text)
 	if m == nil {
 		return GG{}, errors.New("gg.b not found")
 	}
-	gg := GG{Bucket: m[1], CaseSet: map[int]bool{}, Source: "live"}
-	for _, c := range ggCaseRe.FindAllStringSubmatch(text, -1) {
+	sw := ggSwitchRe.FindStringSubmatch(text)
+	if sw == nil {
+		return GG{}, errors.New("gg switch not found")
+	}
+	init := ggInitialORe.FindStringSubmatch(text)
+	if init == nil {
+		return GG{}, errors.New("gg initial o not found")
+	}
+	assign := ggCaseAssignRe.FindStringSubmatch(sw[1])
+	if assign == nil {
+		return GG{}, errors.New("gg case assignment not found")
+	}
+	initialO, err := strconv.Atoi(init[1])
+	if err != nil {
+		return GG{}, errors.New("gg initial o not parseable")
+	}
+	caseValue, err := strconv.Atoi(assign[1])
+	if err != nil {
+		return GG{}, errors.New("gg case assignment not parseable")
+	}
+	gg := GG{Bucket: m[1], CaseSet: map[int]bool{}, InitialO: initialO, CaseValue: caseValue, Source: "live"}
+	for _, c := range ggCaseRe.FindAllStringSubmatch(sw[1], -1) {
 		n, err := strconv.Atoi(c[1])
 		if err == nil {
 			gg.CaseSet[n] = true
@@ -50,6 +78,9 @@ func sameGG(a, b GG) bool {
 	if a.Source != b.Source || a.Bucket != b.Bucket || len(a.CaseSet) != len(b.CaseSet) {
 		return false
 	}
+	if a.InitialO != b.InitialO || a.CaseValue != b.CaseValue {
+		return false
+	}
 	for value := range a.CaseSet {
 		if !b.CaseSet[value] {
 			return false
@@ -58,11 +89,13 @@ func sameGG(a, b GG) bool {
 	return true
 }
 
+// M はその gg.js が実際に返す m(g)（faithful parse）。case 内なら case 代入値、case 外なら初期 o。
+// mapping 方向は hitomi 準拠で固定: 0 → `w1`/`atn`、1 → `w2`/`btn`（`ImageURL`・`ThumbnailURLVariant`）。
 func (g GG) M(value int) int {
 	if g.CaseSet[value] {
-		return 1
+		return g.CaseValue
 	}
-	return 0
+	return g.InitialO
 }
 
 // Value は gg.s(hash) と同じ（末尾 3 hex を反転して 10 進）

@@ -446,7 +446,7 @@ func TestLoadConfigWithoutHitomiKeyUsesLiveGGViaMock(t *testing.T) {
 	calls := 0
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
-		return []byte("var gg = { b: '1793494802/', m: function (g) { return 1; } }; case 2488:"), nil
+		return []byte(ggFixtureA), nil
 	}
 	if source := c.LoadGG(context.Background()); source != "live" {
 		t.Fatalf("mock live source: got %s", source)

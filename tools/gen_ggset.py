@@ -4,8 +4,10 @@
 使い方（hitomi-hub ルートで）:
     python tools/gen_ggset.py [--root <repo root>]
 
-`gg.m(g)` は 2026-11-01 実測の live 構造（`var o = 0; switch (g) { ... o = 1; break; }`）で、
-switch cases にある value を 1、それ以外を 0 を返す。
+polarity は固定しない。live gg.js から観測した `var o` の初期値と switch 内 case 代入値を
+そのまま snapshot に記録する（窓ごとに構造が rotation するため、生成時点の観測値のみを
+書く。正典規則: `docs/ai/decisions/2026-11-03-gg-faithful-parse-not-fixed-polarity.md`）。
+mapping 方向は固定で有効（0 → `w1`/`atn`、1 → `w2`/`btn`）。
 switch values と bucket は回転するため、生成後は live で URL を 1 件検証すること
 （`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`）。
 """
@@ -19,6 +21,12 @@ from pathlib import Path
 
 GG_URL = "https://ltn.gold-usergeneratedcontent.net/gg.js"
 
+RE_BUCKET = re.compile(rb"b:\s*'([^']*)'")
+RE_INITIAL_O = re.compile(rb"var o\s*=\s*(\d+)")
+RE_SWITCH_BODY = re.compile(rb"(?s)switch\s*\(\s*g\s*\)\s*\{(.*?)\}")
+RE_CASE = re.compile(rb"case (\d+):")
+RE_CASE_ASSIGN = re.compile(rb"o\s*=\s*(\d+)")
+
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="regenerate app/ggset.go from live gg.js")
@@ -29,20 +37,38 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     text = urllib.request.urlopen(GG_URL, timeout=30).read()
 
-    bucket_match = re.search(rb"b:\s*'([^']*)'", text)
+    bucket_match = RE_BUCKET.search(text)
     if not bucket_match:
         raise SystemExit("gg.b not found in gg.js")
     bucket = bucket_match.group(1).decode()
-    cases = sorted({int(m.group(1)) for m in re.finditer(rb"case (\d+):", text)})
+
+    switch_body = RE_SWITCH_BODY.search(text)
+    if not switch_body:
+        raise SystemExit("gg switch not found in gg.js")
+    initial_match = RE_INITIAL_O.search(text)
+    if not initial_match:
+        raise SystemExit("gg initial o not found in gg.js")
+    assign_match = RE_CASE_ASSIGN.search(switch_body.group(1))
+    if not assign_match:
+        raise SystemExit("gg case assignment not found in gg.js")
+    initial_o = int(initial_match.group(1))
+    case_value = int(assign_match.group(1))
+    cases = sorted({int(m.group(1)) for m in RE_CASE.finditer(switch_body.group(1))})
+    if not cases:
+        raise SystemExit("gg switch values not found in gg.js")
 
     out = root / "app" / "ggset.go"
     lines = [
         "package main",
         "",
         "// ggset.go は hitomi `common.js` が読み込む `gg.js` の switch values から生成（正典: `tools/gen_ggset.py`）。",
-        "// gg.m(g) は live 構造（`var o = 0; switch (g) { ... o = 1; break; }`）で cases 内の value を 1、それ以外を 0。",
+        "// polarity は固定しない。生成時点の live から観測した初期 o と case 代入を記録する",
+        "// （構造は窓ごとに rotation: `docs/ai/decisions/2026-11-03-gg-faithful-parse-not-fixed-polarity.md`）。",
+        "// mapping 方向は固定で有効（0 → `w1`/`atn`、1 → `w2`/`btn`）。",
         "// switch values と bucket は回転する。",
         f"var ggBucket = \"{bucket}\"",
+        f"var ggInitialO = {initial_o}",
+        f"var ggCaseValue = {case_value}",
         "",
         "var ggCaseSet = map[int]bool{",
     ]
@@ -51,20 +77,21 @@ def main(argv=None) -> int:
     lines.extend([
         "}",
         "",
+        "// ggM は生成時点の live 構造を faithful に保持した m(g)（case 内なら case 代入値、case 外なら初期 o）。",
         "func ggM(g int) int {",
         "\tif ggCaseSet[g] {",
-        "\t\treturn 1",
+        "\t\treturn ggCaseValue",
         "\t}",
-        "\treturn 0",
+        "\treturn ggInitialO",
         "}",
         "",
     ])
     body = "\n".join(lines)
     if args.dry_run:
-        print(f"cases={len(cases)} bucket={bucket} (dry-run: nothing written)")
+        print(f"cases={len(cases)} bucket={bucket} initial_o={initial_o} case_value={case_value} (dry-run: nothing written)")
         return 0
     out.write_text(body, encoding="utf-8")
-    print(f"cases={len(cases)} bucket={bucket} out={out}")
+    print(f"cases={len(cases)} bucket={bucket} initial_o={initial_o} case_value={case_value} out={out}")
     return 0
 
 
