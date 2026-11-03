@@ -459,4 +459,106 @@ def test_process_file_rolls_back_when_record_file_fails(tmp_path):
         scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {})
 
     assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 0
+
+
+def test_vt_empty_results_with_stats_total_is_not_evaluated(tmp_path):
+    # B-06 合格条件: stats.total > 0 なのに last_analysis_results が空 → not_evaluated（pass にしない）
+    conn = make_db(tmp_path)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+
+    def fetch(url, key):
+        return {"data": {"attributes": {"last_analysis_stats": {"malicious": 0, "suspicious": 0,
+                                        "harmless": 60, "undetected": 40, "total": 100},
+                                        "last_analysis_results": {}}}}, 200
+
+    result = scan.vt_lookup("f" * 64, cfg, {"window": [], "total": 0}, fetch=fetch, conn=conn)
+    assert result["status"] == "not_evaluated"
+    assert result["positives"] == 0
+    assert result["detail"] == ""
+    assert scan.cache_lookup(conn, "f" * 64) == {}
+    conn.close()
+
+
+def test_process_file_vt_empty_results_does_not_store_pass(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "55" / "55.cbz", {"ok.webp": PNG})
+    sha = scan.sha256_file(cbz)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    def fetch(url, key):
+        return {"data": {"attributes": {"last_analysis_stats": {"malicious": 0, "suspicious": 0, "total": 100},
+                                        "last_analysis_results": {}}}}, 200
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=fetch)
+    assert status == "pass"
+    assert scan.cache_lookup(conn, sha) == {}
+    assert conn.execute("SELECT COUNT(1) FROM scan_cache").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(1) FROM scan_cache WHERE verdict = 'pass'").fetchone()[0] == 0
+    row = conn.execute("SELECT rule, detail FROM findings WHERE rule = 'virustotal'").fetchone()
+    assert row == ("virustotal", "api_error:not_evaluated")
+    conn.close()
+
+
+def test_vt_positives_hit_and_cache_verdict_unchanged(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "56" / "56.cbz", {"ok.webp": PNG})
+    sha = scan.sha256_file(cbz)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    def fetch(url, key):
+        return {"data": {"attributes": {"last_analysis_stats": {"malicious": 2, "suspicious": 0, "total": 100},
+                                        "last_analysis_results": {"E": {"category": "malicious",
+                                                                        "engine_name": "E",
+                                                                        "result": "R"}}}}}, 200
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=fetch)
+    assert status == "hit"
+    assert scan.cache_lookup(conn, sha)["verdict"] == "hit"
+    conn.close()
+
+
+def test_vt_404_unknown_to_vt_path_and_negative_cache_unchanged(tmp_path):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "57" / "57.cbz", {"ok.webp": PNG})
+    sha = scan.sha256_file(cbz)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: ({}, 404))
+    assert status == "pass"
+    row = conn.execute("SELECT verdict, detail FROM scan_cache WHERE sha256 = ?", (sha,)).fetchone()
+    assert row == ("unknown_to_vt", "unknown_to_vt")
+    conn.close()
+
+
+def test_pass_verdict_cache_keeps_positive_ttl_semantics(tmp_path):
+    conn = make_db(tmp_path)
+    scan.cache_store(conn, "g" * 64, "pass", "virustotal", "", "positives=0")
+    conn.commit()
+    aged = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - scan.NEGATIVE_SCAN_CACHE_TTL_SECONDS - 1))
+    conn.execute("UPDATE scan_cache SET cached_at = ? WHERE sha256 = ?", (aged, "g" * 64))
+    conn.commit()
+    assert scan.cache_lookup(conn, "g" * 64)["verdict"] == "pass"
+    assert scan.SCAN_CACHE_TTL_SECONDS == 30 * 24 * 3600
+    assert scan.NEGATIVE_SCAN_CACHE_TTL_SECONDS == 2 * 3600
+    conn.close()
     conn.close()
