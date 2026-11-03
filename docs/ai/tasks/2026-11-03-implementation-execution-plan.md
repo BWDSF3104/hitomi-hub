@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: D-02単独commit実施済み。推奨方針は確定。次の実施順18 A-03から項目単独commit・単独検証で順次実施。判断項目は実施前に方針変更提案のみ。
+**Next Action**: 既存fragment削除済み。task_manager単一行検証実装済み。実施順19 A-14/C-05から単独commit/pushで順次実施
 
 ## 意図 / 背景
 
@@ -112,6 +112,14 @@
 - 次の実施順18項目以降はplanの承認範囲と合格条件に従う。最も近い独立項目は実施順18 A-03。
 
 - A-03 合格（単独commit）。`app/viewer.go`のsearch JSON responseをEncoderで実測し、`json_ms` positiveへ。`timing.metrics` duplicate削除、top-level `metrics` 維持。fixed test更新: `json_ms > 0`、`timing.metrics`不存在、top-level metrics存在、header positive。実測: `go vet` clean、`go test` ok 40.058s、canonical exe再build、pytest 38 passed 4.16s（freshness含む）。UI未変更のためserver実機確認なし。commit `eaf1461`（push済み）。
+
+## Memory Bank TSV fragment 対策（2026-11-03）
+
+- 既存 irregular fragment をユーザー指示により `edit` ツールで削除。
+- 正典 `task_manager.py` に `--status` / `--next-action` の単一行 validation と data row 3-field validation を追加（正典 commit `645b89b`・push済み）。
+- `tests/test_task_manager.py` に multiline next-action、tab status、existing malformed TSV row、`_write_tsv` malformed row 拒否テストを追加。
+- 検証: `python -m pytest tests/ -v` 120 passed `6.19s`、`pwsh -NoProfile -File tests\smoke_safe_rmdir.ps1` 0 failure(s)。
+- 記録: `docs/ai/decisions/2026-11-03-current-task-tsv-single-line-guard.md`。
 
 ## Verification
 

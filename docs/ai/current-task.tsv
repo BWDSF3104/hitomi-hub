@@ -4,9 +4,6 @@ docs/ai/tasks/2026-11-02-external-code-review-findings.md	進行中	Strict UI ac
 docs/ai/tasks/2026-11-03-a04-plain-term-lang.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a06-sleep-ctx-aware.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a09-serve-stored-image-full-read.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-ar o=0/case→1 と 10:00/12:00窓 
-ar o=1/case→0 を実測）。mapping方向(0→w1/atn,1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は 
-ar o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
 docs/ai/tasks/2026-11-03-a11-pdf-raw-rgb-memory.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a12-sha256-every-scan.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-a13-scan-pdf-keys-string-alloc.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
@@ -23,4 +20,4 @@ docs/ai/tasks/2026-11-03-d07-canonical-build-test-premise.md	進行中	引き継
 docs/ai/tasks/2026-11-03-d08-unused-code.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-d09-orderby-popular-ignored.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-d10-plain-term-underscore.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	D-02単独commit実施済み。推奨方針は確定。次の実施順18 A-03から項目単独commit・単独検証で順次実施。判断項目は実施前に方針変更提案のみ。
+docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	既存fragment削除済み。task_manager単一行検証実装済み。実施順19 A-14/C-05から単独commit/pushで順次実施
