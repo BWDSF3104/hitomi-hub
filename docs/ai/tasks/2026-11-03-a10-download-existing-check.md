@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: polarity是正: decision側の固定は成立せず（live gg.js 構造が窓 rotation: 11-03 11:38Z に var o=0/case→1 窓、10:00/12:00窓に var o=1/case→0 を実測）。mapping方向(0→w1/atn, 1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は var o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
+**Next Action**: faithful parse 実装済み（polarity 固定せず初期o・case代入保持・M faithful）。mapping方向(0→w1/atn,1→w2/btn)維持。現窓 var o=1 実測: in-case hash w1=200(300986B)/w2=404、out-of-case hash w2=200(246926B)/w1=404。canonical exe 実機: CLI download gallery 4301695 attempted=3 written=3、viewer x-cache miss・no_full なし。窓rotationでlive実測は窓依存。項目進行中・tsv行削除しない（A-10側でlive再測し閉じる）
 ar o=0/case→1 と 10:00/12:00窓 
 ar o=1/case→0 を実測）。mapping方向(0→w1/atn,1→w2/btn)は有効。正典修正は faithful parse（初期o・case代入をliveから読む）＝承認判断点・未実施。A-10 live再測は 
 ar o=0 窓でのみ成立（窓依存）。項目進行中・tsv行削除しない
@@ -58,3 +58,17 @@ polarity是正項目結果（2026-11-03・assess-20261103-1220・code 変更な�
 - [ ] `current-task.tsv` の参照行を削除
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
+
+---
+
+## faithful parse 実装結果（2026-11-03・assess-20261103-1220・追記・code+テスト commit）
+
+- `app/gg.go` `parseGG()`/`GG` を faithful parse へ修正: 初期 o（`InitialO`）と case 代入（`CaseValue`）を保持、`M(value)` はその gg.js が実際に返す値を返す（case 内 → `CaseValue`、case 外 → `InitialO`）。polarity 固定なし。mapping 方向（0→`w1`/`atn`、1→`w2`/`btn`）維持。`sameGG()` は polarity も比較。
+- `tools/gen_ggset.py`: 生成時点の live 観測 polarity を snapshot へ記録（polarity ハードコードなし）。`app/ggset.go` を同じ基準で再生成（観測: `initial_o=1 case_value=0` 窓）。
+- テスト: `TestCanonicalGGRuleComposition`（両構造・w1/w2・atn/btn 反転固定）、`TestSnapshotGGIsPopulatedAndUsedAsFallback`（snapshot polarity・faithful M）、`TestStorageURLUsesFormatNotNameExt`・TN 関連テスト（構造差分で subdomain 反転）。EnsureGG/viewer/main fixture を faithful 構造へ更新。
+- 現窓（`var o = 1`/case→`o = 0`）live 実測: in-case hash `c05d79ed...e37d8c63`(g=966) app 構築 `w1`=200（300986 bytes）/他 `w2`=404、out-of-case hash `4a3c2ca2...f40854`(g=1157) app 構築 `w2`=200（246926 bytes）/他 `w1`=404。
+- canonical exe 実機（scratch dataDir・8731・製品 output/永続 cache 非汚染）: CLI download gallery 4301695（1 回目）`attempted=3 written=3` 一致、`skipped=0`。viewer `/api/image/<hash>?format=webp` → in-case 200 `x-cache: miss` 300986 bytes、out-of-case 200 `x-cache: miss` 246926 bytes（`no_full` なし）。現窓 `var o = 1` で faithful parse が live 実測 200 と一致（固定 polarity なら in-case は 404）。
+- 検証: `go vet . && go test -count=1 -timeout 300s .`（app）ok（追加テスト含む）。`python -m pytest tests/ -v` 33 passed（`test_canonical_build_freshness.py` 含む）。
+- A-10 の live 実測（1 回目 attempted==written）は faithful parse 導入後、現窓（12:00 窓・`var o = 1`）で成立。窓 rotation で live 実測は窓依存のまま。A-10 項目は A-10 側で live 再測して閉じる（本項目では end しない）。
+- decision: `docs/ai/decisions/2026-11-03-gg-faithful-parse-not-fixed-polarity.md`（`2026-11-01-ggset-generation-and-drift.md` line 15 の固定構造主張を supersede・mapping 方向は有効）。作業前チェック読了: `2026-11-01-root-and-tn-display-correction-policy.md`、`2026-11-01-fast-nonblocking-viewer-policy.md`、`2026-11-01-ggset-generation-and-drift.md`、`2026-11-03-gg-case-polarity-correction.md`。
+

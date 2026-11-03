@@ -30,3 +30,9 @@
 probe: `docs/ai/tmp/assess-20261103-1220/polarity_probe*.py`・`polarity_ggjs_raw*.js`・`polarity_live.py`（実機確認出力 `polarity_live_out.txt`）。
 
 関連: `docs/ai/decisions/2026-11-03-gg-case-polarity-correction.md`、`docs/ai/tasks/2026-11-03-a10-download-existing-check.md`、`docs/ai/known-issues/archive/2026-11-01-parsegg-switch-value-inversion.md`。
+
+## 解決（2026-11-03・実装済み・追記）
+
+faithful parse を実装（decision `docs/ai/decisions/2026-11-03-gg-faithful-parse-not-fixed-polarity.md`）。polarity を片側固定せず、`parseGG()`/`GG` が初期 o（`InitialO`）と case 代入（`CaseValue`）を保持し、`M(value)` がその gg.js が実際に返す値を返す。mapping 方向（0→`w1`/`atn`、1→`w2`/`btn`）は維持。`tools/gen_ggset.py` は生成時点の live 観測 polarity を snapshot へ記録。
+
+現窓（12:00 窓・`var o = 1`/case→`o = 0`）実測: in-case hash `c05d79ed...e37d8c63`(g=966) app 構築 `w1`=200（300986 bytes）/他 `w2`=404、out-of-case hash `4a3c2ca2...f40854`(g=1157) app 構築 `w2`=200（246926 bytes）/他 `w1`=404。canonical exe 実機: CLI download gallery 4301695 1 回目 `attempted=3 written=3`、viewer `/api/image/<hash>?format=webp` → in-case 200 `x-cache: miss` 300986 bytes・out-of-case 200 `x-cache: miss` 246926 bytes（`no_full` なし）。A-10 の live 実測は faithful parse 導入後は現窓で成立（窓rotation で live 実測は窓依存のまま）。本件は code 変更済みで解決（A-10 側の live 再測は A-10 項目で閉じる）。probe: `docs/ai/tmp/assess-20261103-1220/faithful_probe.py`/`faithful_probe_out.txt`/`server_check.py`/`server_check_out.txt`。
