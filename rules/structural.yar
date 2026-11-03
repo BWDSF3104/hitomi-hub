@@ -35,12 +35,12 @@ rule MZ_Header_At_Offset0
 rule Zip_Path_Traversal
 {
     meta:
-        description = "Entry name escapes the extraction target directory"
+        description = "Entry name escapes the extraction target directory. Only .. as a path segment counts, not a partial match such as Vol...01.webp"
         category = "zip"
 
     condition:
         zip.is_zip and for any entry in zip.entries : (
-            entry.file_path contains ".."
+            entry.file_path matches /(^|[\/\\])\.\.([\/\\]|$)/
             or entry.file_path startswith "/"
             or entry.file_path startswith "\\"
         )

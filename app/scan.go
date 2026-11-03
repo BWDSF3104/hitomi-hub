@@ -38,6 +38,17 @@ var pdfKeys = []string{"/Launch", "/OpenAction", "/AA", "/JS", "/JavaScript", "/
 
 var drivePrefix = regexp.MustCompile(`^[A-Za-z]:`)
 
+// containsDotDotSegment は path separator（/ \）を跨いだ `..` segment のみを hit する。
+// 部分一致の `..`（例 `Vol...01.webp`）は hit しない。Python 参照実装・YARA rule と同一基準。
+func containsDotDotSegment(name string) bool {
+	for _, seg := range strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // YaraGate は Python 参照実装の yara_gate と同じ。scan target の全ファイルで YARA を走らせる
 // （構造検査が既に hit を捕えたファイルでも YARA 固有規則が hit できる）
 func YaraGate(ext string, cfg Config) bool {
@@ -129,7 +140,7 @@ func ScanZipEntries(path string, l Limits) ([]string, error) {
 			break
 		}
 		name := entry.Name
-		if strings.Contains(name, "..") || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "\\") || drivePrefix.MatchString(name) {
+		if containsDotDotSegment(name) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "\\") || drivePrefix.MatchString(name) {
 			findings = append(findings, "path_traversal:"+name)
 		}
 		entryExt := ""

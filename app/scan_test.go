@@ -87,6 +87,48 @@ func TestZipFindings(t *testing.T) {
 	}
 }
 
+func TestZipDotDotIsPathSegmentOnly(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		entry string
+		hit   bool
+	}{
+		{"Vol...01.webp", false},
+		{"..evil.webp", false},
+		{"normal/01.webp", false},
+		{"a/...b.webp", false},
+		{"../evil.exe", true},
+		{"a/../b.webp", true},
+		{"a\\..\\b.webp", true},
+		{"foo/..", true},
+		{"..", true},
+	}
+	for _, c := range cases {
+		path := makeZip(t, dir, map[string]string{c.entry: "x"})
+		findings, err := ScanZipEntries(path, cfg().Limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := false
+		for _, f := range findings {
+			if strings.HasPrefix(f, "path_traversal:") {
+				got = true
+			}
+		}
+		if got != c.hit {
+			t.Errorf("entry %q: path_traversal got %v want %v (findings %v)", c.entry, got, c.hit, findings)
+		}
+	}
+	clean := makeZip(t, dir, map[string]string{"Vol...01.webp": "x"})
+	if _, _, findings, status := ScanFile(clean, cfg()); status != "pass" || len(findings) != 0 {
+		t.Errorf("Vol...01.webp status: got %s %v, want pass with no finding", status, findings)
+	}
+	traversal := makeZip(t, dir, map[string]string{"../evil.exe": "x"})
+	if _, _, findings, status := ScanFile(traversal, cfg()); status != "hit" || findings[0] != "path_traversal:../evil.exe" {
+		t.Errorf("../evil.exe status: got %s %v", status, findings)
+	}
+}
+
 func TestRatioExceeded(t *testing.T) {
 	dir := t.TempDir()
 	filler := strings.Repeat("\x00", 2000000)

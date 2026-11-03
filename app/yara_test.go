@@ -33,6 +33,11 @@ func TestRunYaraExecutionPath(t *testing.T) {
 		}
 	}
 
+	legit := makeZip(t, dir, map[string]string{"Vol...01.webp": "PNG"})
+	if got := RunYara(legit, rulesFile, yr, cfg().Limits); contains(got, "Zip_Path_Traversal") {
+		t.Errorf("partial .. entry must not hit Zip_Path_Traversal: got %v", got)
+	}
+
 	pdf := filepath.Join(dir, "a.pdf")
 	if err := os.WriteFile(pdf, []byte("%PDF-1.4\n1 0 obj\n<< /OpenAction << /S /JavaScript /JS (x) >> >>\n"), 0o644); err != nil {
 		t.Fatal(err)

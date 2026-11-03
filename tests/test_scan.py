@@ -58,6 +58,25 @@ def test_zip_spoofed_entry_and_traversal(tmp_path):
     assert any(f.startswith("executable_entry:") for f in findings)
 
 
+def test_zip_dotdot_is_path_segment_only(tmp_path):
+    legit = make_zip(tmp_path / "Galleries" / "123" / "legit.cbz", {"Vol...01.webp": PNG, "ok.webp": PNG})
+    _, _, findings, status = scan.scan_file(legit, CFG)
+    assert status == "pass"
+    assert findings == []
+    evil = make_zip(tmp_path / "Galleries" / "123" / "evil.cbz", {"../evil.exe": PNG})
+    _, _, findings, status = scan.scan_file(evil, CFG)
+    assert status == "hit"
+    assert "path_traversal:../evil.exe" in findings
+    assert not scan.has_dot_dot_segment("Vol...01.webp")
+    assert scan.has_dot_dot_segment("../evil.exe")
+    assert scan.has_dot_dot_segment("a/../b.webp")
+    assert scan.has_dot_dot_segment("a\\..\\b.webp")
+    assert scan.has_dot_dot_segment("foo/..")
+    assert scan.has_dot_dot_segment("..")
+    assert not scan.has_dot_dot_segment("..evil.webp")
+    assert not scan.has_dot_dot_segment("a/...b.webp")
+
+
 def test_zip_ratio_exceeded(tmp_path):
     cbz = make_zip(tmp_path / "Galleries" / "124" / "124.cbz", {"bomb.webp": b"\x00" * 2000000})
     _, _, findings, status = scan.scan_file(cbz, CFG)
@@ -155,6 +174,9 @@ def test_run_yara_rules_on_fixture(tmp_path):
     assert "Zip_Path_Traversal" in rules
     assert "Zip_Executable_Entry" in rules
     assert "Zip_Decompression_Ratio" in rules
+    legit = make_zip(tmp_path / "101.cbz", {"Vol...01.webp": PNG})
+    rules = scan.run_yara(legit, DATA_DIR / "rules" / "structural.yar", str(yr), CFG["limits"])
+    assert "Zip_Path_Traversal" not in rules
     spoofed = tmp_path / "image.png"
     spoofed.write_bytes(b"MZ\x90\x00" + b"\x00" * 60)
     assert scan.run_yara(spoofed, DATA_DIR / "rules" / "structural.yar", str(yr), CFG["limits"]) == ["MZ_Header_At_Offset0"]

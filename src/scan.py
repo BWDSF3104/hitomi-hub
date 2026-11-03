@@ -109,6 +109,11 @@ EXPECTED_MAGIC = {
 }
 
 
+def has_dot_dot_segment(name: str) -> bool:
+    # path separator（/ \）を跨いだ `..` segment のみの判定。部分一致の `..` は hit しない。
+    return any(seg == ".." for seg in re.split(r"[/\\]", name))
+
+
 def scan_zip(path: Path, limits: dict) -> list:
     findings = []
     with zipfile.ZipFile(path) as zf:
@@ -117,7 +122,7 @@ def scan_zip(path: Path, limits: dict) -> list:
             findings.append("entry_count_exceeded:%d" % len(infos))
         for info in infos[: limits["max_entries"]]:
             name = info.filename
-            if ".." in name or name.startswith("/") or name.startswith("\\") or re.match(r"^[A-Za-z]:", name):
+            if has_dot_dot_segment(name) or name.startswith("/") or name.startswith("\\") or re.match(r"^[A-Za-z]:", name):
                 findings.append("path_traversal:%s" % name)
             entry_ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
             if entry_ext in EXEC_EXT:
