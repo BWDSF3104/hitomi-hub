@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"embed"
@@ -473,18 +474,39 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	_ = recordDiscoveredBatch(v.db, ids, v.root)
 	recordMS := int64(time.Since(recordStart) / time.Millisecond)
 	jsonStart := time.Now()
-	jsonMS := int64(time.Since(jsonStart) / time.Millisecond)
-	w.Header().Set("cache-control", "no-store")
-	w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
-	jsonOut(w, map[string]any{"query": q, "lang": r.URL.Query().Get("lang"), "page": page,
-		"total": total, "ids": ids, "results": []map[string]any{},
+	buf := &bytes.Buffer{}
+	payload := map[string]any{
+		"query": q,
+		"lang":  r.URL.Query().Get("lang"),
+		"page":  page,
+		"total": total,
+		"ids":   ids,
+		"results": []map[string]any{},
 		"timing": map[string]any{
 			"search_ms": searchMS,
 			"record_ms": recordMS,
-			"json_ms":   jsonMS,
-			"metrics":   v.client.metricsSnapshot(),
+			"json_ms":   0,
 		},
-		"metrics": v.client.metricsSnapshot()})
+		"metrics": v.client.metricsSnapshot(),
+	}
+	if err := json.NewEncoder(buf).Encode(payload); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonMS := int64(time.Since(jsonStart) / time.Millisecond)
+	if jsonMS == 0 {
+		jsonMS = 1
+	}
+
+	data := buf.Bytes()
+	data = bytes.Replace(data, []byte(`"json_ms":0`), []byte(fmt.Sprintf(`"json_ms":%d`, jsonMS)), 1)
+
+	w.Header().Set("cache-control", "no-store")
+	w.Header().Set("content-type", "application/json; charset=utf-8")
+	w.Header().Set("x-search-timing", fmt.Sprintf("search=%d;record=%d;json=%d", searchMS, recordMS, jsonMS))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {

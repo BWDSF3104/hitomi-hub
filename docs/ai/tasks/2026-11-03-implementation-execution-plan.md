@@ -49,7 +49,7 @@
 | 15 | B-07 | YARA failure を構造 pass に優先させず別 finding/status 分離。export/pdf skip 条件維持 | Python | 未実施 |
 | 16 | B-10 | Python 参照実装 VT の `HTTPError` handling、404 `unknown_to_vt` 実経路 | Python | 未実施 |
 | 17 | A-02/C-03 | `recordDiscovered` per-call commit を batch/transaction 化。実測根拠をテスト固定 | Go | 未実施 |
-| 18 | A-03 | `json_ms` 計測修正、metrics 二重返却修正。テスト更新 | Go | 未実施 |
+| 18 | A-03 | `json_ms` 計測修正、metrics 二重返却修正。テスト更新 | Go | 合格・close済み（単独commit） |
 | 19 | A-14/C-05 | `searchCache`・`indexDataCache`・`indexNodeCache`・`infoCache` に上限・削除・TTL | Go | 未実施 |
 | 20 | C-04 | `language:` 併用時の同一 tag 二重 fetch 排除 | Go | 未実施 |
 | 21 | C-06/C-07/C-09 | strip rebuild・resize/fullscreen・read/lists の debounce と generation guard 整理 | フル画像ガードに触れる可能性 | 未実施 |
@@ -110,6 +110,8 @@
 - 検証: `app`で `go vet .` clean・`go test -count=1 -timeout 300s .` ok 41.711s（追加テスト含む）。canonical exe再build。ルートで `python -m pytest tests/ -v` 38 passed 3.64s（freshness含む）。UI未変更のためserver実機確認なし。`config.json`はgit statusで非追跡、`config.example.json`はkeyなしで追跡維持。
 - 判断解決: D-02を除く残判断項目はユーザー推奨承認で確定。確定方針は `docs/ai/decisions/2026-11-03-implementation-judgment-approval.md`。D-01のignore追加、D-06 docs修正、A-04/D-09/D-10 hitomi準拠確認、C-10 test gate inject、B-06/B-07 parity/Python側対応は未実施。
 - 次の実施順18項目以降はplanの承認範囲と合格条件に従う。最も近い独立項目は実施順18 A-03。
+
+- A-03 合格（単独commit）。`app/viewer.go`のsearch JSON responseをEncoderで実測し、`json_ms` positiveへ。`timing.metrics` duplicate削除、top-level `metrics` 維持。fixed test更新: `json_ms > 0`、`timing.metrics`不存在、top-level metrics存在、header positive。実測: `go vet` clean、`go test` ok 40.058s、canonical exe再build、pytest 38 passed 4.16s（freshness含む）。UI未変更のためserver実機確認なし。commit IDは該当commit。
 
 ## Verification
 

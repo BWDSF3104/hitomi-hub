@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1095,9 +1096,24 @@ func TestSearchHandlerIncludesMeasurementShape(t *testing.T) {
 			t.Errorf("timing field %q missing: got %v", key, timing)
 		}
 	}
+	if _, ok := timing["metrics"]; ok {
+		t.Errorf("metrics must not be duplicated inside timing: got %v", timing)
+	}
+	jsonMS, ok := timing["json_ms"].(float64)
+	if !ok || jsonMS <= 0 {
+		t.Errorf("json_ms must be measured as positive: got %v", timing["json_ms"])
+	}
 	header := rec.Header().Get("x-search-timing")
 	if !strings.Contains(header, "search=") || !strings.Contains(header, "record=") || !strings.Contains(header, "json=") {
 		t.Errorf("timing header missing phase fields: got %q", header)
+	}
+	for _, part := range strings.Split(header, ";") {
+		if strings.HasPrefix(part, "json=") {
+			value, err := strconv.Atoi(strings.TrimPrefix(part, "json="))
+			if err != nil || value <= 0 {
+				t.Errorf("timing header json value must be positive: got %q", part)
+			}
+		}
 	}
 	metrics, ok := out["metrics"].(map[string]any)
 	if !ok || len(metrics) == 0 {
