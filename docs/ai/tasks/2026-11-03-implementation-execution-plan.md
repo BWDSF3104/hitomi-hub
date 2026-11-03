@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 残項目推奨承認（decision 2026-11-03-remaining-item-recommendations-approved）。実施順: A-13→A-06→C-10→D-07→D-06 → A-11→A-09 → 判断項目（A-04/D-09/D-10 hitomi準拠確認、B-06/B-07 parity、P2 #8/#9）。実施開始指示待ち
+**Next Action**: 第7実行完了（A-13 7144dd1・A-06 c02bf83・C-10 a58e352・D-07 aac4767・D-06 77181d5・委譲上限5件）。次の実行は新セッションで② A-11→A-09、その後③判断項目。ユーザー判断要: AGENTS.md Code Scope「UI未実装」とREADME/実装の矛盾（D-06判断持ち帰り）。D-07残件: clean clone skip実発火未実施（scratch模拟）
 
 ## 意図 / 背景
 
@@ -144,6 +144,16 @@
 - 実施順22以降の判定推奨をユーザー承認。正典記録は `docs/ai/decisions/2026-11-03-remaining-item-recommendations-approved.md`。承認は方針確定であり実施開始指示ではない。
 - 確定方針: A-11 streaming（pageごと encode+sequential write）、A-09 stream+304/206、A-13 `bytes.Contains`、A-06 ctx-aware select、C-10 test 専用 gate inject（本番1000ms不変）、D-07 exe 不在時 skip（test 内 build 不採用）、D-08 production 未使用削除・テスト参照は移動・`pageSource` 変更なし・`app/ui.html:1458` no-op 削除、B-04 check 側を `acquisitionTitleName` へ、A-12 `scan_cache(sha256,size,mtime)` skip（不一致は再ハッシュ安全側）、D-06 docs 側 faithful parse 基準へ（README 具体行は実物確認後）、A-04/D-09/D-10 hitomi 準拠確認後に hitomi 挙動へ、B-06 残件 Go 側 empty results 基準の小修正、B-07 残件① Python 側を Go 表現へ、manual full-image retry は再現条件確認まで保留、P2 #8 AVIF は PDF embed 対象外と明示（decoder 追加なし）、P2 #9 は用途定義後に列削除か placeholder 明示で閉じる。
 - 承認済みの実施順（plan 表の旧順に優先して適用）: ① A-13 → A-06 → C-10 → D-07 → D-06、② A-11 → A-09、③ 判断項目（A-04/D-09/D-10 hitomi 準拠確認、B-06/B-07 parity、P2 #8/#9）は実施開始指示後に順次。
+
+## 第7実行（2026-11-03・承認済み実施順 A-13→A-06→C-10→D-07→D-06・1項目ずつ）
+
+- 委譲前状態: HEAD `67cd3d0`（記録commit・push済み）、tsv clean。
+
+- A-13 合格・close commit `7144dd1`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。子解釈に対する親判断（追加作業なし）: 合格条件の「existing test `ScanPDFKeys`」は Go テスト名として存在せず、既存 PDF key カバー（`TestStatusSemantics`・pytest `test_pdf_viewer_action_hit`）で確認した解釈を是とする。実測漂移修正（pdfKeys 7 key・最大14MB・行175）は記録済み。未確認点（exe 内容からの Go 差分検証不能）は項目性格上合格条件に影響なし。
+- A-06 合格・close commit `c02bf83`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。軽微不一致（報告のみ・追加作業なし）: 個別記録の Next Action 行は「引き継ぎ完了・実施開始指示待ち」のまま（task_manager end は Status と tsv のみ更新）。記録の行番号 139/182… は旧版参照でシフト（実コード gate 293・backoff 336/355/369/387 と内容一致で実施）。
+- C-10 合格・close commit `a58e352`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ。子 plan ファイルを commit せず ✓）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行の未更新は A-06 と同一パターン）。証拠: go test 66.946s→5.094s、gate semantics tests 全 PASS・本番既定 1000ms 不変、pytest 40 passed。判断持ち帰りなし。
+- D-07 合格・close commit `aac4767`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。残件（未検証として報告）: isolated clean clone 上の skip 実発火は未実施（scratch 模拟 `docs/ai/tmp/assess-20261103-1220/` の simulate_skip.py・test_skip_sim.py で代替・1 skipped）。正典 exe SHA256 前後同一（無損）✓。
+- D-06 合格・close commit `77181d5`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行未更新は A-06/C-10 と同一パターン）。docs のみ（歴史的記録保持＋正典決定へ整合注記、pytest 40 passed 8.86s 無損）。判断持ち帰り（ユーザー判断）: プロジェクト AGENTS.md「Code Scope」の「UI…書き込み口は未実装」が write-protected で変更不可、README・実装と矛盾 → 正典更新か維持かの判定が必要。第7実行の委譲上限5件（A-13・A-06・C-10・D-07・D-06）に到達。次の実行（新セッション）は ② A-11 → A-09、その後 ③ 判断項目（A-04/D-09/D-10 hitomi 準拠確認、B-06/B-07 parity、B-04・A-12、P2 #8/#9）。
 
 ## Verification
 

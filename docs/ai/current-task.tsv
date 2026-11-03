@@ -9,4 +9,4 @@ docs/ai/tasks/2026-11-03-b04-acquisition-title-sanitize.md	進行中	引き継�
 docs/ai/tasks/2026-11-03-d08-unused-code.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-d09-orderby-popular-ignored.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-d10-plain-term-underscore.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	残項目推奨承認（decision 2026-11-03-remaining-item-recommendations-approved）。実施順: A-13→A-06→C-10→D-07→D-06 → A-11→A-09 → 判断項目（A-04/D-09/D-10 hitomi準拠確認、B-06/B-07 parity、P2 #8/#9）。実施開始指示待ち
+docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	第7実行完了（A-13 7144dd1・A-06 c02bf83・C-10 a58e352・D-07 aac4767・D-06 77181d5・委譲上限5件）。次の実行は新セッションで② A-11→A-09、その後③判断項目。ユーザー判断要: AGENTS.md Code Scope「UI未実装」とREADME/実装の矛盾（D-06判断持ち帰り）。D-07残件: clean clone skip実発火未実施（scratch模拟）
