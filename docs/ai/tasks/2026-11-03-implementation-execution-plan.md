@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: C-06合格commitd2c18dc。実施順21のC-07から単独commit/pushで順次実施
+**Next Action**: C-07合格commita5fc691。DB journal status残存のためD-01単独先行。その後C-09
 
 ## 意図 / 背景
 
@@ -130,6 +130,8 @@
 - 次の実施順21項目群のうち C-06 を単独項目として委譲: `docs/ai/tasks/2026-11-03-c06-strip-rebuild.md`。
 - C-06 合格・close commit `d2c18dc`（push済み）。機械確認: HEAD `d2c18dc`、ツリーは `app/app.exe` と `app/docs/` untrackedのみ、個別Status完了と子報告一致。group window境界跨ぎの rebuildは設計上意図的でmocked DOMで固定済み。Drive screenshot: `I:\マイドライブ\kilo\2026-11-03-c06-strip-rebuild-page-move-highlight.png`。
 - 次の実施順21項目群の C-07 を単独項目として委譲: `docs/ai/tasks/2026-11-03-c07-resize-generation-debounce.md`。
+- C-07 合格・close commit `a5fc691`（push済み）。機械確認: HEAD `a5fc691`、個別Status完了と子報告一致。ただし実操作後の `git status` に `hitomi.db-shm`, `hitomi.db-wal` の untracked が残った。これは正典 ignore の不足であり、実施順28 D-01の単独先行実施で解消する。C-09へは dependencyなしとして継続できるが、まずはD-01を実施する。
+- 実施順28のD-01を status確認上の blocker解消として単独先行委譲: `docs/ai/tasks/2026-11-03-d01-gitignore-missing.md`。
 
 ## Verification
 

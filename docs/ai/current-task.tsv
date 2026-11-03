@@ -16,4 +16,4 @@ docs/ai/tasks/2026-11-03-d07-canonical-build-test-premise.md	進行中	引き継
 docs/ai/tasks/2026-11-03-d08-unused-code.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-d09-orderby-popular-ignored.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-d10-plain-term-underscore.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	C-06合格commitd2c18dc。実施順21のC-07から単独commit/pushで順次実施
+docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	C-07合格commita5fc691。DB journal status残存のためD-01単独先行。その後C-09
