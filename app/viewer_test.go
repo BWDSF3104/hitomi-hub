@@ -2351,6 +2351,65 @@ func TestEmbeddedUIHasSearchPrevNextButtons(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+
+	searchStart := strings.Index(s, `<form id="search">`)
+	if searchStart < 0 {
+		t.Fatalf("form#search not found")
+	}
+	searchEnd := strings.Index(s[searchStart:], "</form>")
+	if searchEnd < 0 {
+		t.Fatalf("form#search close tag not found")
+	}
+	searchEnd += searchStart
+	searchForm := s[searchStart:searchEnd]
+	if strings.Count(searchForm, "<button") != 3 {
+		t.Fatalf("form#search should have exactly three buttons: got %q", searchForm)
+	}
+	if !strings.Contains(searchForm, `id="search-submit" type="submit"`) {
+		t.Errorf("form#search must pin Enter implicit submission to #search-submit as the only submit button: got %q", searchForm)
+	}
+	for _, id := range []string{"search-prev", "search-next"} {
+		if !strings.Contains(searchForm, `id="`+id+`" type="button"`) {
+			t.Errorf("form#search %s must be type=\"button\": got %q", id, searchForm)
+		}
+	}
+
+	navStart := strings.Index(s, `<form id="nav">`)
+	if navStart < 0 {
+		t.Fatalf("form#nav not found")
+	}
+	navEnd := strings.Index(s[navStart:], "</form>")
+	if navEnd < 0 {
+		t.Fatalf("form#nav close tag not found")
+	}
+	navEnd += navStart
+	navForm := s[navStart:navEnd]
+	if strings.Contains(navForm, `type="submit"`) {
+		t.Errorf("form#nav must have no submit button so Enter stays on the submit event: got %q", navForm)
+	}
+	for _, id := range []string{"prev", "next", "complete", "fav"} {
+		if !strings.Contains(navForm, `id="`+id+`" type="button"`) {
+			t.Errorf("form#nav %s must be type=\"button\": got %q", id, navForm)
+		}
+	}
+
+	if !strings.Contains(s, `document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });`) {
+		t.Errorf("search submit handler must prevent default and run search")
+	}
+	if !strings.Contains(s, `document.getElementById("nav").addEventListener("submit", (e) => { e.preventDefault(); });`) {
+		t.Errorf("nav submit handler must prevent default")
+	}
+	if !strings.Contains(s, `document.getElementById("search-prev").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(-1); });`) || !strings.Contains(s, `document.getElementById("search-next").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(1); });`) {
+		t.Errorf("search prev/next click handlers must keep setSearchPage behavior")
+	}
+}
+
 func TestEmbeddedUIHasSearchMeasurementStatus(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {
