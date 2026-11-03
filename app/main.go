@@ -214,7 +214,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 // dbExec は *sql.DB と *sql.Tx の共通部分。processFile の tx 内で同じ書き込みヘルパーを使えるようにする
 type dbExec interface {
@@ -265,6 +265,9 @@ func ensureSchema(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureFindingsUniqueIndex(db); err != nil {
+		return err
+	}
 	if current < schemaVersion {
 		_, err = db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
 		if err != nil {
@@ -274,8 +277,9 @@ func ensureSchema(db *sql.DB) error {
 	return nil
 }
 
-// migrateSchema は user_version 段階移行。findings の重複行を掃除してから unique index を作る
-// （CREATE UNIQUE INDEX は重複行があるままでは失敗するため、既存 DB はこの順が必要）
+// migrateSchema は user_version 段階移行。既存行は削除しない。findings の unique index を
+// path を key に含める定義へ揃える（定義置換のみ）。新 key に重複行が残る場合は CREATE が
+// 失敗し、エラーを返してデータの対応を運用判断へ委ねる（D-03）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -287,19 +291,38 @@ func migrateSchema(db *sql.DB, current int) error {
 	if tables == 0 {
 		return nil
 	}
-	tx, err := db.Begin()
+	return ensureFindingsUniqueIndex(db)
+}
+
+const findingsUniqueIndexSQL = "CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(path, sha256, rule, detail)"
+
+func normalizeIndexSQL(s string) string {
+	s = strings.ToLower(s)
+	s = strings.Join(strings.Fields(s), " ")
+	return strings.Replace(s, "if not exists ", "", 1)
+}
+
+// ensureFindingsUniqueIndex は idx_findings_unique を findingsUniqueIndexSQL へ揃える。
+// 定義の置換のみで既存行を削除しない。新 key に重複行があるままでは作成できず、
+// その場合エラーを返す（データを消してよいかは運用判断）。
+func ensureFindingsUniqueIndex(db dbExec) error {
+	var def sql.NullString
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_findings_unique'").Scan(&def)
+	if err == sql.ErrNoRows {
+		_, err = db.Exec(findingsUniqueIndexSQL)
+		return err
+	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM findings WHERE id NOT IN (
-		SELECT MIN(id) FROM findings GROUP BY sha256, rule, detail)`); err != nil {
+	if normalizeIndexSQL(def.String) == normalizeIndexSQL(findingsUniqueIndexSQL) {
+		return nil
+	}
+	if _, err := db.Exec("DROP INDEX idx_findings_unique"); err != nil {
 		return err
 	}
-	if _, err := tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(sha256, rule, detail)"); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err = db.Exec(findingsUniqueIndexSQL)
+	return err
 }
 
 const scanCacheTTL = 30 * 24 * time.Hour

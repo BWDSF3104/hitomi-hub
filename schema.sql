@@ -78,4 +78,4 @@ CREATE TABLE IF NOT EXISTS vt_rate_state (
 CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(scan_status);
 CREATE INDEX IF NOT EXISTS idx_findings_sha256 ON findings(sha256);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(sha256, rule, detail);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(path, sha256, rule, detail);

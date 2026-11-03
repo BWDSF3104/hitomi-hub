@@ -269,6 +269,39 @@ def test_add_finding_ignores_duplicates(tmp_path):
     conn.close()
 
 
+def test_findings_unique_index_key_includes_path(tmp_path):
+    conn = make_db(tmp_path)
+    unique = [i for i in conn.execute("PRAGMA index_list(findings)").fetchall() if i[1] == "idx_findings_unique"]
+    assert unique, "new DB must have unique index idx_findings_unique"
+    assert unique[0][2] == 1
+    key = [c[2] for c in conn.execute("PRAGMA index_info('idx_findings_unique')").fetchall()]
+    assert key == ["path", "sha256", "rule", "detail"]
+    conn.close()
+
+
+def test_same_content_different_paths_are_separate_findings(tmp_path):
+    conn = make_db(tmp_path)
+    scan.add_finding(conn, "Galleries/1/1.cbz", "a" * 64, "structural", "bad_zip")
+    scan.add_finding(conn, "Galleries/2/2.cbz", "a" * 64, "structural", "bad_zip")
+    conn.commit()
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 2
+    conn.close()
+
+
+def test_second_scan_does_not_change_findings_count(tmp_path):
+    conn = make_db(tmp_path)
+    cbz = make_zip(tmp_path / "Galleries" / "60" / "60.cbz", {"../evil.exe": b"MZ\x90\x00"})
+    state = {"window": [], "total": 0}
+    summary = {}
+    scan.process_file(conn, cbz, tmp_path, CFG, state, summary)
+    first = conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0]
+    assert first > 0
+    scan.process_file(conn, cbz, tmp_path, CFG, state, summary)
+    second = conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0]
+    assert second == first, f"second scan must skip duplicates: {first} -> {second}"
+    conn.close()
+
+
 def test_run_yara_exit1_error_is_scan_error():
     rules, error = scan.run_yara_with_runner(Path("a.cbz"), Path("rules.yar"), "yr", scan.DEFAULT_LIMITS,
                                              runner=lambda cmd: SimpleNamespace(returncode=1, stdout='{"rules":[{"identifier":"Zip_Path_Traversal"}]}'))

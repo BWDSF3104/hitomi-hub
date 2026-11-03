@@ -242,14 +242,136 @@ func TestAddFindingIsIdempotentForSameFinding(t *testing.T) {
 	}
 }
 
-func TestMigrateSchemaCollapsesFindingsDuplicatesAndSetsVersion(t *testing.T) {
+func indexDef(t *testing.T, db *sql.DB, name string) string {
+	t.Helper()
+	var def sql.NullString
+	if err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&def); err != nil {
+		if err == sql.ErrNoRows {
+			return ""
+		}
+		t.Fatal(err)
+	}
+	return def.String
+}
+
+func TestNewDBFindingsUniqueIndexKeyIncludesPath(t *testing.T) {
+	db := openTestDB(t)
+	def := indexDef(t, db, "idx_findings_unique")
+	if def == "" {
+		t.Fatal("new DB must have idx_findings_unique")
+	}
+	if normalizeIndexSQL(def) != normalizeIndexSQL(findingsUniqueIndexSQL) {
+		t.Errorf("index definition: got %q want %q", def, findingsUniqueIndexSQL)
+	}
+	if err := addFinding(db, "Galleries/1/file.cbz", "sha1", "structural", "bad_zip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := addFinding(db, "Galleries/1/file.cbz", "sha1", "structural", "bad_zip"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("INSERT OR IGNORE must skip duplicate: got %d", count)
+	}
+}
+
+func TestScanTwiceDoesNotChangeFindingsCount(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"../evil.exe": "x"})
+	summary := map[string]int{}
+	if status := processFile(db, cfg(), &RateState{}, dir, path, summary, nil); status != "hit" {
+		t.Fatalf("first scan: status %s", status)
+	}
+	var first int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if first == 0 {
+		t.Fatal("first scan must record findings")
+	}
+	if status := processFile(db, cfg(), &RateState{}, dir, path, summary, nil); status != "hit" {
+		t.Fatalf("second scan: status %s", status)
+	}
+	var second int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if second != first {
+		t.Errorf("findings count after second scan: got %d want %d", second, first)
+	}
+}
+
+func TestMigrateSchemaAlignsUniqueIndexWithoutDeletingRows(t *testing.T) {
 	dataDir = dataRoot()
 	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// 移行前の findings 形状（unique index なし）を再現する
+	// 移行済み（v3）だが old key（path を含まない）unique index を持つ既存 DB を再現する
+	if _, err := db.Exec(`CREATE TABLE findings (
+		id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT NOT NULL,
+		rule TEXT NOT NULL, detail TEXT, found_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE UNIQUE INDEX idx_findings_unique ON findings(sha256, rule, detail)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+		"Galleries/1/file.cbz", "sha1", "structural", "bad_zip", nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	def := indexDef(t, db, "idx_findings_unique")
+	if normalizeIndexSQL(def) != normalizeIndexSQL(findingsUniqueIndexSQL) {
+		t.Errorf("index definition after migration: got %q want %q", def, findingsUniqueIndexSQL)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("rows must not be deleted by migration: got %d", count)
+	}
+	// new key では別 path の同一 content が別 finding として記録される（D-03 の意図）
+	if err := addFinding(db, "Galleries/2/file.cbz", "sha1", "structural", "bad_zip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := addFinding(db, "Galleries/1/file.cbz", "sha1", "structural", "bad_zip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("same content different path must be recorded, duplicate must be skipped: got %d", count)
+	}
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatal(err)
+	}
+	if userVersion != schemaVersion {
+		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
+	}
+}
+
+func TestMigrateSchemaRefusesDuplicatesWithoutDeletingRows(t *testing.T) {
+	dataDir = dataRoot()
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// 移行前の findings 形状（unique index なし・重複行あり）を再現する
 	if _, err := db.Exec(`CREATE TABLE findings (
 		id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT NOT NULL,
 		rule TEXT NOT NULL, detail TEXT, found_at TEXT NOT NULL)`); err != nil {
@@ -261,34 +383,21 @@ func TestMigrateSchemaCollapsesFindingsDuplicatesAndSetsVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
-		"Galleries/1/file.cbz", "sha1", "structural", "path_traversal:x", nowISO()); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureSchema(db); err != nil {
-		t.Fatal(err)
+	if err := ensureSchema(db); err == nil {
+		t.Fatal("duplicate rows must not be removed without operator decision; ensureSchema must fail")
 	}
 	var count int
 	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Errorf("duplicates must be collapsed to first occurrence: got %d", count)
+	if count != 3 {
+		t.Errorf("duplicate rows must survive the failed migration: got %d", count)
 	}
-	var userVersion int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
-		t.Fatal(err)
-	}
-	if userVersion != schemaVersion {
-		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
-	}
-	_, err = db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
-		"Galleries/2/file.cbz", "sha1", "structural", "bad_zip", nowISO())
-	if err == nil {
-		t.Errorf("duplicate insert must be rejected after migration")
+	if indexDef(t, db, "idx_findings_unique") != "" {
+		t.Errorf("unique index must not be created while duplicates exist")
 	}
 }
 
