@@ -1692,6 +1692,101 @@ func TestEmbeddedUIDebouncesResizeRenderToSingleCall(t *testing.T) {
 	}
 }
 
+func TestEmbeddedUIDebouncesReadAndListsToSingleCall(t *testing.T) {
+	page, err := uiPage.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	blockStart := strings.Index(s, "const readListsDebounceMs = 250;")
+	if blockStart < 0 {
+		t.Fatalf("read/lists debounce constant not found")
+	}
+	block := s[blockStart:strings.Index(s, "\nasync function showPage() {")]
+	helperStart := strings.Index(block, "function runBackgroundReadAndLists(showGen, openGen) {")
+	if helperStart < 0 {
+		t.Fatalf("read helper not found")
+	}
+	helper := block[helperStart:]
+	clearIndex := strings.Index(helper, `clearTimeout(readListsDebounceTimer)`)
+	setTimeoutIndex := strings.Index(helper, `setTimeout(() => {`)
+	postIndex := strings.Index(helper, `post("/api/read", { gallery_id: current.id, page: current.page })`)
+	if clearIndex < 0 || setTimeoutIndex < 0 || clearIndex >= setTimeoutIndex {
+		t.Errorf("consecutive page movements should coalesce to one debounced read run: got %q", helper)
+	}
+	if postIndex < 0 || postIndex < setTimeoutIndex {
+		t.Errorf("read post should only run inside the debounced timer callback, not synchronously per showPage: got %q", helper)
+	}
+	if strings.Count(helper, `post("/api/read"`) != 1 {
+		t.Errorf("debounced run should post exactly once per burst: got %q", helper)
+	}
+	if !strings.Contains(helper, `if (readKey === lastReadPostKey)`) {
+		t.Errorf("re-showing the same gallery and page should skip the duplicate post: got %q", helper)
+	}
+	skipKeyIndex := strings.Index(helper, `lastReadPostKey = readKey;`)
+	if skipKeyIndex < 0 || skipKeyIndex < postIndex {
+		t.Errorf("the duplicate skip key must be recorded after the post succeeds, inside the then callback: got %q", helper)
+	}
+	if !strings.Contains(helper, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) || !strings.Contains(helper[setTimeoutIndex:], `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
+		t.Errorf("read helper must keep the generation guard at entry and inside the debounced run: got %q", helper)
+	}
+	if !strings.Contains(block, `function debounceLists() {`) {
+		t.Errorf("the lists display must be debounced through a shared debounce helper: got %q", block)
+	}
+	listsHelper := block[:helperStart]
+	if strings.Index(listsHelper, `clearTimeout(listsDebounceTimer)`) < 0 || strings.Index(listsHelper, `clearTimeout(listsDebounceTimer)`) >= strings.Index(listsHelper, `setTimeout(() => {`) {
+		t.Errorf("consecutive list displays should coalesce to one debounced run: got %q", listsHelper)
+	}
+	if !strings.Contains(block, `showLists(showGen, openGen)`) || !strings.Contains(block, `highlightStrip();`) {
+		t.Errorf("debounced run must keep the guarded lists display and strip highlight: got %q", block)
+	}
+	listsStart := strings.Index(s, "async function showLists(showGen, openGen) {")
+	if listsStart < 0 {
+		t.Fatalf("showLists function not found")
+	}
+	listsBody := s[listsStart:strings.Index(s, "\nfunction renderStripLoading(id) {")]
+	if !strings.Contains(listsBody, `await debounceLists();`) {
+		t.Errorf("showLists should wait for the debounce window before fetching: got %q", listsBody)
+	}
+	if !strings.Contains(listsBody, `if (!pending)`) || !strings.Contains(listsBody, `listsFetchPending`) {
+		t.Errorf("showLists should share one in-flight lists fetch per debounce window: got %q", listsBody)
+	}
+	if strings.Count(listsBody, `api("/api/lists")`) != 1 {
+		t.Errorf("showLists should fetch lists at most once per window: got %q", listsBody)
+	}
+	if strings.Count(listsBody, `if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;`) < 3 {
+		t.Errorf("showLists must keep the generation guard before and after the async debounce and fetch: got %q", listsBody)
+	}
+	if !strings.Contains(listsBody, `targetAttr()`) {
+		t.Errorf("showLists render must be unchanged: got %q", listsBody)
+	}
+	showStart := strings.Index(s, "async function showPage() {")
+	if showStart < 0 {
+		t.Fatalf("showPage function not found")
+	}
+	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+	if strings.Contains(showBody, `await post("/api/read"`) || strings.Contains(showBody, `await showLists`) {
+		t.Errorf("showPage display path must not block on the debounced read or lists run: got %q", showBody)
+	}
+	if !strings.Contains(showBody, `runBackgroundReadAndLists(showGen, openGen);`) {
+		t.Errorf("showPage must keep the generation-guarded background helper call: got %q", showBody)
+	}
+	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
+	if loadStart < 0 {
+		t.Fatalf("loadFullImage function not found")
+	}
+	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+	if !strings.Contains(loadBody, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(loadBody, `const blob = await r.blob();`) || !strings.Contains(loadBody, `const objectUrl = URL.createObjectURL(blob);`) || !strings.Contains(loadBody, `img.src = objectUrl;`) {
+		t.Errorf("debounce must not change the objectURL display path: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration`) || !strings.Contains(loadBody, `URL.revokeObjectURL(objectUrl)`) {
+		t.Errorf("stale async render/write guard on the objectURL display path must be maintained: got %q", loadBody)
+	}
+	if !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `r.headers.get("x-cache")`) {
+		t.Errorf("TN display fallback disabled and x-cache full cache judgement must be unchanged: got %q", loadBody)
+	}
+}
+
 func TestEmbeddedUIPageMovementKeepsStripNodes(t *testing.T) {
 	page, err := uiPage.ReadFile("ui.html")
 	if err != nil {

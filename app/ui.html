@@ -1149,17 +1149,49 @@ function startBackgroundWorkers(signal) {
   for (let i = 0; i < PREFETCH_CONCURRENCY; i++) worker();
 }
 
+const readListsDebounceMs = 250;
+let readListsDebounceTimer = null;
+let lastReadPostKey = "";
+let listsDebounceTimer = null;
+let listsWaiters = [];
+let listsFetchPending = null;
+
+function debounceLists() {
+  return new Promise((resolve) => {
+    listsWaiters.push(resolve);
+    if (listsDebounceTimer) clearTimeout(listsDebounceTimer);
+    listsDebounceTimer = setTimeout(() => {
+      listsDebounceTimer = null;
+      const waiters = listsWaiters;
+      listsWaiters = [];
+      for (const resolve of waiters) resolve();
+    }, readListsDebounceMs);
+  });
+}
+
 function runBackgroundReadAndLists(showGen, openGen) {
   if (showGen !== showGeneration || openGen !== openGeneration) return;
-  post("/api/read", { gallery_id: current.id, page: current.page }).then(() => {
+  if (readListsDebounceTimer) clearTimeout(readListsDebounceTimer);
+  readListsDebounceTimer = setTimeout(() => {
+    readListsDebounceTimer = null;
     if (showGen !== showGeneration || openGen !== openGeneration) return;
-    showLists(showGen, openGen);
-    highlightStrip();
-  }).catch((err) => {
-    if (showGen === showGeneration && openGen === openGeneration) {
-      document.getElementById("note").textContent = err.message;
+    const readKey = current.id + "/" + current.page;
+    if (readKey === lastReadPostKey) {
+      showLists(showGen, openGen);
+      highlightStrip();
+      return;
     }
-  });
+    post("/api/read", { gallery_id: current.id, page: current.page }).then(() => {
+      if (showGen !== showGeneration || openGen !== openGeneration) return;
+      lastReadPostKey = readKey;
+      showLists(showGen, openGen);
+      highlightStrip();
+    }).catch((err) => {
+      if (showGen === showGeneration && openGen === openGeneration) {
+        document.getElementById("note").textContent = err.message;
+      }
+    });
+  }, readListsDebounceMs);
 }
 
 async function showPage() {
@@ -1280,7 +1312,14 @@ async function openGallery(id, page, second) {
 }
 async function showLists(showGen, openGen) {
   if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;
-  const lists = await api("/api/lists");
+  await debounceLists();
+  if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;
+  let pending = listsFetchPending;
+  if (!pending) {
+    pending = api("/api/lists").then((data) => { if (listsFetchPending === pending) listsFetchPending = null; return data; }, (err) => { if (listsFetchPending === pending) listsFetchPending = null; throw err; });
+    listsFetchPending = pending;
+  }
+  const lists = await pending;
   if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;
   document.getElementById("queries").innerHTML = lists.queries.map((q) =>
     "<li><a href='#/q/" + encodeURIComponent(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
