@@ -563,7 +563,9 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 			result := runYaraWithRunner(context.Background(), path, rulesFile(root), resolveYrPath(cfg.Yr, root), cfg.Limits, runYara)
 			if result.Status == "scan_error" {
 				if status != "hit" {
-					status = "scan_error"
+					// YARA 実行失敗は構造 pass を scan_error へ上書きしない。判定不能（not_evaluated）とし、
+					// 失敗は scan_source（structural+yara_error）で表現する（retry 判定用・合格条件固定）
+					status = "not_evaluated"
 				}
 				source = "structural+yara_error"
 			} else if len(result.Rules) > 0 {

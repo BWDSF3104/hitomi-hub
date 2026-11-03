@@ -539,7 +539,7 @@ func TestRunYaraExecutionFailureIsScanError(t *testing.T) {
 	}
 }
 
-func TestProcessFileYaraExecutionFailureIsScanError(t *testing.T) {
+func TestProcessFileYaraExecutionFailureKeepsNotEvaluated(t *testing.T) {
 	db := openTestDB(t)
 	dir := t.TempDir()
 	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
@@ -549,7 +549,7 @@ func TestProcessFileYaraExecutionFailureIsScanError(t *testing.T) {
 
 	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
 		return nil, 2, errors.New("missing yr")
-	}); status != "scan_error" {
+	}); status != "not_evaluated" {
 		t.Fatalf("status: got %s", status)
 	}
 
@@ -560,7 +560,7 @@ func TestProcessFileYaraExecutionFailureIsScanError(t *testing.T) {
 	if count != 0 {
 		t.Errorf("yara execution failure must not add findings: got %d", count)
 	}
-	if summary["scan_error"] != 1 {
+	if summary["not_evaluated"] != 1 || summary["scan_error"] != 0 {
 		t.Errorf("summary: got %v", summary)
 	}
 	var source string
@@ -572,7 +572,7 @@ func TestProcessFileYaraExecutionFailureIsScanError(t *testing.T) {
 	}
 }
 
-func TestProcessFileYaraExit1ErrorIsScanErrorAndNotFinding(t *testing.T) {
+func TestProcessFileYaraExit1ErrorKeepsNotEvaluatedAndNotFinding(t *testing.T) {
 	db := openTestDB(t)
 	dir := t.TempDir()
 	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
@@ -582,7 +582,7 @@ func TestProcessFileYaraExit1ErrorIsScanErrorAndNotFinding(t *testing.T) {
 
 	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
 		return []byte(`{"rules":[{"identifier":"Zip_Rule"}]}`), 1, errors.New("exit status 1")
-	}); status != "scan_error" {
+	}); status != "not_evaluated" {
 		t.Fatalf("status: got %s", status)
 	}
 
@@ -593,7 +593,7 @@ func TestProcessFileYaraExit1ErrorIsScanErrorAndNotFinding(t *testing.T) {
 	if count != 0 {
 		t.Errorf("yara exit1 error must not add findings: got %d", count)
 	}
-	if summary["scan_error"] != 1 {
+	if summary["not_evaluated"] != 1 || summary["scan_error"] != 0 {
 		t.Errorf("summary: got %v", summary)
 	}
 
@@ -603,6 +603,143 @@ func TestProcessFileYaraExit1ErrorIsScanErrorAndNotFinding(t *testing.T) {
 	}
 	if source != "structural+yara_error" {
 		t.Errorf("source: got %s", source)
+	}
+}
+
+func TestProcessFileStructuralHitKeepsHitOnYaraError(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"../evil.txt": "y"})
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	summary := map[string]int{}
+
+	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return nil, 1, errors.New("yara error")
+	}); status != "hit" {
+		t.Fatalf("status: got %s", status)
+	}
+	if summary["hit"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("structural hit findings: got %d", count)
+	}
+	var fileStatus, source string
+	if err := db.QueryRow("SELECT scan_status, scan_source FROM files").Scan(&fileStatus, &source); err != nil {
+		t.Fatal(err)
+	}
+	if fileStatus != "hit" || source != "structural+yara_error" {
+		t.Errorf("file row: got %s %s", fileStatus, source)
+	}
+}
+
+func TestProcessFileBadZipScanErrorKeepsScanErrorWithoutYaraCall(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.cbz")
+	if err := os.WriteFile(path, []byte("PK\x03\x04garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	summary := map[string]int{}
+
+	calls := 0
+	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		calls++
+		return nil, 1, errors.New("yara error")
+	}); status != "scan_error" {
+		t.Fatalf("status: got %s", status)
+	}
+	if calls != 0 {
+		t.Errorf("structural scan_error must not run yara: got %d calls", calls)
+	}
+	if summary["scan_error"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("bad_zip finding: got %d", count)
+	}
+	var source string
+	if err := db.QueryRow("SELECT scan_source FROM files").Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "structural" {
+		t.Errorf("source: got %s", source)
+	}
+}
+
+func TestProcessFileYaraSuccessNoRulesKeepsPass(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	summary := map[string]int{}
+
+	if status := processFileWithYara(db, c, &RateState{}, dir, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return nil, 0, nil
+	}); status != "pass" {
+		t.Fatalf("status: got %s", status)
+	}
+	if summary["pass"] != 1 {
+		t.Errorf("summary: got %v", summary)
+	}
+	var source string
+	if err := db.QueryRow("SELECT scan_source FROM files").Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "structural" {
+		t.Errorf("source: got %s", source)
+	}
+}
+
+func TestExportCBZExportsStructuralPassWithYaraErrorAsNotEvaluated(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	galleryDir := filepath.Join(root, "Galleries", "105")
+	if err := os.MkdirAll(galleryDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := makeZip(t, galleryDir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = "tools/yr.exe"
+	summary := map[string]int{}
+
+	if status := processFileWithYara(db, c, &RateState{}, root, path, summary, nil, func(ctx context.Context, exe string, args []string) ([]byte, int, error) {
+		return nil, 2, errors.New("missing yr")
+	}); status != "not_evaluated" {
+		t.Fatalf("status: got %s", status)
+	}
+	result, err := exportCBZ(db, exportTestCfg(), root, 105, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["entries"] != 1 {
+		t.Errorf("export entries: got %v", result)
+	}
+	skipped, _ := result["skipped"].(map[string]int)
+	if _, ok := skipped["scan_error"]; ok {
+		t.Errorf("export must not skip scan_error: got %v", skipped)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped must be empty: got %v", skipped)
+	}
+	var fileStatus, source string
+	if err := db.QueryRow("SELECT scan_status, scan_source FROM files").Scan(&fileStatus, &source); err != nil {
+		t.Fatal(err)
+	}
+	if fileStatus != "not_evaluated" || source != "structural+yara_error" {
+		t.Errorf("file row: got %s %s", fileStatus, source)
 	}
 }
 
