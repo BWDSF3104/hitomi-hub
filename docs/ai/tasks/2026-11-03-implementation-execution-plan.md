@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 既存fragment削除済み。task_manager単一行検証実装済み。実施順19 A-14/C-05から単独commit/pushで順次実施
+**Next Action**: 推奨運用方針決定。実施順19 A-14/C-05から単独commit/pushで順次実施
 
 ## 意図 / 背景
 
@@ -125,6 +125,7 @@
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
 - 項目ごとのコマンド・結果・経過時間は個別タスクの Verification と本実施 progress に記録。
+- 判断待ちを減らす今後の運用方針を `docs/ai/decisions/2026-11-03-judgment-waiting-reduction-policy.md` に記録した。実装は default領域の推奨案と実測で単独 commit/pushへ進め、UX意味変更・外部API policy・不可逆 migration・正典rule変更・hitomi convention未確認領域だけ判断待ちへ回す。
 
 ## 完了時 Memory Bank 操作
 
