@@ -2,7 +2,6 @@ task_file	status	next_action
 docs/ai/tasks/2026-11-01-scan-layer-move.md	進行中	残りは backlog の P2（#8 AVIF の pdf embed、#9 `bookmark_queries.notify` の用途）。完了判定はユーザーの承認後、`current-task.tsv` の行削除と archive 操作で締める
 docs/ai/tasks/2026-11-02-external-code-review-findings.md	進行中	Strict UI actual physical confirmation completed for `openGallery` background reset. manual full-image retry remains low priority until reproducible actual UI `errorDone > 0` entry.
 docs/ai/tasks/2026-11-03-claude-review-349778d-assessment.md	進行中	項目一覧を記録し、各項目を個別タスクとして登録する
-docs/ai/tasks/2026-11-03-a01-pdf-page-dict-close.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a02-record-discovered-commit.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a03-json-ms-and-metrics.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ
 docs/ai/tasks/2026-11-03-a04-plain-term-lang.md	進行中	調査（assess-20261103-1220）。完了後実装タスクへ引き継ぎ

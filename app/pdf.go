@@ -139,7 +139,7 @@ func exportPDF(db *sql.DB, cfg Config, root string, galleryID int, out string) (
 
 	for i, page := range pages {
 		pageNum, contentNum, imageNum := 3+i*3, 4+i*3, 5+i*3
-		writeObj(obj{num: pageNum, body: []byte(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /XObject << /Im0 %d 0 R >> >> /Contents %d 0 R",
+		writeObj(obj{num: pageNum, body: []byte(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /XObject << /Im0 %d 0 R >> >> /Contents %d 0 R >>",
 			page.width, page.height, imageNum, contentNum))})
 		content := []byte(fmt.Sprintf("q %d 0 0 %d 0 0 cm /Im0 Do Q", page.width, page.height))
 		writeObj(obj{num: contentNum, body: []byte(fmt.Sprintf("<< /Length %d >>", len(content))), stream: content})

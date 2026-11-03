@@ -181,6 +181,54 @@ func TestExportPDFWritesPagesAndSkipsUndecodable(t *testing.T) {
 	}
 }
 
+func TestExportPDFPageObjectDictCountsAreBalanced(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	if err := recordDiscovered(db, 3, "Galleries/3"); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	writeExportFile(t, root, "Galleries/3/pnghash.png", buf.Bytes())
+	if err := recordFile(db, filepath.Join("Galleries", "3", "pnghash.png"), validGalleryID(3), "0", int64(len(buf.Bytes())), "png", "png", "not_evaluated", "structural"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordPage(db, 3, 1, "pnghash"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := exportPDF(db, exportTestCfg(), root, 3, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(result["output"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := bytes.Index(body, []byte("3 0 obj\n"))
+	if start < 0 {
+		t.Fatalf("page object not found in pdf")
+	}
+	end := bytes.Index(body[start:], []byte("endobj"))
+	if end < 0 {
+		t.Fatalf("page object end not found in pdf")
+	}
+	pageObj := body[start : start+end]
+	open := bytes.Count(pageObj, []byte("<<"))
+	close := bytes.Count(pageObj, []byte(">>"))
+	if open != close {
+		t.Fatalf("page object dict counts unbalanced: open=%d close=%d obj=%q", open, close, string(pageObj))
+	}
+	if open == 0 {
+		t.Fatalf("page object has no dict markers: obj=%q", string(pageObj))
+	}
+	if !bytes.Contains(pageObj, []byte("/Type /Page")) {
+		t.Errorf("page object must contain /Type /Page: got %q", string(pageObj))
+	}
+}
+
 func TestExportRefusesOutputOutsideRoot(t *testing.T) {
 	db := openTestDB(t)
 	root := t.TempDir()
