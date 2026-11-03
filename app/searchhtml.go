@@ -31,6 +31,13 @@ func isOrderTerm(term string) bool {
 	return strings.HasPrefix(term, "orderby") || strings.HasPrefix(term, "sortby")
 }
 
+func isLanguageTerm(term string) bool {
+	if i := strings.Index(term, ":"); i >= 0 {
+		return term[:i] == "language"
+	}
+	return false
+}
+
 func applyOrderTerm(state *searchState, term string) {
 	sides := strings.Split(term, ":")
 	if len(sides) < 2 {
@@ -116,6 +123,9 @@ func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
 			state.tag = SanitizeTerm(term)
 		case "language":
 			state.language = strings.ToLower(right)
+			// C-04: `language:` は lang filter そのもの。前置 term で fetch 済みの
+			// 同じ area/tag を新 language で再 fetch せず、自前 dataset（index-<lang>）を 1 回だけ fetch する。
+			return c.SearchNozomiParts("", "index", state.language)
 		default:
 			state.area = left
 			state.tag = SanitizeTerm(right)
@@ -212,7 +222,8 @@ func searchPageSlice(ids []int, page, limit int) []int {
 }
 
 // SearchHTML は hitomi の results.js 相当。plain term は galleriesindex の 1 term hash exact、
-// colon term は nozomi。`language:` は state の language を変え、その後の nozomi fetch に効く。
+// colon term は nozomi。`language:` は state の language を変え、最初の term fetch へ反映する（C-04）。
+// 前置 term で fetch 済みの同じ area/tag を新 language で再 fetch しない。
 // `search.html?furry` は部分一致ではなく、index に exact key がある term だけ返す。
 func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, error) {
 	terms := []string{}
@@ -270,6 +281,18 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 		return false
 	})
 
+	// C-04: language term を fetch 前に pre-scan し、state.language を最初の term fetch
+	// へ反映する。同じ tag の language 違い fetch を 1 回に固定する（実 data の
+	// language-scoped dataset は all dataset の subset なので intersection 結果は不変）。
+	for _, term := range positive {
+		if isLanguageTerm(term) {
+			if right := term[strings.Index(term, ":")+1:]; right != "" {
+				state.language = right
+			}
+			break
+		}
+	}
+
 	var results []int
 	orGroupOffset := 0
 	if len(positive) > 0 {
@@ -315,6 +338,12 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 
 	if len(positive) > 1 {
 		for _, term := range positive[1:] {
+			if isLanguageTerm(term) {
+				// C-04: pre-scan で state.language は fetch 済み。この term の dataset は
+				// fetch 済みの language-scoped dataset と同一（subset 保証で intersection no-op）なので
+				// 同じ area/tag を再 fetch しない。
+				continue
+			}
 			ids, err := c.termIDs(&state, term)
 			if err != nil {
 				return nil, 0, err

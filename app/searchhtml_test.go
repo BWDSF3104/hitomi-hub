@@ -205,14 +205,20 @@ func TestSearchHTMLPreservesUnderscoreTagTerm(t *testing.T) {
 }
 
 func TestSearchHTMLColonTermUsesNozomiState(t *testing.T) {
+	// C-04 fixed test: `language:` は同じ tag を language 違いで 2 回 fetch しない。
+	// state.language は最初の term fetch へ反映され、female:yuri の fetch は 1 回
+	//（female:yuri-english）になる。fixture は実 hitomi data の規則（language-scoped
+	// dataset は all dataset の subset）に従う。
 	var urls []string
+	fetches := 0
 	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
 		urls = append(urls, rawurl)
 		switch {
 		case strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi"):
 			return beIDs([]uint32{10, 20, 30}), nil
 		case strings.Contains(rawurl, "/n/tag/female:yuri-english.nozomi"):
-			return beIDs([]uint32{20, 30, 99}), nil
+			return beIDs([]uint32{20, 30}), nil
 		default:
 			return nil, nil
 		}
@@ -225,8 +231,8 @@ func TestSearchHTMLColonTermUsesNozomiState(t *testing.T) {
 	if total != 2 || len(ids) != 2 || ids[0] != 20 || ids[1] != 30 {
 		t.Fatalf("nozomi state: total %d ids %v", total, ids)
 	}
-	if len(urls) != 2 || !strings.Contains(urls[0], "/n/tag/female:yuri-all.nozomi") || !strings.Contains(urls[1], "/n/tag/female:yuri-english.nozomi") {
-		t.Fatalf("paths: got %v", urls)
+	if fetches != 1 || len(urls) != 1 || !strings.Contains(urls[0], "/n/tag/female:yuri-english.nozomi") {
+		t.Fatalf("same tag must fetch once with language reflected: fetches %d paths %v", fetches, urls)
 	}
 }
 
@@ -251,6 +257,39 @@ func TestSearchHTMLLanguageOnlyUsesNozomiIndex(t *testing.T) {
 	}
 }
 
+func TestSearchHTMLLanguageTermIntersectionRegression(t *testing.T) {
+	var urls []string
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		urls = append(urls, rawurl)
+		switch {
+		case strings.Contains(rawurl, "/n/tag/female:yuri-english.nozomi"):
+			return beIDs([]uint32{10, 20, 30}), nil
+		case strings.Contains(rawurl, "/n/tag/female:lolita-english.nozomi"):
+			return beIDs([]uint32{20, 40}), nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri language:english female:lolita", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(ids) != 1 || ids[0] != 20 {
+		t.Fatalf("intersection with language: total %d ids %v", total, ids)
+	}
+	if fetches != 2 || len(urls) != 2 {
+		t.Fatalf("intersection must fetch each term once: fetches %d paths %v", fetches, urls)
+	}
+	for _, rawurl := range urls {
+		if strings.Contains(rawurl, "-all.nozomi") {
+			t.Fatalf("language must be reflected in term fetch, no all-language refetch: %v", urls)
+		}
+	}
+}
+
 func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		switch rawurl {
@@ -268,6 +307,95 @@ func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 	}
 	if total != 2 || len(ids) != 2 || ids[0] != 10 || ids[1] != 30 {
 		t.Fatalf("negative: total %d ids %v", total, ids)
+	}
+}
+
+func TestSearchHTMLNegativeTermExcludesWithLanguageRegression(t *testing.T) {
+	var urls []string
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		urls = append(urls, rawurl)
+		switch {
+		case strings.Contains(rawurl, "/n/tag/female:yuri-english.nozomi"):
+			return beIDs([]uint32{10, 20, 30}), nil
+		case strings.Contains(rawurl, "/n/tag/female:futanari-english.nozomi"):
+			return beIDs([]uint32{20}), nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri -female:futanari language:english", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(ids) != 2 || ids[0] != 10 || ids[1] != 30 {
+		t.Fatalf("negative with language: total %d ids %v", total, ids)
+	}
+	if fetches != 2 || len(urls) != 2 {
+		t.Fatalf("negative must fetch each term once: fetches %d paths %v", fetches, urls)
+	}
+	for _, rawurl := range urls {
+		if strings.Contains(rawurl, "-all.nozomi") {
+			t.Fatalf("language must be reflected in term fetch, no all-language refetch: %v", urls)
+		}
+	}
+}
+
+func TestSearchHTMLNegativeLanguageTermExcludesItsOwnLanguageDataset(t *testing.T) {
+	var urls []string
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		urls = append(urls, rawurl)
+		switch {
+		case strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi"):
+			return beIDs([]uint32{10, 20, 30}), nil
+		case strings.Contains(rawurl, "/n/index-english.nozomi"):
+			return beIDs([]uint32{20}), nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri -language:english", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(ids) != 2 || ids[0] != 10 || ids[1] != 30 {
+		t.Fatalf("negative language term: total %d ids %v", total, ids)
+	}
+	if fetches != 2 || len(urls) != 2 || !strings.Contains(urls[1], "/n/index-english.nozomi") {
+		t.Fatalf("negative language term must contribute its own index dataset, not refetch same tag: fetches %d paths %v", fetches, urls)
+	}
+}
+
+func TestSearchHTMLOrGroupLanguageTermContributesOwnLanguageDataset(t *testing.T) {
+	var urls []string
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		urls = append(urls, rawurl)
+		switch {
+		case strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi"):
+			return beIDs([]uint32{10, 20}), nil
+		case strings.Contains(rawurl, "/n/index-english.nozomi"):
+			return beIDs([]uint32{20, 30}), nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri or language:english", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 10 || ids[1] != 20 || ids[2] != 30 {
+		t.Fatalf("or group with language term: total %d ids %v", total, ids)
+	}
+	if fetches != 2 || len(urls) != 2 || !strings.Contains(urls[1], "/n/index-english.nozomi") {
+		t.Fatalf("or group language term must fetch its own index dataset once: fetches %d paths %v", fetches, urls)
 	}
 }
 
