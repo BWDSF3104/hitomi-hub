@@ -141,6 +141,28 @@ Google Drive 確認結果: `I:\マイドライブ\kilo\2026-11-04`
 - decision L2094・L2470 は `function route(id, page, second) {` を両ファイル assert と記録だが、実テストは `uiText(t, "viewer.html")` の viewer のみ。検索側は新 test で `viewerLink(id, page)` を assert した（記録と実コードの不一致）。
 - fullscreen chrome の nav/control 非表示は selector と固定 test で確認。実際の fullscreen 実行での nav 非表示は browser-linked criteria の実測では確認していない。
 
+### 残件検証（2026-11-04・実作業は検証のみ・ソース無変更）
+
+1. browser-linked fullscreen 実測（normal OS screen capture）: **合格**
+- 環境: canonical server `http://127.0.0.1:8731`（正典 exe `output/hitomi-hub/hub.exe`・`view --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh`）。fresh normal browser window・fresh profile（Edge `--new-window`・`--user-data-dir=...\edge-fresh-20261104-fullscreen-1052`）、初期ウィンドウ `1280x900`（outer 実測 1280x900・inner 1259x810）、物理 screen `1920x1080`、runtime `window.resize` 不使用。server baseline 先行: `GET /api/gallery/4303732` → 13 files・format webp・local 1（UI 表示 `Dancer's Bond japanese / doujinshi`・`13 files・local 1 (format webp)` と一致）。
+- fresh profile の first-run 同期ダイアログは before capture 前に UI OK クリックで閉じた（記録）。
+- before（`f` key 押下前）: browser chrome 可见（tab strip・address bar `127.0.0.1:8731/#/g/4303732/page/1-2`）で fullscreen ではない。`fullscreenElement` null・`fullscreenEnabled` true・reader class `reader double`・img 2（naturalWidth 1440）・`nav.page-nav` display block・`#reader-controls` display block・activeElement BODY。
+- 操作: reader 画面内容 (650,550) への OS レベル mouse click（activeElement BODY 確認）→ OS key injection（SendKeys）で `f` を page へ delivery（address bar への入力ではない）→ fullscreen 遷移即（0ms）。
+- after 実測: `document.fullscreenElement === documentElement` true。after capture で browser chrome 隠れ（tab strip・address bar なし。Edge の一時的 fullscreen 通知 toast のみ）、page content が全 physical screen（1920x1080）を占める。`#reader` rect [0,0,1920,1080]（fullscreen padding 12px）。double display: img box left [12,12,948,1056]・object-position `100% 50%`（右寄せ）、right [960,12,948,1056]・`0% 50%`（左寄せ）、`object-fit: contain` 双方・aspect ratio 維持、center seam gap `960 − (12+948) = 0`。本項目追加 chrome selector: fullscreen 時 `nav.page-nav` display none・`#reader-controls` display none（before は block、capture 目視一致）。
+- 退出: `Escape` で actual fullscreen exit（state sync）→ last layout mode `reader double` 復旧。criteria 10（fullscreen 中 ArrowLeft/Right）は本残件スコープ外。
+- 上記により「未確認点」の browser-linked fullscreen 実測残件は解消（合格）。
+- Google Drive 保存先（タスク別フォルダ `I:\マイドライブ\kilo\2026-11-04`）:
+  - `search-page-layout-and-vestige-cleanup-fullscreen-before-2026-11-04.png`（chrome 可见・非 fullscreen・before）
+  - `search-page-layout-and-vestige-cleanup-fullscreen-after-2026-11-04.png`（chrome 隠れ・全 physical screen 占拠・seam gap 0・after）
+  - `search-page-layout-and-vestige-cleanup-fullscreen-confirmation-2026-11-04.txt`（手続き。normal OS screen capture（CopyFromScreen）による before/after 2 枚＋確認結果。Headless/Playwright screenshot・proxy 不使用。DOM 数値 read は測定のみの CDP evaluate）
+
+2. `test_canonical_build_freshness_rule_exists`（FAILED）の性質確認: 既存不一致（本項目 scope 外）で確定
+- テスト assert（`tests/test_canonical_build_freshness.py:13-26`）は AGENTS.md 本文の直接記載を文字列照合: (a) `tests/test_canonical_build_freshness.py`、(b) 正典 build コマンド literal `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`、(c) `UI confirmation`（case sensitive。AGENTS.md 見出しの `UI Confirmation` は不一致）。
+- 実測再実行: FAILED（assert (a) で fail: "canonical build freshness test rule is not documented"）。
+- 現在の AGENTS.md `## Canonical Latest Build / UI Confirmation Test Rule` 条はポインタのみ（参照先 `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md`）。3 literal のいずれも不在 → 失敗原因は AGENTS.md の Canonical rule 条のポインタ化（`docs/ai/decisions/2026-11-04-agents-md-rule-pointer-ization.md`・ユーザー承認 2026-11-04 09:32・コミット `9c6161b`）由来。
+- `git show --stat 01baa01`: 5 ファイル（`app/search.html`・`app/viewer.html`・`app/viewer_test.go`・decision・本タスク記録）で `AGENTS.md` を含まない → 本項目の変更由来ではない。
+- 判定: 性質 = ポインタ化による既存の test-rule 不一致（decision が条内容を持ち、テストは AGENTS.md 本文文字列を引き続き要求）。修正（テストを decision ポインタへ re-anchor、または AGENTS.md 直接記載の扱い変更）は正典 rules 側の変更・AGENTS.md write-protected・本項目承認範囲外 → 修正せず持ち帰り。本項目合格条件（pytest byte 照合項目）には影響なし（`test_canonical_executable_embeds_current_pages` は 2026-11-04 実測 PASSED）。
+
 
 ## 完了時 Memory Bank 操作
 
