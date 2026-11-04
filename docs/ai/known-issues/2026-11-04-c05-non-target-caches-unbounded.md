@@ -1,7 +1,7 @@
 # C-05 の上限実装は承認範囲 4 cache のみ（残 cache は unbounded のまま）
 
 **Date**: 2026-11-04
-**Status**: 観察（実測済み・2026-11-04）。判断反映（ユーザー承認 2026-11-04・`decisions/2026-11-04-recommendations-approved-execution.md`・`decisions/2026-11-04-observation-records-closure-approved.md`・`decisions/2026-11-04-remaining-residual-approval-split.md`）: 実測で有意な成長確認済み（下記）。`indexTopCache` の bounded 化は実施済み（単独 commit）。その他の残項目は実施承認として記録（canonical DB operational 確認・B-06 optional live baseline）。`noFullCache` は stale-only bounded memory limit 実装済み（cap 1024 entries・active entry protected・単独 commit・`docs/ai/tasks/2026-11-04-no-full-stale-only-bounded.md`）: cap 超過 insert 時に TTL 超過済み stale entry だけを掃除、TTL 内 active entry は protected（eviction しない）。別意味変更（hard cap で active entry まで eviction する方式＝C-08 意味変更）は未承認。`versions`/`versionAt`/`versionForceAt` 非触。
+**Status**: 観察（実測済み・2026-11-04）。判断反映（ユーザー承認 2026-11-04・`decisions/2026-11-04-recommendations-approved-execution.md`・`decisions/2026-11-04-observation-records-closure-approved.md`・`decisions/2026-11-04-remaining-residual-approval-split.md`）: 実測で有意な成長確認済み（下記）。`indexTopCache` の bounded 化は実施済み（単独 commit）。残項目の処理（`docs/ai/tasks/2026-11-04-c05-residual-verification.md`・2026-11-04 実施）: 正典 DB operational 確認は**確認済み**（下記実測）。`versions`/`versionAt`/`versionForceAt` は call site 依存で実質 bounded（code 変更なし・記録のみで締）。B-06 optional live 200 baseline は**未確認**（承認上限 1 回呼出しで HTTP 404）。`noFullCache` は stale-only bounded memory limit 実装済み（cap 1024 entries・active entry protected・単独 commit・`docs/ai/tasks/2026-11-04-no-full-stale-only-bounded.md`）: cap 超過 insert 時に TTL 超過済み stale entry だけを掃除、TTL 内 active entry は protected（eviction しない）。別意味変更（hard cap で active entry まで eviction する方式＝C-08 意味変更）は未承認。`versions`/`versionAt`/`versionForceAt` 非触。
 **Backlog**: assess-20261103-1220
 
 ## 現象
@@ -25,6 +25,12 @@ scratch: `docs/ai/tmp/assess-20261103-1220/c05measure_test.go`（`go test -overl
 - `noFullCache`: K=2000 stale key insert → access 10 件のみ delete・残留 1990。window rotation（bucket 変更）で old-window stale key は二度と access されず残留（1991）。上限量なし。
 
 反映（実施済み・単独 commit・commit 参照＝本項目 commit・hash は board RESULT 報告）: 上記の実測で有意な成長を確認し、親判断（承認 2026-11-04）により `indexTopCache` の bounded 化を実施。cap = 構造同一 cache（`indexNodeCache`: bnode entry・entrySize = `maxNodeSize`・topCacheTTL）の既存 convention 値 1024 entries / 1 MB。`hitomi.go` へ `entrySize()`/`lastAccessed()`・`putIndexTopCacheLocked`・既定 cap 追加、`searchindex.go` の `indexTopNodeCached`（insert 経由化＋hit 時 lastAccess 更新の承認された 2 箇所のみ）。テスト固定 `TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit`。変更後実測 N=1200 → len 1024（cap）・bytes 475,136 で bounded 確認。`noFullCache` は C-08 規則接触のため非触・別承認条件のまま維持（stale 残留 1990 の記録は上）。`versions`/`versionAt`/`versionForceAt` 非触。
+
+## 残項目の反映（2026-11-04・code 変更なし）
+
+- **正典 DB operational 確認 → 確認済み**: `docs/ai/tmp/assess-20261103-1220/c05_canonical_db_check.py`（`sqlite3` read-only `mode=ro`・server 起動なし・DB 非変更）で正典 `hitomi.db` を実測。`PRAGMA user_version` = **5**、`scan_cache` 列 = `sha256, verdict, engine, threat_name, detail, cached_at, size, mtime`（`size`/`mtime` あり）、rows = **0**（既存行削除なし）。第10/11/12実行の「未確認運用点」は解消。
+- **`versions`/`versionAt`/`versionForceAt` → 実質 bounded（記録のみで締）**: key は `field` ぶん（`app/searchindex.go:159-208`・上限宣言・eviction なし）。本番 call site は `"galleries"` のみ（`app/searchhtml.go:178`・`app/searchindex.go:413`）→ 実運用で key 集合は 1。`indexDir` の `default: "tagindex"`（`app/searchindex.go:146-147`）は任意 field を受け入れるため、将来 field 呼び出しを増やすと key が grow しうる（bounded は call site 依存で宣言ではない）。防御 cap 追加は承認なしでは実施しない。
+- **B-06 optional live 200 baseline → 未確認**: `docs/ai/tmp/assess-20261103-1220/b06_live_baseline_20261104.py`（key は `scratch/virustotal-api.key` から env へ・key 文字列を記録しない・hash-only・upload なし）で承認上限どおり 1 回呼出し。hash `27545216921b2559534379243d19446661534481345149624164814776710798`（EICAR）→ `http_status=404`・`stats` 空・`results_entries=0`。key 有効性は未確認（追加呼出しなし）。B-06 の code 分岐（`7369066`）は mock テストで固定済みで、live 基線は optional 条件のまま。解決には追加 1 回の承認が必要。
 
 ## 影響
 

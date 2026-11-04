@@ -209,6 +209,14 @@
 
 第12実行完了。残項目: `noFullCache` bounded 化のみ（実測済み・C-08 接触のため実施に別承認を要る・低優先）。未確認運用点: 正典 `hitomi.db`（v4→v5）の実揃えは次回 canonical server 起動時の `ensureSchema` で確認。
 
+## 第13実行（2026-11-04・C-05 known-issues 残項目の反映・実施）
+
+- code 変更なし（記録＋読み取り実測＋外部 API 1 回）。タスク `docs/ai/tasks/2026-11-04-c05-residual-verification.md`。
+- **正典 DB operational 確認 → 確認済み**（`docs/ai/tmp/assess-20261103-1220/c05_canonical_db_check.py`・read-only `mode=ro`・server 起動なし・DB 非変更）: `user_version=5`、`scan_cache` 列に `size`/`mtime` あり、rows 0（既存行削除なし）。第10〜12実行の未確認運用点解消。
+- **`versions`/`versionAt`/`versionForceAt` → 実質 bounded・記録のみで締**: 本番 call site は `"galleries"` のみ（`app/searchhtml.go:178`・`app/searchindex.go:413`）で key 集合 1。上限宣言なし・`indexDir` default が任意 field を許すため将来 field 追加で grow ありうる（`app/searchindex.go:146-147`）。code 変更は承認なしで実施しない。
+- **B-06 optional live 200 baseline → 未確認のまま**: 承認上限どおり 1 回呼出し（`docs/ai/tmp/assess-20261103-1220/b06_live_baseline_20261104.py`・key は `scratch/virustotal-api.key` から env へ・key 文字列非記録・hash-only・upload なし）。EICAR hash `27545216921b2559534379243d19446661534481345149624164814776710798` → `http_status=404`（200 形状を未取得・key 有効性未確認）。追加呼出しには承認が必要。
+- known-issues `2026-11-04-c05-non-target-caches-unbounded.md` の Status を「部分解決・残1点未確認」へ更新し、上記 3 点を反映。B-06 live 基線が未確認のため archive はしない。
+
 ## Verification
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
