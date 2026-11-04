@@ -310,12 +310,31 @@ func writeImage(w http.ResponseWriter, format string, data []byte, cacheState st
 	w.Write(data)
 }
 
-func (v *viewer) serveStoredImage(w http.ResponseWriter, format string, path string, cacheState string) bool {
-	data, err := os.ReadFile(path)
+// serveStoredImage は保存済み画像を全readせず、stat + stream（http.ServeContent 相当）で返す。
+// headers（content-type・cache-control・x-cache・cross-origin-resource-policy）は従来通り。
+// ETag と Last-Modified は ServeContent が stat の modtime/size から生成し、If-None-Match/If-Modified-Since → 304、
+// Range → 206・Content-Range・Accept-Ranges を返す。UI は cache: "no-store" fetch のため 304 を発火させない。
+// cache 書き込み経路（temp+rename・magic 照合）には触れない。full actual pixels 判定基準にも影響しない。
+func (v *viewer) serveStoredImage(w http.ResponseWriter, r *http.Request, format string, path string, cacheState string) bool {
+	info, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
-	writeImage(w, format, data, cacheState)
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	setImageHeaders(w, format)
+	if cacheState == "tn" {
+		w.Header().Set("cache-control", "no-store")
+	} else {
+		w.Header().Set("cache-control", "private, max-age=604800")
+	}
+	w.Header().Set("x-cache", cacheState)
+	w.Header().Set("etag", fmt.Sprintf(`"%x-%x"`, info.ModTime().Unix(), info.Size()))
+	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
 	return true
 }
 
@@ -455,7 +474,7 @@ func (v *viewer) serveFile(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = imageFormat(v.cfg)
 	}
-	if !v.serveStoredImage(w, format, full, "local") {
+	if !v.serveStoredImage(w, r, format, full, "local") {
 		http.Error(w, "not downloaded: "+r.PathValue("name"), http.StatusNotFound)
 	}
 }
@@ -699,7 +718,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	variant := TNVariantSuffix(r.URL.Query().Get("variant"))
 
 	thumbCachePath, thumbCacheErr := safeThumbnailCachePath(v.cacheRoot, hash, format, variant)
-	if thumbCacheErr == nil && v.serveStoredImage(w, format, thumbCachePath, "tn-cache") {
+	if thumbCacheErr == nil && v.serveStoredImage(w, r, format, thumbCachePath, "tn-cache") {
 		return
 	}
 
@@ -765,7 +784,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cachePath, cacheErr := safeCachePath(v.cacheRoot, hash, format)
-	if cacheErr == nil && v.serveStoredImage(w, format, cachePath, "cache") {
+	if cacheErr == nil && v.serveStoredImage(w, r, format, cachePath, "cache") {
 		return
 	}
 
@@ -861,7 +880,7 @@ func (v *viewer) serveLocalImage(w http.ResponseWriter, r *http.Request, hash st
 	if err != nil {
 		return false
 	}
-	return v.serveStoredImage(w, format, full, "local")
+	return v.serveStoredImage(w, r, format, full, "local")
 }
 
 func (v *viewer) read(w http.ResponseWriter, r *http.Request) {

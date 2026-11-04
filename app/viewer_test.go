@@ -389,6 +389,82 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	}
 }
 
+func TestServeStoredImageStreamsConditionalResponses(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	calls := 0
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		return nil, errors.New("stored image hit must not call network")
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("x", 2048)
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, sampleHash+".webp"), []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	if rec.Code != http.StatusOK || rec.Body.Len() != 2048 || rec.Header().Get("x-cache") != "cache" {
+		t.Fatalf("stored image plain GET: code %d bodylen %d x-cache %q", rec.Code, rec.Body.Len(), rec.Header().Get("x-cache"))
+	}
+	if rec.Header().Get("content-type") != "image/webp" || rec.Header().Get("cross-origin-resource-policy") != "same-origin" || rec.Header().Get("cache-control") != "private, max-age=604800" {
+		t.Errorf("stored image headers must be preserved: content-type %q cross-origin %q cache-control %q", rec.Header().Get("content-type"), rec.Header().Get("cross-origin-resource-policy"), rec.Header().Get("cache-control"))
+	}
+	if rec.Header().Get("accept-ranges") != "bytes" {
+		t.Errorf("stored image should advertise Accept-Ranges: got %q", rec.Header().Get("accept-ranges"))
+	}
+	etag := rec.Header().Get("etag")
+	if etag == "" {
+		t.Fatal("stored image should provide ETag")
+	}
+
+	req := httptest.NewRequest("GET", "/api/image/"+sampleHash, nil)
+	req.Header.Set("If-None-Match", etag)
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("etag") != etag || rec.Header().Get("x-cache") != "cache" || rec.Header().Get("cache-control") != "private, max-age=604800" {
+		t.Fatalf("conditional 304: code %d bodylen %d etag %q x-cache %q cache-control %q", rec.Code, rec.Body.Len(), rec.Header().Get("etag"), rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
+	}
+
+	req = httptest.NewRequest("GET", "/api/image/"+sampleHash, nil)
+	req.Header.Set("Range", "bytes=0-1023")
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent || rec.Body.Len() != 1024 || rec.Body.String() != payload[:1024] || rec.Header().Get("content-range") != "bytes 0-1023/2048" || rec.Header().Get("content-length") != "1024" {
+		t.Fatalf("range 206: code %d bodylen %d body %q content-range %q content-length %q", rec.Code, rec.Body.Len(), rec.Body.String(), rec.Header().Get("content-range"), rec.Header().Get("content-length"))
+	}
+	if rec.Header().Get("x-cache") != "cache" {
+		t.Errorf("206 must keep x-cache cache state: got %q", rec.Header().Get("x-cache"))
+	}
+	if calls != 0 {
+		t.Errorf("stored image serving must not call network: calls %d", calls)
+	}
+
+	// local hit keeps x-cache local semantics with conditional responses
+	galleryRoot := filepath.Join(v.root, "Galleries", "4252697")
+	if err := os.MkdirAll(galleryRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(galleryRoot, sampleHash+".webp"), []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/files/4252697/"+sampleHash+".webp", nil))
+	localETag := rec.Header().Get("etag")
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "local" || rec.Header().Get("accept-ranges") != "bytes" || localETag == "" {
+		t.Fatalf("local route conditional response: code %d x-cache %q accept-ranges %q etag %q", rec.Code, rec.Header().Get("x-cache"), rec.Header().Get("accept-ranges"), localETag)
+	}
+	req = httptest.NewRequest("GET", "/files/4252697/"+sampleHash+".webp", nil)
+	req.Header.Set("If-None-Match", localETag)
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotModified || rec.Header().Get("x-cache") != "local" {
+		t.Errorf("local conditional 304: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
+	}
+}
+
 func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	v.client.cfg.UseLiveGG = false
