@@ -21,6 +21,9 @@ type searchState struct {
 	orderApplied bool
 }
 
+// normalizeSearchTerm は hitomi 正典の `_` → space（results.js:30、search.js:653）の mirror。
+// D-10 正典確認 2026-11-04: galleriesindex の index key は space 形（live 実測 `big breasts`
+// key 92ef4857 は存在し `big_breasts` key 95e737a6 は不在）。hashTerm へ渡す term は space 形。
 func normalizeSearchTerm(term string) string {
 	return strings.ToLower(strings.ReplaceAll(term, "_", " "))
 }

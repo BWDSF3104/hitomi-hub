@@ -3,5 +3,4 @@ docs/ai/tasks/2026-11-01-scan-layer-move.md	進行中	残りは backlog の P2�
 docs/ai/tasks/2026-11-02-external-code-review-findings.md	進行中	Strict UI actual physical confirmation completed for `openGallery` background reset. manual full-image retry remains low priority until reproducible actual UI `errorDone > 0` entry.
 docs/ai/tasks/2026-11-03-a12-sha256-every-scan.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-b04-acquisition-title-sanitize.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
-docs/ai/tasks/2026-11-03-d10-plain-term-underscore.md	進行中	引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
 docs/ai/tasks/2026-11-03-implementation-execution-plan.md	進行中	2026-11-04 判断承認反映済み（AGENTS.md Code Scope 実態更新・D-07 clean clone 実測解決・P2 #8 対象外明示・#9 用途定義・CRLF harness known-issue）。第8実行は新セッションで② A-11→A-09（方式確定済み）→③ hitomi準拠確認・B-06/B-07 parity・B-04/A-12・P2・CRLF harness（低優先）

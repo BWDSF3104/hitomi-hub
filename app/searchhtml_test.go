@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -235,6 +236,76 @@ func TestSearchHTMLPlainTermIgnoresLangPerCanonicalHitomi(t *testing.T) {
 		if !strings.Contains(u, "galleriesindex") {
 			t.Fatalf("plain term must descend galleriesindex only: %v", urls)
 		}
+	}
+}
+
+func TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi(t *testing.T) {
+	// D-10（正典確認 2026-11-04・実測）: hitomi results.js:30（`term = term.replace(/_/g, ' ')`）と
+	// search.js:653（`get_galleryids_for_query` plain term 分岐で key = hash_term(query) は 674 行）は
+	// `_` を space へ直してから hash する。live galleriesindex（version 1793765075）は `big breasts` の
+	// space 形 key 92ef4857（1 件）を持つが underscore 形 key 95e737a6 は不在 → index key は space 型。
+	// アプリ現挙動（normalizeSearchTerm）は正典一致。挙動変更なしでこの対応をテストで固定する。
+	spaceKey := hashTerm("big breasts")
+	underscoreKey := hashTerm("big_breasts")
+	if string(spaceKey) == string(underscoreKey) {
+		t.Fatal("fixture must distinguish the two key forms")
+	}
+	slots := []struct {
+		key    []byte
+		offset int64
+		ids    []uint32
+	}{
+		{spaceKey, 1000, []uint32{10, 20, 30}},
+		{hashTerm("big"), 2000, []uint32{10, 20, 30, 40}},
+		{hashTerm("breasts"), 3000, []uint32{20, 30, 50}},
+	}
+	sort.Slice(slots, func(i, j int) bool { return compareKey(slots[i].key, slots[j].key) < 0 })
+
+	keys := [][]byte{}
+	datas := [][2]int64{}
+	byOffset := map[int64][]uint32{}
+	for _, s := range slots {
+		keys = append(keys, s.key)
+		datas = append(datas, [2]int64{s.offset, int64(4 + 4*len(s.ids))})
+		byOffset[s.offset] = s.ids
+	}
+	leaf := beNode(len(slots), keys, datas, make([]uint64, btreeOrder+1))
+
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793765075"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		default:
+			ids := byOffset[rng[0]]
+			out := []byte{byte(len(ids) >> 24), byte(len(ids) >> 16), byte(len(ids) >> 8), byte(len(ids))}
+			return append(out, beIDs(ids)...), nil
+		}
+	}}
+
+	if got := normalizeSearchTerm("big_breasts"); got != "big breasts" {
+		t.Fatalf("results.js:30 normalize must map underscore to space: %q", got)
+	}
+
+	// `_` を含む 1 term は space 形 key で降下する。underscore 形 key は live index に不在（実測）なので、
+	// 正典とちがえる実装なら total 0 になる。
+	ids, total, err := c.SearchHTML("big_breasts", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 10 || ids[1] != 20 || ids[2] != 30 {
+		t.Fatalf("underscore term must descend the space-form key: total %d ids %v", total, ids)
+	}
+
+	// results.js:17 の whitespace split は `_` 置換と別工程。`big breasts` は 2 term の lookup（共通部分）
+	// で、`big_breasts`（1 term）と同じ phrase でも集合が違う（live 実測: 473712 vs 1）。
+	ids2, total2, err := c.SearchHTML("big breasts", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total2 != 2 || len(ids2) != 2 || ids2[0] != 20 || ids2[1] != 30 {
+		t.Fatalf("whitespace terms must stay separate lookups: total %d ids %v", total2, ids2)
 	}
 }
 
