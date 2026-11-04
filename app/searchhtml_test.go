@@ -155,15 +155,24 @@ func TestSearchCacheSizeCapBoundsMemory(t *testing.T) {
 		}
 	}
 
+	// Windows clock granularity can tie same-instant timestamps and make LRU
+	// eviction order nondeterministic. Fix access order explicitly after each
+	// insert so the eviction target no longer depends on a tie. The size cap
+	// itself (each entry 5 ids * 8 = 40 bytes against cap 40) and which entry
+	// survives are unchanged; the assertion below still verifies cap bounds memory.
+	base := time.Now()
 	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
+	c.searchCache["tag|female:yuri|all"].lastAccess = base.Add(-30 * time.Second)
 	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "male:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
+	c.searchCache["tag|male:yuri|all"].lastAccess = base.Add(-20 * time.Second)
 	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:cosplay", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
+	c.searchCache["tag|female:cosplay|all"].lastAccess = base.Add(-10 * time.Second)
 	if c.searchCacheBytes > c.searchCacheMaxBytes {
 		t.Fatalf("size cap must keep memory below cap: bytes %d", c.searchCacheBytes)
 	}
