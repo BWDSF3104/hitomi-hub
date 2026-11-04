@@ -121,6 +121,95 @@ func TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 }
 
+func TestNoFullCacheCleansExpiredEntriesWhenOverEntryLimit(t *testing.T) {
+	if defaultNoFullCacheMaxEntries != 1024 {
+		t.Fatalf("approved default entry limit must be 1024: got %d", defaultNoFullCacheMaxEntries)
+	}
+
+	c := &Client{cfg: defaultHitomiConfig(), noFullCacheMaxEntries: 4}
+	c.noFullCache = make(map[string]time.Time)
+	gg := snapshotGG()
+	base := time.Now()
+	key := func(hash string) string { return negativeNoFullKey(hash, "webp", gg) }
+
+	// stale entry（TTL 超過済み）below the cap must not be cleaned by insert.
+	c.noFullCache[key("h1")] = base.Add(-negativeNoFullCacheTTL - time.Second)
+	c.noFullCache[key("h2")] = base.Add(-negativeNoFullCacheTTL - 2*time.Second)
+	c.rememberNegativeNoFull("h3", "webp", gg)
+	if len(c.noFullCache) != 3 {
+		t.Fatalf("insert at or below cap must not clean: len %d", len(c.noFullCache))
+	}
+
+	// canUseNegativeNoFull TTL hit 意味不変: expired entry は hit 時 delete される。
+	if c.canUseNegativeNoFull("h1", "webp", gg) {
+		t.Fatal("expired entry must not be a TTL hit")
+	}
+	if _, ok := c.noFullCache[key("h1")]; ok {
+		t.Error("expired entry must be deleted on TTL hit")
+	}
+
+	// re-add h1 stale, then cross the cap via insert: only stale keys are cleaned.
+	c.noFullCache[key("h1")] = base.Add(-negativeNoFullCacheTTL - 3*time.Second)
+	c.rememberNegativeNoFull("h4", "webp", gg)
+	if len(c.noFullCache) != 4 {
+		t.Fatalf("stale entries must survive until cap is crossed by insert: len %d", len(c.noFullCache))
+	}
+	c.rememberNegativeNoFull("h5", "webp", gg)
+	if len(c.noFullCache) != 3 {
+		t.Fatalf("stale-only cleaning over cap should leave only active entries: len %d", len(c.noFullCache))
+	}
+	for _, hash := range []string{"h1", "h2"} {
+		if _, ok := c.noFullCache[key(hash)]; ok {
+			t.Errorf("stale entry %s must be cleaned when entry limit is crossed", hash)
+		}
+	}
+	for _, hash := range []string{"h3", "h4", "h5"} {
+		if _, ok := c.noFullCache[key(hash)]; !ok {
+			t.Errorf("active entry %s must not be evicted by stale-only cleaning", hash)
+		}
+	}
+
+	// default cap 1024 動作（C-05 実測の stale 残留相当）: cap 超過 insert で stale 一掃。
+	c2 := &Client{cfg: defaultHitomiConfig()}
+	c2.noFullCache = make(map[string]time.Time)
+	for i := 0; i < 1024; i++ {
+		c2.noFullCache[negativeNoFullKey(strconv.Itoa(i), "webp", gg)] = base.Add(-negativeNoFullCacheTTL - time.Duration(i+1)*time.Second)
+	}
+	c2.rememberNegativeNoFull("trigger", "webp", gg)
+	if len(c2.noFullCache) != 1 {
+		t.Fatalf("default cap 1024 must clean stale residue on over-cap insert: len %d", len(c2.noFullCache))
+	}
+	if !c2.canUseNegativeNoFull("trigger", "webp", gg) {
+		t.Error("active entry must survive default cap stale-only cleaning")
+	}
+}
+
+func TestNoFullCacheDoesNotEvictActiveEntriesWhenOverEntryLimit(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig(), noFullCacheMaxEntries: 2}
+	gg := snapshotGG()
+	key := func(hash string) string { return negativeNoFullKey(hash, "webp", gg) }
+
+	for _, hash := range []string{"h1", "h2", "h3"} {
+		c.rememberNegativeNoFull(hash, "webp", gg)
+	}
+	// active protected, no active eviction: cap 超過でも active entry は消えない。
+	if len(c.noFullCache) != 3 {
+		t.Fatalf("active entries over entry limit must be protected: len %d", len(c.noFullCache))
+	}
+	for _, hash := range []string{"h1", "h2", "h3"} {
+		if _, ok := c.noFullCache[key(hash)]; !ok {
+			t.Errorf("active entry %s must not be evicted when over entry limit", hash)
+		}
+	}
+
+	// canUseNegativeNoFull TTL hit 意味不変（cap 超過後も active entry は hit）。
+	for _, hash := range []string{"h1", "h2", "h3"} {
+		if !c.canUseNegativeNoFull(hash, "webp", gg) {
+			t.Errorf("active entry %s must remain a TTL hit", hash)
+		}
+	}
+}
+
 func TestCanonicalGGRuleComposition(t *testing.T) {
 	// mapping 方向は固定（0 → `w1`/`atn`、1 → `w2`/`btn`）。polarity は窓ごとに rotation するため
 	// faithful parse が保持する。両構造で同じ value の w1/w2（atn/btn）が反転することを固定する。

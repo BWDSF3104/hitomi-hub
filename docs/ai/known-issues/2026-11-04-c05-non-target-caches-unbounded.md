@@ -1,7 +1,7 @@
 # C-05 の上限実装は承認範囲 4 cache のみ（残 cache は unbounded のまま）
 
 **Date**: 2026-11-04
-**Status**: 観察（実測済み・2026-11-04）。判断反映（ユーザー承認 2026-11-04・`decisions/2026-11-04-recommendations-approved-execution.md`・`decisions/2026-11-04-observation-records-closure-approved.md`）: 実測で有意な成長確認済み（下記）。`indexTopCache` の bounded 化は実施予定（承認待ち・下記）。`noFullCache` は別承認条件のまま維持（C-08 negative cache 規則接触）。`versions`/`versionAt`/`versionForceAt` 非触。
+**Status**: 観察（実測済み・2026-11-04）。判断反映（ユーザー承認 2026-11-04・`decisions/2026-11-04-recommendations-approved-execution.md`・`decisions/2026-11-04-observation-records-closure-approved.md`・`decisions/2026-11-04-remaining-residual-approval-split.md`）: 実測で有意な成長確認済み（下記）。`indexTopCache` の bounded 化は実施済み（単独 commit）。その他の残項目は実施承認として記録（canonical DB operational 確認・B-06 optional live baseline）。`noFullCache` は stale-only bounded memory limit 実装済み（cap 1024 entries・active entry protected・単独 commit・`docs/ai/tasks/2026-11-04-no-full-stale-only-bounded.md`）: cap 超過 insert 時に TTL 超過済み stale entry だけを掃除、TTL 内 active entry は protected（eviction しない）。別意味変更（hard cap で active entry まで eviction する方式＝C-08 意味変更）は未承認。`versions`/`versionAt`/`versionForceAt` 非触。
 **Backlog**: assess-20261103-1220
 
 ## 現象

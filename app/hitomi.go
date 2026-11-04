@@ -21,6 +21,14 @@ const hitomiDomain = "gold-usergeneratedcontent.net"
 const galleriesPerPage = 25
 const negativeNoFullCacheTTL = 5 * time.Minute
 
+// stale-only bounded memory limit（ユーザー承認方針 2026-11-04・
+// decisions/2026-11-04-remaining-residual-approval-split.md）。cap は entry 数だけ。
+// active entry（TTL 内）は protected: cap 超過でも eviction しない（C-08 の TTL 内
+// negative cache hit 保証を変えない）。insert 後に cap 超過のとき、TTL 超過済みの
+// stale key（二度と hit されない項目）だけを掃除する。hard cap で active entry まで
+// 消す方式は C-08 意味変更として別途承認が必要（未承認）。
+const defaultNoFullCacheMaxEntries = 1024
+
 type HitomiConfig struct {
 	MinIntervalMS int    `json:"min_interval_ms"`
 	ImageMinIntervalMS int `json:"image_min_interval_ms"`
@@ -167,6 +175,7 @@ type Client struct {
 	indexCacheMu    sync.Mutex
 	noFullCache     map[string]time.Time
 	noFullCacheMu   sync.Mutex
+	noFullCacheMaxEntries int
 }
 
 // put helpers must be called with the owning cache mutex held.
@@ -221,6 +230,25 @@ func imageFetchKey(hash, format string, gg GG) string {
 	return negativeNoFullKey(hash, format, gg)
 }
 
+// cleanStaleNoFullCacheLocked must be called with noFullCacheMu held.
+// It only cleans stale entries（TTL 超過済み・二度と hit されない項目）when the entry
+// count is over the cap. Active entries（TTL 内）are protected and never evicted here.
+func (c *Client) cleanStaleNoFullCacheLocked() {
+	maxEntries := c.noFullCacheMaxEntries
+	if maxEntries <= 0 {
+		maxEntries = defaultNoFullCacheMaxEntries
+	}
+	if len(c.noFullCache) <= maxEntries {
+		return
+	}
+	now := time.Now()
+	for key, storedAt := range c.noFullCache {
+		if now.Sub(storedAt) >= negativeNoFullCacheTTL {
+			delete(c.noFullCache, key)
+		}
+	}
+}
+
 func (c *Client) canUseNegativeNoFull(hash, format string, gg GG) bool {
 	key := negativeNoFullKey(hash, format, gg)
 
@@ -263,6 +291,7 @@ func (c *Client) rememberNegativeNoFull(hash, format string, gg GG) {
 		c.noFullCache = make(map[string]time.Time)
 	}
 	c.noFullCache[key] = time.Now()
+	c.cleanStaleNoFullCacheLocked()
 }
 
 func (c *HitomiConfig) UnmarshalJSON(data []byte) error {
