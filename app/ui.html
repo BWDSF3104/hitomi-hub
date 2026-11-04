@@ -1613,7 +1613,6 @@ document.getElementById("fav").addEventListener("click", async () => {
 document.getElementById("complete").addEventListener("click", async () => {
   if (!current.id) return;
   await post("/api/read", { gallery_id: current.id, page: current.page, complete: true });
-  current.favorite = current.favorite;
   syncReadStateCache(current.id, { last_page: current.page, fully_read: 1 });
   await showLists();
 });

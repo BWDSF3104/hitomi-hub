@@ -15,8 +15,6 @@ import (
 
 var scanTargets = map[string]bool{"pdf": true, "cbz": true, "zip": true}
 
-var imageExts = map[string]bool{"webp": true, "avif": true, "png": true, "jpg": true, "jpeg": true, "gif": true, "bmp": true}
-
 var execExt = map[string]bool{
 	"exe": true, "dll": true, "scr": true, "jar": true, "js": true, "vbs": true,
 	"ps1": true, "bat": true, "cmd": true, "com": true, "msi": true, "lnk": true,

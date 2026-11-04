@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -504,22 +503,6 @@ func ThumbnailURL(hash, format string, gg GG) string {
 	return ThumbnailURLVariant(hash, format, "bigtn", gg)
 }
 
-// fileExt は galleryinfo `name` の ext。tn path の format には使わない。
-func fileExt(name string) string {
-	i := strings.LastIndex(name, ".")
-	if i < 0 || i+1 >= len(name) {
-		return "webp"
-	}
-	ext := strings.ToLower(name[i+1:])
-	if ext == "jpeg" {
-		ext = "jpg"
-	}
-	if ext == "" {
-		return "webp"
-	}
-	return ext
-}
-
 // SanitizeTerm は hitomi の sanitize と同じ形（小文字化・空白を _・区切り文字を保持）
 func SanitizeTerm(term string) string {
 	return strings.ToLower(strings.ReplaceAll(term, " ", "_"))
@@ -649,92 +632,4 @@ func nozomiPath(area, tag, lang string) string {
 		path += url.PathEscape(area) + "/"
 	}
 	return path + url.PathEscape(tag+"-"+lang) + ".nozomi"
-}
-
-func nozomiURL(term, lang string) (string, error) {
-	area, tag, lang, err := nozomiPathParts(term, lang)
-	if err != nil {
-		return "", err
-	}
-	return "https://ltn." + hitomiDomain + nozomiPath(area, tag, lang), nil
-}
-
-// Search は nozomi（big-endian int32 の gallery ID 配列）を読む。page は 1 始まり
-func (c *Client) Search(term, lang string, page int) ([]int, error) {
-	if page < 1 {
-		page = 1
-	}
-	full, err := nozomiURL(term, lang)
-	if err != nil {
-		return nil, err
-	}
-	start := int64((page-1)*galleriesPerPage*4)
-	body, err := c.get(context.Background(), full, [2]int64{start, start + int64(galleriesPerPage*4) - 1})
-	if err != nil {
-		return nil, err
-	}
-	ids := []int{}
-	for i := 0; i+4 <= len(body); i += 4 {
-		ids = append(ids, int(binary.BigEndian.Uint32(body[i:i+4])))
-	}
-	return ids, nil
-}
-
-// SearchQuery は multi-term を term ごとに引いて共通部分にする（language: は lang に反映）。
-// 順序は最初の term の順序（nozomi は newest first）
-func (c *Client) SearchQuery(query, lang string, page int) ([]int, error) {
-	if page < 1 {
-		page = 1
-	}
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
-		return nil, errors.New("query has no term")
-	}
-	var ordered []int
-	languageOnly := true
-	for _, term := range terms {
-		if strings.HasPrefix(strings.ToLower(term), "language:") {
-			lang = strings.ToLower(strings.TrimPrefix(strings.ToLower(term), "language:"))
-			continue
-		}
-		languageOnly = false
-		ids, err := c.Search(term, lang, 1)
-		if err != nil {
-			return nil, err
-		}
-		if len(ids) == 0 {
-			return nil, nil
-		}
-		if ordered == nil {
-			ordered = ids
-			continue
-		}
-		set := map[int]bool{}
-		for _, id := range ids {
-			set[id] = true
-		}
-		next := []int{}
-		for _, id := range ordered {
-			if set[id] {
-				next = append(next, id)
-			}
-		}
-		ordered = next
-		if len(ordered) == 0 {
-			return nil, nil
-		}
-	}
-	if languageOnly {
-		return c.Search("language:"+lang, lang, page)
-	}
-	// 共通部分是 25 件/page の slice より後に適用される（nozomi の page は各 term の 1 page）
-	start := (page - 1) * galleriesPerPage
-	if start > len(ordered) {
-		return nil, nil
-	}
-	end := start + galleriesPerPage
-	if end > len(ordered) {
-		end = len(ordered)
-	}
-	return ordered[start:end], nil
 }

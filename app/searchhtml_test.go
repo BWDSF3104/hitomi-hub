@@ -7,6 +7,23 @@ import (
 	"time"
 )
 
+// fileExt は production 未使用（D-08）。テスト参照のためテスト側へ移動。
+// galleryinfo `name` の ext。tn path の format には使わない
+func fileExt(name string) string {
+	i := strings.LastIndex(name, ".")
+	if i < 0 || i+1 >= len(name) {
+		return "webp"
+	}
+	ext := strings.ToLower(name[i+1:])
+	if ext == "jpeg" {
+		ext = "jpg"
+	}
+	if ext == "" {
+		return "webp"
+	}
+	return ext
+}
+
 func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 	fetches := 0
 	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {

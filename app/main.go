@@ -33,7 +33,6 @@ type Limits struct {
 	YrCpuLimit       int   `json:"yr_cpu_limit"`
 	YrSkipLarger     int64 `json:"yr_skip_larger"`
 	YrFastScan       bool  `json:"yr_fast_scan"`
-	MaxRequestsPerMinute int `json:"-"`
 	MaxDailyRequests int   `json:"-"`
 }
 
@@ -110,7 +109,6 @@ func (l *Limits) UnmarshalJSON(data []byte) error {
 		YrCpuLimit           *int   `json:"yr_cpu_limit"`
 		YrSkipLarger         *int64 `json:"yr_skip_larger"`
 		YrFastScan           *bool  `json:"yr_fast_scan"`
-		MaxRequestsPerMinute *int   `json:"-"`
 		MaxDailyRequests     *int   `json:"-"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -140,9 +138,6 @@ func (l *Limits) UnmarshalJSON(data []byte) error {
 	}
 	if raw.YrFastScan != nil {
 		l.YrFastScan = *raw.YrFastScan
-	}
-	if raw.MaxRequestsPerMinute != nil {
-		l.MaxRequestsPerMinute = *raw.MaxRequestsPerMinute
 	}
 	if raw.MaxDailyRequests != nil {
 		l.MaxDailyRequests = *raw.MaxDailyRequests
