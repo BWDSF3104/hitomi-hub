@@ -2,7 +2,7 @@
 
 **Status**: 進行中（C 再測定未確認・A/B は再測定の証拠で閉）
 **Date**: 2026-11-05
-**Next Action**: 上流安定後 C 再試行（cold TN load・1 retry・gate 準守）。A cold load run 強化は任意（必要最小限）。B 閉済み
+**Next Action**: C 再測定未確認（上流502）。上流安定後 cold TN load・1 retry・gate 準守で再試行。A weak note 維持・B 閉済み。tsv 参照行は close 時削除済み
 
 ## 意図 / 背景
 
