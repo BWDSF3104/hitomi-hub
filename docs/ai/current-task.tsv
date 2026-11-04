@@ -1,1 +1,2 @@
 task_file	status	next_action
+docs/ai/tasks/2026-11-05-assess-20261105-0006-phase1-visible-priority.md	進行中	次段階（実装）へ引き継ぎ: 優先1・有効性「有効」（実測確定）。推奨=IO標準+takeNext優先選択（実行中昇格）。実装はリモートタスク発行済み（承認）
