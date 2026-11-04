@@ -1,8 +1,8 @@
 # Phase 2 実装 — 次ページのアイドル先読み（優先2・未開始）
 
-**Status**: 未開始（実装開始指示待ち）
+**Status**: 進行中（実装完了・合格条件1項目未達）
 **Date**: 2026-11-05
-**Next Action**: 実装未開始・明示的な実装開始指示待ち。Phase 1（優先1・app/search.html 共有）→本実装の順。推奨=client側スケジューラ（800msアイドル・並行度2・中断・5分クールダウン・マーカー query param）
+**Next Action**: conflict first card display 合格条件（baseline+1000ms）未達（remote 変動 +2169ms）。run C cold run の card 4304598 cache=1 異常は未解明（known-issues 候補）。次: remote 変動を排除した再測定か条件解釈のユーザー判断。commit/push 済み（本項目分のみ）。
 
 ## 意図 / 背景
 
@@ -14,11 +14,24 @@
 
 ## 調査結果 / 変更内容
 
-（記入）
+- `app/search.html`: scheduler block 追加（`PREFETCH_IDLE_MS = 800`・`PREFETCH_CONCURRENCY = 2`・`PREFETCH_COOLDOWN_MS = 300000`）。`api()` に `err.status = r.status`（429/5xx 判定用）。`runSearch()` で `searchCardsCompleted` フラグ管理＋idle アーム。`#search-next` hover/focus で即時発火、query input / gallery 開 / `visibilitychange` hidden / hashchange で中断、429/5xx で全体停止＋5分クールダウン（メモリのみ）。対象は page+1 のみ。`prefetchEligible` は saved query startup で false、submit で true。既存 submit handler の exact string（Phase 1 test 固定）は別 listener `prefetchEligible = true;` で維持。
+- `app/metrics.go`: `recordMarkerRequest(priority string)` → `recordMetric("marker."+priority, 0, 0, 0, 0)`。`app/viewer.go` の search/searchCard/thumbProxy handler で marker 記録（応答・cache 挙動不変）。
+- `app/metrics_test.go`: `TestBackgroundPrefetchMarkerRecordedSeparatelyInMetrics`（mock fetch `classifyFetchURL == "image"` で TN・それ以外 gallery、metrics gallery/image calls 1 ずつ、marker.background 2）。
+- `tests/search_prefetch_harness.mjs`（40 checks）＋ `tests/test_search_prefetch.py`。
+- design decision 参照: `docs/ai/decisions/2026-11-05-phase2-scheduler-scope.md`、`2026-11-05-phase2-marker-metrics-only.md`。作業前チェックの decision 読了: `2026-11-01-root-and-tn-display-correction-policy.md`、`2026-11-01-fast-nonblocking-viewer-policy.md`、`2026-11-01-ggset-generation-and-drift.md`。
 
 ## Verification
 
-（記入）
+- `go vet .` ✓ ／ `go test -count=1 -timeout 300s .` ✓（17.269s）／個別 guard tests（`TestStorageURLUsesFormatNotNameExt|TestCanonicalGGRuleComposition|TestThumbnailURLMatchesVerifiedTNPath|TestBackgroundPrefetchMarkerRecordedSeparatelyInMetrics`）✓。
+- `python -m pytest tests/ -v` 53 tests ✓（`test_search_prefetch.py`・`test_canonical_build_freshness.py` 含む）。node harness 40 checks ✓。Phase 1 harness（`TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit`）✓。
+- canonical build ✓（`output/hitomi-hub/hub.exe`）。正典 server run E（fresh root `p2_phase2_fresh5`・port 8732・fresh isolated tab）。
+- server direct: `X-Search-Timing: search=7530;record=36;json=1`・total 58523・ids 25（`total 0`・stale なし）。UI cold run（cacheDistribution miss 25・`X-Search-Timing` あり・`.side` 480px・`#query` 一意・resize なし・card 25=ids.length）→ direct と一致 ✓。baseline first card display 2321ms。
+- scheduler 発火: `female:yuri` p2 background fetch 25件（requests 114-138）、`furry` p2 background（requests 46-70）は新規検索開始で中断 ✓。
+- transition（p2→p3・prefetch 完了後 UI click）: 616ms ≤1000ms ✓・card fetch 0・metrics gallery/image delta 0 ✓（transition 中の metrics 増分は p4 prefetch 完了分）。
+- conflict（p8 cold 新規検索・background prefetch running）: `image` gate slot ≈33ms ≤1000ms ✓。first card display 4490ms（baseline+2169ms）→ baseline+1000ms 超過 ✗（remote image fetch ネットワーク ~4.3s が支配的。合格条件のこの項目は未達）。
+- 異常（未解決）: run C cold run の card `4304598` が `x-cache: cache`（cold root・原因不明）。run E cold run では再現なし（miss 25）。known-issues 候補として observation 記録。
+- Google Drive strict 確認: `I:\マイドライブ\kilo\2026-11-05-phase2-next-page-prefetch-implementation\` に `procedure-20261105.txt`、`runE_conflict_p8.png`、`phase2-baseline-search-page-20261105.png`、`phase2-baseline-next-page-on-click-20261105.png` 保存 ✓。
+- 総合: 合格条件のうち conflict first card display ≤ baseline+1000ms のみ未達（remote 変動由来・gate slot は ✓）。実装・static tests・transition・中断・クールダウン設計は合格。
 
 ## 完了時 Memory Bank 操作
 

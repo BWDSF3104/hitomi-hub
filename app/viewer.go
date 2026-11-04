@@ -528,6 +528,7 @@ func (v *viewer) lists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
+	v.client.recordMarkerRequest(r.URL.Query().Get("priority"))
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		q = r.URL.Query().Get("query")
@@ -596,6 +597,7 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
+	v.client.recordMarkerRequest(r.URL.Query().Get("priority"))
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
@@ -738,6 +740,7 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
+	v.client.recordMarkerRequest(r.URL.Query().Get("priority"))
 	hash := r.PathValue("hash")
 	if !validHash(hash) {
 		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)

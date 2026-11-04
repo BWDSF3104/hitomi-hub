@@ -64,6 +64,15 @@ func (c *Client) recordMetric(kind string, gateWait, network, decode, retrySleep
 	m.RetrySleepMS += int64(retrySleep / time.Millisecond)
 }
 
+// Phase 2 prefetch marker recording only: a marked request is counted under a separate
+// "marker.<priority>" kind. Gate intervals and fetch-kind accounting are unchanged.
+func (c *Client) recordMarkerRequest(priority string) {
+	if priority == "" {
+		return
+	}
+	c.recordMetric("marker."+priority, 0, 0, 0, 0)
+}
+
 func (c *Client) metricsSnapshot() map[string]any {
 	c.metricsMu.Lock()
 	defer c.metricsMu.Unlock()

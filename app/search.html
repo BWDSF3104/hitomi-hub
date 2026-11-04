@@ -84,7 +84,11 @@ const api = (p) => fetch(p, { cache: "no-store" }).then(async (r) => {
   const data = await r.json().catch(() => ({}));
   data._x_cache = r.headers.get("x-cache") || null;
   data._x_search_timing = r.headers.get("x-search-timing") || null;
-  if (!r.ok) throw new Error(data.error || (r.status + " " + p));
+  if (!r.ok) {
+    const err = new Error(data.error || (r.status + " " + p));
+    err.status = r.status;
+    throw err;
+  }
   return data;
 });
 const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": "application/json" },
@@ -438,6 +442,7 @@ async function showLists(searchGen) {
 }
 
 async function runSearch() {
+  searchCardsCompleted = false;
   const query = document.getElementById("query").value.trim();
   const lang = document.getElementById("lang").value.trim() || "all";
   const page = Number(document.getElementById("page").value || "1");
@@ -469,6 +474,8 @@ async function runSearch() {
     history.replaceState(null, "", searchRoute(query, page));
     await loadSearchCards(ids, searchGen);
     if (searchGen !== searchGeneration) return;
+    searchCardsCompleted = true;
+    armPrefetchIdle();
     await showLists(searchGen);
     setStatus(status, "検索完了・カード表示済み " + ids.length + "件");
   } catch (err) {
@@ -482,7 +489,101 @@ async function runSearch() {
   }
 }
 
+const PREFETCH_IDLE_MS = 800;
+const PREFETCH_CONCURRENCY = 2;
+const PREFETCH_COOLDOWN_MS = 300000;
+
+let prefetchCooldownUntil = 0;
+let prefetchInterruptFlag = false;
+let prefetchEligible = true;
+let searchCardsCompleted = false;
+let prefetchIdleTimer = null;
+let prefetchRunning = false;
+
+function prefetchMarkerUrl(path) {
+  return path + (path.indexOf("?") >= 0 ? "&" : "?") + "priority=background";
+}
+
+function handlePrefetchFailure(err) {
+  const status = Number(err && err.status) || 0;
+  if (status === 429 || status >= 500) {
+    prefetchCooldownUntil = Date.now() + PREFETCH_COOLDOWN_MS;
+  }
+  prefetchInterruptFlag = true;
+}
+
+function prefetchInterrupted(gen) {
+  return prefetchInterruptFlag || gen !== searchGeneration || Date.now() < prefetchCooldownUntil;
+}
+
+function interruptPrefetch() {
+  prefetchInterruptFlag = true;
+}
+
+function startPrefetchNow() {
+  if (!prefetchEligible || !searchCardsCompleted) return;
+  return runPrefetch();
+}
+
+function armPrefetchIdle() {
+  prefetchInterruptFlag = false;
+  if (prefetchIdleTimer) clearTimeout(prefetchIdleTimer);
+  prefetchIdleTimer = setTimeout(() => {
+    prefetchIdleTimer = null;
+    startPrefetchNow();
+  }, PREFETCH_IDLE_MS);
+}
+
+async function prefetchQueue(jobs, gen, onCard) {
+  const pending = jobs.slice();
+  async function worker() {
+    while (pending.length && !prefetchInterrupted(gen)) {
+      const job = pending.shift();
+      let card;
+      try {
+        card = await api(prefetchMarkerUrl(job));
+      } catch (err) {
+        handlePrefetchFailure(err);
+        return;
+      }
+      if (prefetchInterrupted(gen)) return;
+      if (onCard) onCard(card);
+    }
+  }
+  const workers = [];
+  const workerCount = Math.min(PREFETCH_CONCURRENCY, pending.length);
+  for (let i = 0; i < workerCount; i++) workers.push(worker());
+  await Promise.all(workers);
+}
+
+async function runPrefetch() {
+  const gen = searchGeneration;
+  if (prefetchRunning || prefetchInterrupted(gen) || !prefetchEligible) return;
+  const query = document.getElementById("query").value.trim();
+  const lang = document.getElementById("lang").value.trim() || "all";
+  const page = Number(document.getElementById("page").value || "1") + 1;
+  const total = Number(currentSearchTotal || 0);
+  if (!total || page > searchTotalPages(total)) return;
+  prefetchRunning = true;
+  try {
+    const data = await api(prefetchMarkerUrl("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25"));
+    if (prefetchInterrupted(gen)) return;
+    const ids = data.ids || (data.results || []).map((r) => r.id);
+    if (!ids.length) return;
+    const cards = [];
+    await prefetchQueue(ids.map((id) => "/api/search-card/" + id), gen, (card) => cards.push(card));
+    if (prefetchInterrupted(gen)) return;
+    await prefetchQueue(cards.map((card) => searchCardCoverSource(card)).filter(Boolean), gen);
+  } catch (err) {
+    handlePrefetchFailure(err);
+    return;
+  } finally {
+    prefetchRunning = false;
+  }
+}
+
 document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
+document.getElementById("search").addEventListener("submit", () => { prefetchEligible = true; });
 document.getElementById("search-prev").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(-1); });
 document.getElementById("search-next").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(1); });
 document.getElementById("saved-search").addEventListener("submit", async (e) => {
@@ -495,9 +596,22 @@ document.getElementById("saved-search").addEventListener("submit", async (e) => 
 });
 document.getElementById("lists-refresh").addEventListener("click", () => { showLists(); });
 
+// Phase 2 idle prefetch wiring: user activity that supersedes the next-page prefetch interrupts it. Failures are never rendered on screen.
+document.getElementById("query").addEventListener("input", () => { interruptPrefetch(); });
+document.getElementById("search-next").addEventListener("mouseenter", () => { startPrefetchNow(); });
+document.getElementById("search-next").addEventListener("focus", () => { startPrefetchNow(); });
+document.getElementById("results").addEventListener("click", (e) => {
+  if (e.target.closest("a")) interruptPrefetch();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) interruptPrefetch();
+});
+
 window.addEventListener("hashchange", async () => {
   const search = parseSearchHash(window.location.hash);
   if (search) {
+    // saved-query and routed searches must not trigger the idle prefetch; form search re-enables it
+    prefetchEligible = false;
     document.getElementById("query").value = search.query;
     document.getElementById("page").value = String(search.page);
     renderSearchPageStatus();
