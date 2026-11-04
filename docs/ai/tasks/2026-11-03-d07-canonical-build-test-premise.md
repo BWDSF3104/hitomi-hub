@@ -26,7 +26,7 @@
   - `python docs\ai\tmp\assess-20261103-1220\simulate_skip.py` → 実 exe 存在 True・模拟 path 存在 False、「skip branch fired -> canonical executable is missing (output/ is not tracked in git)」。go build 未実行。
   - `python -m pytest docs\ai\tmp\assess-20261103-1220\test_skip_sim.py -v` = 1 skipped（0.09 秒）。
 - 正典 exe 無損確認: 検証前 SHA256 90B06EA10DE1C0EA77576A2D576EDF02B3B2D02BDA646396E9B816F16674371D = 検証後同一。Go 変更なし、canonical build 現状維持（freshness test 通過で確認）。
-- 未確認: 実際の isolated clean clone 上での skip 発火は未実施（scratch 模拟での実測で代替）。
+- 未確認→解決（2026-11-04・ユーザー承認の追加確認・parent 実施）: 実 isolated clean clone（`git clone` → `C:\Users\fujim\AppData\Local\Temp\kilo\d07-clean-clone`）で `python -m pytest tests/ -v` → `test_canonical_executable_embeds_current_ui` **SKIPPED**（exe 不在・skip 発火確認）。全体 36 passed / 3 skipped / 1 failed。failed は本項目と無関係（`tests/test_strip_rebuild.py`・C-06 harness の `\n` exact 照合が clone checkout の CRLF 変換で失敗 → `docs/ai/known-issues/2026-11-04-strip-rebuild-harness-crlf-fragile-in-clean-clone.md`。正典 working tree では同一 harness 18 checks 全通過を同時刻実測で対照確認）。D-07 の合格条件（clean clone で skip）は成立。
 
 ## 完了時 Memory Bank 操作
 
