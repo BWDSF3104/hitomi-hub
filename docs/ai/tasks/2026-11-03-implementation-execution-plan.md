@@ -202,6 +202,13 @@
 
 第11実行完了（①`7369066`・②`35ece41`・③`6a18e14`・④`a998c1d`・全単独 commit push・機械確認済み）。判断項目クローズ: manual retry（control 基準確定）・gg polarity（premise 解消）・C-05 残件（記録のみ維持・観察）。残りは観察記録のみ（`2026-11-01-viewer-cdn-time-window-404`・`2026-11-03-search-api-response-field-ids`・`2026-11-04-c05-non-target-caches-unbounded`＝項目化は実測根拠条件）。未確認運用点: 正典 `hitomi.db`（v4→v5）の実揃えは次回 canonical server 起動時の `ensureSchema` で確認。
 
+## 第12実行（2026-11-04・観察記録締方向のユーザー承認後）
+
+- 親記録処理: `2026-11-01-viewer-cdn-time-window-404`（再観察不要・strict full pixel pass は control evidence（既存 cache hash `1/1`）で充足判定）と `2026-11-03-search-api-response-field-ids`（運用メモ）を解決・archive（decision `2026-11-04-observation-records-closure-approved.md`・commit `5f1f4f0` push 済み）。
+- ⑤ C-05 実測＋条件付き項目化 合格 commit `ec71af4`（push済み）。実測（mock・外部呼出しなし): `indexTopCache` rotation N→keys=N（120/200/300・eviction 0・shrink なし）＝有意成長確定。子 ASK に対する親判断: `app/searchindex.go` 2 箇所の承認範囲拡大を承認（`indexTopNodeCached` を `putIndexTopCacheLocked` 経由化＋hit 時 lastAccess 更新・意味変更なし）、cap `1024 entries / 1<<20 B`（C-05 convention 値・invented number なし）承認。実装後 bounded 確認（N=1200 → len 1024・bytes 475,136）。`noFullCache`（K=2000→残留 1990）は非触・記録のみ（C-08 規則接触・別承認）。テスト固定 `TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit`。機械確認: コミット存在 ✓／ツリー clean ✓／既知 issue 実測反映（Status 観察（実測済み））✓。go vet clean 1.044s、go test ok 17.398s、pytest 51 passed 9.21s、canonical exe 再 build（0.143s）。判断持ち帰りなし。
+
+第12実行完了。残項目: `noFullCache` bounded 化のみ（実測済み・C-08 接触のため実施に別承認を要る・低優先）。未確認運用点: 正典 `hitomi.db`（v4→v5）の実揃えは次回 canonical server 起動時の `ensureSchema` で確認。
+
 ## Verification
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
