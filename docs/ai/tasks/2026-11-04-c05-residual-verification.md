@@ -1,6 +1,6 @@
 # C-05残項目: 正典DB operational 確認＋B-06 optional live 200 baseline
 
-**Status**: 進行中（正典DB確認完了・B-06 live baseline 未確認）
+**Status**: 完了
 **Date**: 2026-11-04
 **Backlog**: assess-20261103-1220
 **Next Action**: 正典 EICAR hash 275a021b… への GET /api/v3/files/<hash> 1 回の承認待ち（200 が返れば key 有効性＋200 形状基線を確定）
@@ -44,13 +44,20 @@ scratch: `docs/ai/tmp/assess-20261103-1220/b06_live_baseline_20261104.py`（key 
 - 呼出しは 1 回のみ（承認上限）。key 有効性は本次第で**未確認**（404 は key 無効・権限・応答形状のいずれでも起こりうる）。追加呼出しなし。
 - code 変更なし。B-06 の分岐修正（`7369066`）は mock テストで固定済み（`TestVTEmptyResultsWithStatsTotalIsNotEvaluated`・`TestProcessFileVTEmptyResultsDoesNotStorePass`）で、live 基線は optional 条件。
 
-→ 判定: B-06 live 200 baseline は**未確認のまま**。
+→ 判定: B-06 live 200 baseline は**確認済み**（追加 3 回目 200。以下）。未確認として残す点は「key あり＋空 results＋stats.total>0」の live 実証のみ（mock テストで固定済み・live では選択不能）。
 
 追加実測（ユーザー承認 2026-11-04・追加 1 回・`docs/ai/tmp/assess-20261103-1220/b06_live_baseline_call2.py`・key 文字列非記録）:
 - `GET https://www.virustotal.com/api/v3/files?limit=1` → **HTTP 405 Method Not Allowed**（public API の list endpoint は不可）。key 有効性はこの呼出しでは確定できず・`data` なし。
 - local 証拠（network なし・`docs/ai/tmp/assess-20261103-1220/b06_eicar_hash_check.py`）: key 長 64（VT public API key の format と一致・key 内容自体は記録しない）。正典 EICAR（68 bytes・trailing newline なし）SHA256 = `275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f`。1 回目で使用した hash と**不一致**（trailing newline variante は `131f95c51cc819465fa1797f6ccacf9d494aaaff46fa3eac73ae63ffbdfd8267`）。
 - 推測（確認ではない）: key が無効なら VT は 403 を返す運用なので、1 回目の 404 は key 認証通過後の not-found である可能性が高い。
-- 追加 1 回の承認があれば `GET /api/v3/files/275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f` を実行し、200 が返れば key 有効性と 200 形状基線を同時に確定できる。key あり＋空 results の 200（B-06 の `not_evaluated` 分岐のlive 実証）は選択できないため mock テスト固定と区別して記録する。
+追加 3 回目（ユーザー承認 2026-11-04・`docs/ai/tmp/assess-20261103-1220/b06_live_baseline_call3.py`・hash-only・upload なし・key 文字列非記録）:
+
+- `GET https://www.virustotal.com/api/v3/files/275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f`（正典 EICAR）→ **HTTP 200**・`object_type=file`。
+- **key 有効性**: 200 が返ったことで有効と確認（VT は無効 key に 403 を返す運用）。
+- 200 応答形状（実測）: `attributes.last_analysis_results` = 75 entries（空でない）・`attributes.last_analysis_stats` はこの応答では**不在**（`stats.total` を読めず）。
+- code 読み取り（実測ではない・`app/vt.go:144-147`）: `last_analysis_stats` が map でない/不在なら `not_evaluated` を返す。よってこの live 200 応答は stats-missing 経路で `not_evaluated` になる。B-06 の対象条件（key あり＋**空 results**＋`stats.total>0`）はこの 1 回では選べず、mock テスト（`TestVTEmptyResultsWithStatsTotalIsNotEvaluated`・`TestProcessFileVTEmptyResultsDoesNotStorePass`）で固定したまま。
+
+判定: B-06 optional live 200 baseline は**確認済み**（200 形状・key 有効性）。empty results 条件は live で強制できないため mock 固定のまま区別して記録。code 変更なし。
 
 ## Verification
 
@@ -59,10 +66,11 @@ scratch: `docs/ai/tmp/assess-20261103-1220/b06_live_baseline_20261104.py`（key 
 - code 変更なし → `go vet .` / `go test` の再実行は該当なし（本項目は code 非変更）。
 - `python docs/ai/tmp/assess-20261103-1220/b06_live_baseline_call2.py` → `http_status=405`・calls_made=1（4 req/min 内・upload なし・key 記録なし）。
 - `python docs/ai/tmp/assess-20261103-1220/b06_eicar_hash_check.py` → 正典 EICAR SHA256 `275a021b…` と使用 hash の不一致を確認（network なし・key 内容非表示・長 64 のみ表示）。
+- `python docs/ai/tmp/assess-20261103-1220/b06_live_baseline_call3.py` → `http_status=200`・`object_type=file`・results 75・stats 不在（4 req/min 内・hash-only・key 記録なし）。
 - `grep -R "x-apikey\|VIRUSTOTAL_API_KEY" docs/ai` で key 文字列の記録不在を確認（scratch スクリプトは env 参照のみ）。
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（正典 `task_manager.py end` で実施 2026-11-04）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（`2026-11-04-c05-non-target-caches-unbounded.md` を archive へ移動済み）
+- [ ] `backlog.md` の完了項目を削除（該当する場合）— 該当なし（`assess-20261103-1220` は backlog.md に項目行なし）

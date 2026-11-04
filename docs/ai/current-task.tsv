@@ -1,2 +1,1 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-04-c05-residual-verification.md	進行中（正典DB確認完了・B-06 live baseline 未確認）	正典 EICAR hash 275a021b… への GET /api/v3/files/<hash> 1 回の承認待ち（200 が返れば key 有効性＋200 形状基線を確定）
