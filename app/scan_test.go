@@ -385,6 +385,34 @@ func TestVTUnanalyzedWithoutResultsIsNotEvaluated(t *testing.T) {
 	}
 }
 
+func TestVTEmptyResultsWithStatsTotalIsNotEvaluated(t *testing.T) {
+	// B-06 合格条件（Go 側・Python 参照実装 test_vt_empty_results_with_stats_total_is_not_evaluated と一致）:
+	// key あり＋空 results（stats.total>0）の 200 応答は key 有無判定ではなく empty results 基準で not_evaluated
+	db := openTestDB(t)
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 1, MaxDaily: 2, APIKey: "k"}
+	payload := map[string]any{"data": map[string]any{"attributes": map[string]any{
+		"last_analysis_stats":   map[string]any{"malicious": 0, "suspicious": 0, "harmless": 60, "undetected": 40, "total": 100},
+		"last_analysis_results": map[string]any{},
+	}}}
+	result := VTLookup(db, "abc", c, &RateState{}, func(url, key string) (map[string]any, int, error) {
+		return payload, 200, nil
+	})
+	if result.Status != "not_evaluated" {
+		t.Fatalf("empty results with stats.total must be not_evaluated, got %v", result)
+	}
+	if result.Positives != 0 {
+		t.Errorf("positives: got %d", result.Positives)
+	}
+	verdict, _, _, _, err := cacheLookup(db, "abc", scanCacheTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "" {
+		t.Errorf("empty results must not cache pass: got %s", verdict)
+	}
+}
+
 func TestVTV3RealAPIShapeWhenKeyAvailable(t *testing.T) {
 	key := os.Getenv("VIRUSTOTAL_API_KEY")
 	if key == "" {
@@ -497,6 +525,60 @@ func TestProcessFileVTFailureKeepsStructuralPassStatus(t *testing.T) {
 		if source != "structural" || recorded != "pass" {
 			t.Errorf("%s: recorded row: source %s status %s", tc.name, source, recorded)
 		}
+	}
+}
+
+func TestProcessFileVTEmptyResultsDoesNotStorePass(t *testing.T) {
+	// B-06 残件（Python 参照実装 test_process_file_vt_empty_results_does_not_store_pass と一致）:
+	// empty results → 構造 pass は維持・scan_cache に pass を保存しない・findings は api_error:not_evaluated
+	// Go 側は A-12 scan meta 行（verdict=''）を常に書くため、固定は「pass verdict 行なし」で行う
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 5, MaxDaily: 5, APIKey: "k"}
+	summary := map[string]int{}
+	fetch := func(url, key string) (map[string]any, int, error) {
+		return map[string]any{"data": map[string]any{"attributes": map[string]any{
+			"last_analysis_stats":   map[string]any{"malicious": 0, "suspicious": 0, "total": 100},
+			"last_analysis_results": map[string]any{},
+		}}}, 200, nil
+	}
+	sha, err := Sha256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := processFile(db, c, &RateState{}, dir, path, summary, fetch)
+	if status != "pass" {
+		t.Fatalf("structural pass must survive empty results, got %s", status)
+	}
+	verdict, _, _, _, err := cacheLookup(db, sha, scanCacheTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "" {
+		t.Errorf("empty results must not store pass in scan_cache: got %s", verdict)
+	}
+	var cacheCount int
+	if err := db.QueryRow("SELECT COUNT(1) FROM scan_cache WHERE verdict = 'pass'").Scan(&cacheCount); err != nil {
+		t.Fatal(err)
+	}
+	if cacheCount != 0 {
+		t.Errorf("scan_cache must not store pass verdict: got %d", cacheCount)
+	}
+	var detail string
+	if err := db.QueryRow("SELECT detail FROM findings WHERE rule = 'virustotal'").Scan(&detail); err != nil {
+		t.Fatalf("VT status finding missing: %v", err)
+	}
+	if detail != "api_error:not_evaluated" {
+		t.Errorf("finding detail: got %q want %q", detail, "api_error:not_evaluated")
+	}
+	var source, recorded string
+	if err := db.QueryRow("SELECT scan_source, scan_status FROM files").Scan(&source, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if source != "structural" || recorded != "pass" {
+		t.Errorf("file row: source %s status %s", source, recorded)
 	}
 }
 

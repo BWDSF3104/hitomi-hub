@@ -146,8 +146,10 @@ func VTLookup(db dbExec, sha string, cfg Config, state *RateState, fetch FetchFu
 		return VTResult{Status: "not_evaluated", HTTPStatus: status}
 	}
 	positives := asInt(analysisStats["malicious"]) + asInt(analysisStats["suspicious"])
-	results, hasResults := attributes["last_analysis_results"].(map[string]any)
-	if !hasResults && positives == 0 {
+	results, _ := attributes["last_analysis_results"].(map[string]any)
+	// B-06 基準（Python 参照実装と一致）: key 有無ではなく empty results 基準。
+	// stats.total>0 で last_analysis_results が空 map の 200 応答も not_evaluated（pass にしない）
+	if len(results) == 0 && positives == 0 {
 		return VTResult{Status: "not_evaluated", HTTPStatus: status}
 	}
 	statusString := "pass"
