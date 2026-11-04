@@ -309,11 +309,14 @@ func TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi(t *test
 	}
 }
 
-func TestSearchHTMLPreservesUnderscoreTagTerm(t *testing.T) {
+// supersede（decision 2026-11-04-nozomi-dataset-name-space-form-correction）: 旧固定
+// `TestSearchHTMLPreservesUnderscoreTagTerm`（underscore 形 URL）は正典矛盾。正典は colon
+// split 前に `_` → space（results.js:30・search.js:653）で dataset name は space 形。
+func TestSearchHTMLColonTagTermUsesCanonicalSpaceFormURL(t *testing.T) {
 	var urls []string
 	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		urls = append(urls, rawurl)
-		if strings.Contains(rawurl, "/n/tag/female:big_breasts-all.nozomi") {
+		if strings.Contains(rawurl, "/n/tag/female:big%20breasts-all.nozomi") {
 			return beIDs([]uint32{10, 20}), nil
 		}
 		return nil, nil
@@ -326,8 +329,8 @@ func TestSearchHTMLPreservesUnderscoreTagTerm(t *testing.T) {
 	if total != 2 || len(ids) != 2 || ids[0] != 10 || ids[1] != 20 {
 		t.Fatalf("underscore term: total %d ids %v", total, ids)
 	}
-	if len(urls) != 1 || !strings.Contains(urls[0], "/n/tag/female:big_breasts-all.nozomi") {
-		t.Fatalf("underscore term must not split: got %v", urls)
+	if len(urls) != 1 || !strings.Contains(urls[0], "/n/tag/female:big%20breasts-all.nozomi") {
+		t.Fatalf("colon term must build canonical space-form URL (no space→_ conversion): got %v", urls)
 	}
 }
 

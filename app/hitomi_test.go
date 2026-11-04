@@ -6,10 +6,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -413,6 +415,49 @@ func (c *Client) Search(term, lang string, page int) ([]int, error) {
 		ids = append(ids, int(binary.BigEndian.Uint32(body[i:i+4])))
 	}
 	return ids, nil
+}
+
+// D-10 追加（decision 2026-11-04-nozomi-dataset-name-space-form-correction・合格条件3）:
+// app 構築 URL（nozomiPathParts/nozomiPath）で多語 tag の dataset が live で 200 を実測。
+// 既存実測（space 200 / underscore 404・呼出し 4）と同一 URL 形。explicit live test mode
+// （HITOMI_LIVE_TEST）で実行。gate は本番既定 1000ms（testGateIntervalMS 非 inject）を維持。
+func TestNozomiURLSpaceFormLiveReturns200WhenLiveTestEnabled(t *testing.T) {
+	if os.Getenv("HITOMI_LIVE_TEST") == "" {
+		t.Skip("HITOMI_LIVE_TEST is not set (explicit live test mode)")
+	}
+	c := &Client{cfg: defaultHitomiConfig(), http: &http.Client{Timeout: 30 * time.Second}}
+	calls := 0
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls++
+		req, err := http.NewRequestWithContext(ctx, "GET", rawurl, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("user-agent", c.cfg.UserAgent)
+		req.Header.Set("referer", "https://hitomi.la/")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		status := resp.StatusCode
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		t.Logf("live call %d: %s status %d bytes %d", calls, rawurl, status, len(body))
+		if status != 200 {
+			return nil, errors.New("live status " + strconv.Itoa(status))
+		}
+		return body, nil
+	}
+	ids, err := c.Search("female:sole female", "all", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(ids) == 0 {
+		t.Fatalf("live 200 dataset must decode ids: calls %d ids %v", calls, ids)
+	}
 }
 
 // SearchQuery は production 未使用（D-08）。テスト参照のためテスト側へ移動

@@ -503,9 +503,11 @@ func ThumbnailURL(hash, format string, gg GG) string {
 	return ThumbnailURLVariant(hash, format, "bigtn", gg)
 }
 
-// SanitizeTerm は hitomi の sanitize と同じ形（小文字化・空白を _・区切り文字を保持）
+// SanitizeTerm は hitomi 正典 sanitize（searchlib.js:74）の形（小文字化＋`/#` 除去のみ）。
+// space → `_` 変換は正典にない（D-10 追加 decision 2026-11-04）。`_` → space は colon
+// split 前の term 側（results.js:30・search.js:653）で適用する。
 func SanitizeTerm(term string) string {
-	return strings.ToLower(strings.ReplaceAll(term, " ", "_"))
+	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(term, "/", ""), "#", ""))
 }
 
 type FileEntry struct {
@@ -602,8 +604,11 @@ var galleryIDPattern = regexp.MustCompile(`[0-9]+\.html`)
 
 // nozomiPathParts は hitomi の get_galleryids_for_query と同じ分区規則
 // female:/male: は area=tag（tag には term 全体）、その他は area=namespace・tag=右辺、
-// language: は lang に反映（tag は index）。term は whitespace 区切りの 1 term（tag 内の空白は `_`）
+// language: は lang に反映（tag は index）。term は whitespace 区切りの 1 term。colon split
+// 前に正典（results.js:30・search.js:653）どおり `_` → space を適用し、dataset name は
+// space 形（live 実測 space 200 / underscore 404・decision 2026-11-04）。
 func nozomiPathParts(term, lang string) (string, string, string, error) {
+	term = normalizeSearchTerm(term)
 	area := ""
 	tag := SanitizeTerm(term)
 	if i := strings.Index(term, ":"); i >= 0 {

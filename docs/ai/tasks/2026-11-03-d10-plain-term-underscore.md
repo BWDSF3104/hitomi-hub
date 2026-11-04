@@ -50,8 +50,15 @@ nozomi dataset name 形は hitomi 正典で space 形（`search.js:612-624` は 
 - ルート `python -m pytest tests/ -v` → **40 passed in 8.32s**（`test_canonical_build_freshness.py` 含む）
 - 外部呼出し計 **37**（index 33 + nozomi 4）、gate 1000ms 維持・回避なし
 
+### 追加実施（D-10 追加・nozomi dataset name 正典 space 形・2026-11-04）
+
+- `go vet .` clean、`go test -count=1 -timeout 300s .` ok **16.412s**（flaky LRU tie 発火なし）
+- 固定テスト更新 `TestSearchHTMLColonTagTermUsesCanonicalSpaceFormURL`（space 形 URL `%20`）単独 PASS、explicit live test mode（`HITOMI_LIVE_TEST`）で app 構築 URL live 200 実測（呼出し 1・gate 1000ms 既定維持・1916712 bytes）
+- canonical exe 再 build 成功、ルート `python -m pytest tests/ -v` → **40 passed in 7.80s**（`test_canonical_build_freshness.py` 含む）
+- known-issue `2026-11-04-nozomi-dataset-name-form-space-vs-underscore.md` Status 解決・archive へ mv（上記 Memory Bank 操作の該当チェック反映）
+
 ## 完了時 Memory Bank 操作
 
 - [x] `current-task.tsv` の参照行を削除（正典 `task_manager.py end` 2026-11-04）
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）— `2026-11-04-nozomi-dataset-name-form-space-vs-underscore.md` を D-10 追加実施（decision 2026-11-04-nozomi-dataset-name-space-form-correction）で解決・archive へ mv（2026-11-04）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）

@@ -1,6 +1,6 @@
 # nozomi dataset name は hitomi 正典で space 形、アプリは underscore 形へ変換して fetch している
 
-**Status**: 未解決（低優先・D-10 の合格条件スコープ外・判定は親へ）
+**Status**: 解決（2026-11-04・本実施）
 **Date**: 2026-11-04
 
 ## 内容
@@ -24,7 +24,11 @@ live 実測（2026-11-04・呼出し 4・gate 1000ms 維持・
 既存テスト `TestSearchHTMLPreservesUnderscoreTagTerm`（`app/searchhtml_test.go`）は underscore 形 URL を
 固定しており、正典（space 形）と矛盾する。
 
-## 次の対応（実施時）
+## 実施（2026-11-04・本項目）
 
-nozomi path 構築の space/underscore を正典（space 形）へ揃える。既存テストの固定内容変更を要するため
-実施段階の判断が必要（D-10 のスコープは index key 規約のみ。本項目では記録のみで修復していない）。
+decision `docs/ai/decisions/2026-11-04-nozomi-dataset-name-space-form-correction.md` どおり正典 space 形へ揃えた。
+
+- `SanitizeTerm`（`app/hitomi.go`）を正典形へ: 小文字化＋`/#` 除去のみ（space→`_` 変換削除）
+- `nozomiPathParts` で colon split 前に `_` → space（results.js:30・search.js:653）を適用
+- テスト固定更新（旧 `TestSearchHTMLPreservesUnderscoreTagTerm` を supersede → `TestSearchHTMLColonTagTermUsesCanonicalSpaceFormURL`）
+- live 実測（explicit live test mode・呼出し 1・gate 1000ms 既定維持）: app 構築 URL `https://ltn.gold-usergeneratedcontent.net/n/tag/female:sole%20female-all.nozomi` → 200（1916712 bytes）
