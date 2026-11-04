@@ -7,9 +7,12 @@ Run from project root:
 from __future__ import annotations
 
 import json
+import socket
 import sqlite3
 import sys
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -694,4 +697,134 @@ def test_pass_verdict_cache_keeps_positive_ttl_semantics(tmp_path):
     assert scan.SCAN_CACHE_TTL_SECONDS == 30 * 24 * 3600
     assert scan.NEGATIVE_SCAN_CACHE_TTL_SECONDS == 2 * 3600
     conn.close()
+    conn.close()
+
+
+def test_vt_urlerror_on_fetch_none_path_converts_to_network_error(tmp_path, monkeypatch):
+    # B-10 残件（2026-11-04 推奨承認 #3）: fetch=None path の URLError → tuple 規約 (payload, 0) → network_error
+    conn = make_db(tmp_path)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    state = {"window": [], "total": 0}
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.URLError("mock network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    result = scan.vt_lookup("a" * 64, cfg, state, conn=conn)
+    assert result == {"status": "network_error", "positives": 0, "threat_name": "",
+                      "detail": "network_error", "http_status": 0}
+    assert state["total"] == 1
+    assert len(state["window"]) == 1
+    assert scan.cache_lookup(conn, "a" * 64) == {}
+    conn.close()
+
+
+def test_vt_socket_timeout_on_fetch_none_path_converts_to_network_error(tmp_path, monkeypatch):
+    conn = make_db(tmp_path)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    state = {"window": [], "total": 0}
+
+    class TimeoutReader:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, tb):
+            return False
+
+        def read(self, size=-1):
+            raise socket.timeout("mock read timeout")
+
+    def fake_urlopen(req, timeout=30):
+        return TimeoutReader()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    result = scan.vt_lookup("b" * 64, cfg, state, conn=conn)
+    assert result["status"] == "network_error"
+    assert result["http_status"] == 0
+    assert result["detail"] == "network_error"
+    assert scan.cache_lookup(conn, "b" * 64) == {}
+    conn.close()
+
+
+def test_process_file_network_error_uses_api_error_convention_without_negative_cache(tmp_path, monkeypatch):
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "58" / "58.cbz", {"ok.webp": PNG})
+    sha = scan.sha256_file(cbz)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.URLError("mock network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    status = scan.process_file(conn, cbz, root, cfg, state, summary)
+    assert status == "pass"
+    row = conn.execute("SELECT rule, detail FROM findings WHERE rule = 'virustotal'").fetchone()
+    assert row == ("virustotal", "api_error:network_error")
+    # negative cache は unknown_to_vt のみ（network_error は権威ある「unknown」ではない）→ 行なし
+    assert conn.execute("SELECT COUNT(1) FROM scan_cache").fetchone()[0] == 0
+    conn.close()
+
+
+def test_scan_loop_without_try_survives_network_error(tmp_path, monkeypatch):
+    # main() 同形 loop（try なし）で exception が発生しないこと（crash しない）
+    conn = make_db(tmp_path)
+    root = tmp_path
+    make_zip(root / "Galleries" / "59" / "59.cbz", {"ok.webp": PNG})
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    cfg["yr"] = ""
+    state = {"window": [], "total": 0}
+    summary = {"pass": 0, "hit": 0, "not_evaluated": 0, "scan_error": 0, "cached": 0}
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.URLError("mock network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    for path in sorted((root / "Galleries").rglob("*")):
+        if not path.is_file():
+            continue
+        scan.process_file(conn, path, root, cfg, state, summary)
+    assert summary["pass"] == 1
+    assert state["total"] == 1
+    conn.close()
+
+
+def test_vt_httperror_branch_on_fetch_none_path_unchanged(tmp_path, monkeypatch):
+    # 回帰: B-10 の HTTPError 分岐（fetch=None path）の意味不変。404→unknown_to_vt+negative cache・429→rate_limited・500→not_evaluated・401→auth_error
+    conn = make_db(tmp_path)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    state = {"window": [], "total": 0}
+    codes = [404, 429, 500, 401]
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.HTTPError("https://www.virustotal.com/api/v3/files/x", codes[0], "mock", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    r404 = scan.vt_lookup("c" * 64, cfg, state, conn=conn)
+    assert (r404["status"], r404["http_status"]) == ("unknown_to_vt", 404)
+    row = conn.execute("SELECT verdict, detail FROM scan_cache WHERE sha256 = ?", ("c" * 64,)).fetchone()
+    assert row == ("unknown_to_vt", "unknown_to_vt")
+    codes[0] = 429
+    r429 = scan.vt_lookup("d" * 64, cfg, state, conn=conn)
+    assert (r429["status"], r429["http_status"]) == ("rate_limited", 429)
+    codes[0] = 500
+    r500 = scan.vt_lookup("e" * 64, cfg, state, conn=conn)
+    assert (r500["status"], r500["http_status"]) == ("not_evaluated", 500)
+    codes[0] = 401
+    r401 = scan.vt_lookup("9" * 64, cfg, state, conn=conn)
+    assert (r401["status"], r401["http_status"]) == ("auth_error", 401)
+    assert state["total"] == 4
     conn.close()

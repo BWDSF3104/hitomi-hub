@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -219,6 +220,10 @@ def vt_lookup(sha256: str, cfg: dict, state: dict, fetch=None, conn=None) -> dic
                 result = json.load(resp)
         except urllib.error.HTTPError as exc:
             result = ({}, exc.code)
+        except (urllib.error.URLError, socket.timeout) as exc:
+            # B-10 残件（2026-11-04 推奨承認 #3）: 非 HTTPError（URLError・timeout）も tuple 規約へ。
+            # HTTPError は URLError の subclass なのでこの順が B-10 分岐の意味を維持する。http_status 0 = network 層
+            result = ({}, 0)
     else:
         result = fetch(url, key)
     if isinstance(result, tuple):
@@ -237,6 +242,8 @@ def vt_lookup(sha256: str, cfg: dict, state: dict, fetch=None, conn=None) -> dic
             status = "rate_limited"
         elif http_status == 404:
             status = "unknown_to_vt"
+        elif http_status == 0:
+            status = "network_error"
         if conn is not None and status == "unknown_to_vt":
             cache_store(conn, sha256, status, "virustotal", "", status)
         return {"status": status, "positives": 0, "threat_name": "", "detail": status, "http_status": http_status}
