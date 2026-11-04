@@ -1,8 +1,8 @@
 # Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 進行中（C 再測定未確認・code TN URL same・proxy mapping confirmed）
+**Status**: 進行中（C 上流TN 200確認・proxy mapping限定・TN表示源 PASS）
 **Date**: 2026-11-05
-**Next Action**: C remains unconfirmed. Wait for valid TN path 200 and corrected C re-measurement; no code change.
+**Next Action**: C remains unconfirmed. Live TN construction correct; known hash is upstream TN absence. Wait for C re-measurement; no code change.
 
 ## 意図 / 背景
 
@@ -63,6 +63,23 @@
 - Live/snapshot gg: `app/ggset.go:8-11` and `app/gg.go:32-34`; `v.client.GG()` uses live cache or snapshot fallback at `app/gg.go:204-211`. For primary hash, live and snapshot both produce the same TN URL because `gg_value = 2974` gives `m = 0` on both. For second hash `03b2319c9617fddb1c110bd9cc9ce1c032c71a147417c162020d3a6717b5a07e`, `gg_value = 3591` gives live `m = 1` (`btn`) and snapshot `m = 0` (`atn`), so proxy actual gg state remains not independently observable from the response. Direct live code URL `https://btn.gold-usergeneratedcontent.net/webpbigtn/e/07/03b2319c9617fddb1c110bd9cc9ce1c032c71a147417c162020d3a6717b5a07e.webp` returned `404`; proxy returned `502`, `x-cache=no_tn`, `0` bytes, `420ms`.
 - Classification updated to `プロキシ由来（mapping・構築バグ候補）`: direct TN `404` is confirmed for the primary hash, proxy `502`/`no_tn` is confirmed as proxy-side mapping of any fetch error, not transparent passthrough. Construction bug candidate is narrowed because the primary code TN URL is identical to the previous direct TN URL; however proxy actual gg state is not observable, so construction remains a narrowed candidate rather than fully excluded.
 - Same-failure unlimited repetition was not performed. This check used one direct attempt per URL and one proxy attempt per hash. C remains `未確認`; project end is not applied. Result JSON: `docs/ai/tmp/phase4_direct_upstream_check_results.json`, `code_url_proxy_check` section.
+
+### C root cause separation（live TN 200・proxy mapping・TN表示源条件テスト・2026-11-05 08:48）
+
+- 分離実験は正典 server `8731` の live search-card cover DOM から hash を取得し、正典 code-built TN URL へ direct HTTPS 1回、proxy path `/api/thumb/{hash}?format=webp&gallery=...&variant=bigtn` へ1回実行した。同一失敗の無制限反復はしない。
+- Live UI card hashes:
+  - `5017bfbee49028a090a95fb762f536fc020fd9016b5ca4a455636be6cb705238` / gallery `4285579`
+  - `74f272d2046d0f4b1b715a82eab4cc473af85b1a7553a7177e64d3a6fc9a29a6` / gallery `4285398`
+- `5017...`: live code TN URL `https://atn.gold-usergeneratedcontent.net/webpbigtn/8/23/...webp` → direct `200`、bytes `50574`、`703ms`; proxy → `200`、`x-cache=tn-cache`、bytes `50574`、`118ms`. Status pair same.
+- `74f2...`: live code TN URL `https://atn.gold-usergeneratedcontent.net/webpbigtn/6/9a/...webp` → direct `200`、bytes `36170`、`616ms`; proxy → `200`、`x-cache=tn-cache`、bytes `36170`、`8ms`. Status pair same.
+- Known C hash `3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb` remains direct `404` / proxy `502/no_tn`. For live UI hashes, TN construction is correct and proxy returned same status. For the known hash, proxy `502` is proxy-side mapping of upstream `404` as `no_tn`; transparent passthrough is not performed. Classification: `上流欠落+変換表示（バグ候補限定）`. Construction bug candidate is excluded for live TN cards, not proven as code construction defect.
+- TN display-source mechanical condition test on canonical server loaded viewer tab `http://127.0.0.1:8731/#/g/3141857/page/1-2`:
+  - `statusIsViewerDisplaySource('tn')` = `false`
+  - `statusIsViewerDisplaySource('tn-cache')` = `false`
+  - `#reader` images: sourceType `objectURL`, TN prefix false, naturalWidth `1059/1070`
+  - `#thumbs` images: sourceType `objectURL`, TN prefix false
+  - UI display-source label observed `cdn/TN（未ダウンロード）` was not treated as image display source; actual `#reader` and `#thumbs` sources were objectURL, so TN display-source prohibition remains PASS.
+- No implementation/code change. TN display-source prohibition, full route order, TN cover-only search-card exception, and TN non-display rule remain unchanged. Result JSON: `docs/ai/tmp/phase4_direct_upstream_check_results.json`, `tn_root_cause_separation` section; copied to Google Drive task folder.
 
 ## 完了時 Memory Bank 操作
 
