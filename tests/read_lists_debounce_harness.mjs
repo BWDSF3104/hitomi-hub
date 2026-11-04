@@ -1,27 +1,9 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { bodyIn, createChecker, readProjectFile } from "./harness_lib.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const viewerHtml = readFileSync(join(root, "app", "viewer.html"), "utf8").replace(/\r\n/g, "\n");
-const searchHtml = readFileSync(join(root, "app", "search.html"), "utf8").replace(/\r\n/g, "\n");
+const viewerHtml = readProjectFile("app", "viewer.html");
+const searchHtml = readProjectFile("app", "search.html");
 
-function bodyIn(html, openPattern, endPattern) {
-  const start = html.indexOf(openPattern);
-  const end = html.indexOf(endPattern);
-  if (start < 0) throw new Error("body start not found: " + openPattern);
-  if (end < start) throw new Error("body end not found: " + endPattern);
-  return html.slice(start, end);
-}
-
-const failures = [];
-const passed = [];
-
-function check(cond, label) {
-  if (cond) passed.push(label);
-  else failures.push(label);
-  return cond;
-}
+const { failures, passed, check } = createChecker();
 
 const viewerCheckBlock = bodyIn(viewerHtml, "const readListsDebounceMs = 250;", "\nasync function showPage() {");
 const searchCheckBlock = bodyIn(searchHtml, "const readListsDebounceMs = 250;", "\nasync function runSearch() {");
