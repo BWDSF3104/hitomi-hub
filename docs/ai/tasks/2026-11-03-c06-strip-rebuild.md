@@ -3,7 +3,7 @@
 **Status**: 完了
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 引き継ぎ完了。実施開始指示待ち（実行計画順・サブエージェント1項目ずつ）
+**Next Action**: CRLF harness 修正完了（単独 commit・clean clone 実測通過）。残作業なし
 
 ## 意図 / 背景
 
@@ -41,6 +41,13 @@ UI 実操作確認（canonical server `http://127.0.0.1:8731`・fresh tab・Play
 - screenshot（Drive 保存先）: `I:\マイドライブ\kilo\2026-11-03-c06-strip-rebuild-page-move-highlight.png`（fresh tab・strip 8 thumbs・active highlight・status 表示）。Playwright の Drive 直下書き込み不可により workspace 一時ファイル経由でコピー（正典運用の Drive 保存先）・990878 bytes
 
 正典 Common_Operations tests: 120 passed（task_manager validation・正典 tool 変更なし）
+
+CRLF harness 修正（2026-11-04・実行ID assess-20261103-1220・known-issue archive 済み）:
+- `tests/strip_rebuild_dom_harness.mjs`: ui.html read 直後に line ending 正規化（`.replace(/\r\n/g, "\n")`）追加。line 161 の exact 照合（TN display source rule）は正規化後内容に対して実行され、check の意味は維持（マッチ除去の弱体化ではない）
+- 回帰テスト追加: `tests/test_strip_rebuild.py::test_strip_rebuild_harness_passes_after_crlf_checkout`（CRLF 化 ui.html コピーで harness 実行。全 check 通過＋ TN rule 2 件の PASS を要求。既存 `required` ラベルテストは変更なし）
+- 実測（正典 working tree）: harness 単独 18 checks 全通過（修正前後同一 check 数）、`python -m pytest tests/ -v` → 41 passed in 9.40s（回帰テスト 1 件増）。正典 exe SHA256 前後同一（74BE957D11EA96A511C38DEFE1B57CAD899BA58932D78302972EFD6714DD5DFB）。flaky `TestSearchCacheSizeCapBoundsMemory` 単独実行 ok 0.157s（本項目では変更なし）
+- clean clone 実測: 単独 commit 後 HEAD・`C:\Users\fujim\AppData\Local\Temp\kilo\c06-crlf-clone` で実施（push 前・結果は実行報告参照）
+- `TestEmbeddedUI` 系固定テスト（`app/viewer_test.go`）は本実施で変更・削除なし（意味維持確認: harness 修正のみのスコープ）
 
 ## 完了時 Memory Bank 操作
 

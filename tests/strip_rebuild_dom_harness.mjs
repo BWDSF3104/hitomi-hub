@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const html = readFileSync(join(root, "app", "ui.html"), "utf8");
+const html = readFileSync(join(root, "app", "ui.html"), "utf8").replace(/\r\n/g, "\n");
 
 function extract(name) {
   const re = new RegExp("^function " + name + "\\([^)]*\\) \\{[\\s\\S]*?^\\}", "m");

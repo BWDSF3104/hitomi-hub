@@ -33,3 +33,31 @@ def test_strip_rebuild_mocked_dom_page_move_keeps_img_nodes():
     for label in required:
         if "PASS " + label not in out:
             pytest.fail("mocked DOM test must fix: " + label + "\ngot:\n" + out)
+
+def test_strip_rebuild_harness_passes_after_crlf_checkout(tmp_path):
+    if shutil.which("node") is None:
+        pytest.fail("node toolchain is required for the CRLF checkout regression test")
+
+    harness_src = HARNESS.read_text(encoding="utf-8")
+    ui_src = (ROOT / "app" / "ui.html").read_text(encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    app_dir = tmp_path / "app"
+    tests_dir.mkdir()
+    app_dir.mkdir()
+    (tests_dir / HARNESS.name).write_text(harness_src.replace("\n", "\r\n"), encoding="utf-8", newline="")
+    (app_dir / "ui.html").write_text(ui_src.replace("\n", "\r\n"), encoding="utf-8", newline="")
+
+    result = subprocess.run(
+        ["node", str(tests_dir / HARNESS.name)],
+        capture_output=True, text=True, cwd=str(tmp_path),
+    )
+    if result.returncode != 0:
+        pytest.fail("harness must pass on CRLF content after line ending normalization:\n" + result.stdout + result.stderr)
+
+    for label in [
+        "TN display source rule unchanged",
+        "TN display fallback policy text unchanged",
+    ]:
+        if "PASS " + label not in result.stdout:
+            pytest.fail("CRLF run must still verify " + label + ":\ngot:\n" + result.stdout)
