@@ -192,6 +192,12 @@
 
 第10実行完了（D-10・D-10追加・B-04＋親実機確認・A-12・P2 #8/#9 記録処理・CRLF harness）。委譲上限撤回後の実施分は 6件（D-10・D-10追加・B-04・A-12・CRLF harness＋親記録）。plan タスクは本記録で close。残るは既知 issue（flaky LRU tie・低優先）のみ。正典 `hitomi.db`（v4）は次回 canonical server 起動時の `ensureSchema` で揃う予定（未確認・次回確認）。
 
+## 第11実行（2026-11-04・推奨承認後・1項目ずつ順次）
+
+- 推奨承認: `docs/ai/decisions/2026-11-04-recommendations-approved-execution.md`（①B-06残件Go ②B-07残件①Python ③B-10残件 ④flaky LRU tie テスト側決定化。C-05 残件は記録のみ維持・manual retry・gg polarity は解決 archive・旧タスク2件 close）。委譲前 HEAD `434d4ca`（記録 commit push 済み）・tree clean。
+- ① B-06残件 合格・close commit `7369066`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除 ✓。判定分岐を empty results 基準（`len(results)==0 && positives==0`）へ、テスト固定 2件（`TestVTEmptyResultsWithStatsTotalIsNotEvaluated`・`TestProcessFileVTEmptyResultsDoesNotStorePass`）。回帰維持（hit/404 negative cache・TTL・gate）。go test 1回目既知 flaky FAIL→単独 PASS（区別確認）・suite 18.1s、pytest 41 passed、canonical exe 再 build 済み。任意 live 1回呼出し→404（200 形状基線固定は未実施・未確認）。子判断持ち帰りに対する親判断（追加作業なし）: scan meta 行（verdict=''）により「pass verdict 行なし」で固定する解釈を是とする（Python COUNT 0 相当との区別はテストコメント記録済み）。
+- 次の委譲: ② B-07残件①（Python YARA error 表現 parity）→ ③ B-10残件 → ④ flaky LRU tie。
+
 ## Verification
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
