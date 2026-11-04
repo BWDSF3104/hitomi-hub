@@ -172,6 +172,9 @@
 - 次の委譲: A-04（hitomi 準拠確認）。
 - A-04 合格・close commit `8adf764`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記と known-issue のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。hitomi 正典確認（live 応答観察・呼出し 10・gate 1000ms 維持）: galleriesindex は言語キーなし（`furry` 32901・index-english 170609・intersection 5952）→ plain term に lang を掛けない。アプリ現挙動は正典一致のため挙動変更なし、テスト固定（`TestSearchHTMLPlainTermIgnoresLangPerCanonicalHitomi`）＋記録明記で合格。子判断項目（flaky LRU tie の解釈）に対する親判断: 是とする（C-05 close 済み・単独実行 PASS・既知 issue 記録済み・本項目非触）。
 - D-09 合格・close commit `a6a02b7`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記と known-issue のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。正典確認: `orderby` は client sort ではなく `nozomi_address_from_state`（search.js 612-624）の dataset 選択で集合順序を変える（live 実測 2026-11-04・呼出し 4）。実装は正典 mirror の最小変更（order 分区・orderbykey 既定 popular→year/else added・plain term 初期分岐の順序起点・cache key に order 追加・A-3 方向処理不変・C-04 維持）。go test ok 20.822s（追加3件・flaky 発火なし）、pytest 40 passed。判断持ち帰りなし（観察: popular/date dataset 件数微差は集合同一性未確認・順序判定に影響なし。or-only query の初期順序差は C-06/C-07/C-09 確定済み挙動として非触）。
+- D-08 合格・close commit `3495669`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。移動: `fileExt`→searchhtml_test.go、`Search`/`SearchQuery`→hitomi_test.go 自己完結形。削除: `imageExts`、`Limits.MaxRequestsPerMinute`（parse block 含む）、`nozomiURL`、ui.html no-op（1616）。判定: go vet+suite PASS（flaky LRU tie 1回 FAIL→単独 PASS・known-issue・非触）、canonical exe 再 build＋freshness 40 passed（ui.html bytes 照合＝無損）。未検証点: 実機 UI 操作（functional change なしで非該当）。子判断持ち帰り（記録のみ・作業なし）: `nozomiPathParts` がテスト専用関数化（D-08 対象外）。`Limits.MaxDailyRequests`（同型 dead parse）は確認項目外・未変更。config.example.json キーは承認範囲外・未変更。
+
+第9実行（このセッション）の委譲5件（A-11・A-09・A-04・D-09・D-08）で上限到達・終了。D-10 は実施順の都合で後回し（第10実行）。第10実行（新セッション）は D-10 → B-04 → A-12 → P2 #8/#9 → CRLF harness（低優先）。
 
 ## Verification
 
