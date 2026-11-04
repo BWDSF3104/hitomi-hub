@@ -46,6 +46,11 @@ const (
 	defaultIndexDataCacheMaxBytes   = 8 << 20
 	defaultIndexNodeCacheMaxEntries = 1024
 	defaultIndexNodeCacheMaxBytes   = 1 << 20
+	// C-05 観察実測（2026-11-04）で version rotation の growth を確認し bounded 化。
+	// cap は構造同一 cache（indexNodeCache: bnode entry・entrySize = maxNodeSize・topCacheTTL）の
+	// 既存 convention 値をそのまま採用（invented number なし・判断 2026-11-04）。
+	defaultIndexTopCacheMaxEntries = 1024
+	defaultIndexTopCacheMaxBytes   = 1 << 20
 )
 
 type singleflightCall struct {
@@ -94,9 +99,13 @@ func (e *searchCacheEntry) entrySize() int { return len(e.ids) * 8 }
 func (e *searchCacheEntry) lastAccessed() time.Time { return e.lastAccess }
 
 type indexTopCacheEntry struct {
-	node      *bnode
-	fetchedAt time.Time
+	node       *bnode
+	fetchedAt  time.Time
+	lastAccess time.Time
 }
+
+func (e *indexTopCacheEntry) entrySize() int { return maxNodeSize }
+func (e *indexTopCacheEntry) lastAccessed() time.Time { return e.lastAccess }
 
 type indexNodeCacheEntry struct {
 	node       *bnode
@@ -144,6 +153,9 @@ type Client struct {
 	searchCacheMaxBytes   int
 	indexTopCache   map[string]*indexTopCacheEntry
 	indexTopCacheMu sync.Mutex
+	indexTopCacheBytes int
+	indexTopCacheMaxEntries int
+	indexTopCacheMaxBytes   int
 	indexNodeCache  map[string]*indexNodeCacheEntry
 	indexNodeCacheBytes int
 	indexNodeCacheMaxEntries int
@@ -166,6 +178,11 @@ func (c *Client) putSearchCacheLocked(key string, entry *searchCacheEntry) {
 func (c *Client) putIndexDataCacheLocked(key string, entry *indexDataCacheEntry) {
 	maxEntries, maxBytes := boundedMax(c.indexDataCacheMaxEntries, c.indexDataCacheMaxBytes, defaultIndexDataCacheMaxEntries, defaultIndexDataCacheMaxBytes)
 	boundedCachePut(c.indexDataCache, &c.indexDataCacheBytes, maxEntries, maxBytes, key, entry)
+}
+
+func (c *Client) putIndexTopCacheLocked(key string, entry *indexTopCacheEntry) {
+	maxEntries, maxBytes := boundedMax(c.indexTopCacheMaxEntries, c.indexTopCacheMaxBytes, defaultIndexTopCacheMaxEntries, defaultIndexTopCacheMaxBytes)
+	boundedCachePut(c.indexTopCache, &c.indexTopCacheBytes, maxEntries, maxBytes, key, entry)
 }
 
 func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry) {

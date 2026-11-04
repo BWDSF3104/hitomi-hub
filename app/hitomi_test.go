@@ -57,6 +57,70 @@ func TestClientCacheFieldsAreMutexProtected(t *testing.T) {
 	wg.Wait()
 }
 
+func TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), indexTopCacheMaxEntries: 2, indexTopCacheMaxBytes: 1000, testGateIntervalMS: 1}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		return beNode(1, [][]byte{hashTerm("top")}, [][2]int64{{0, 0}}, make([]uint64, btreeOrder+1)), nil
+	}
+
+	// Windows clock granularity can tie same-instant timestamps. Fix access order
+	// explicitly after each insert so LRU eviction order is deterministic.
+	base := time.Now()
+	for i, version := range []string{"v1", "v2", "v3"} {
+		if _, _, err := c.indexTopNodeCached("galleries", version); err != nil {
+			t.Fatalf("indexTopNodeCached %s: %s", version, err)
+		}
+		if entry, ok := c.indexTopCache["galleries|"+version]; ok {
+			entry.lastAccess = base.Add(time.Duration(-30+10*i) * time.Second)
+		}
+	}
+	if len(c.indexTopCache) != 2 {
+		t.Fatalf("entry limit 2 should evict oldest entry: len %d", len(c.indexTopCache))
+	}
+	if _, ok := c.indexTopCache["galleries|v1"]; ok {
+		t.Error("oldest entry should be evicted when entry limit is crossed")
+	}
+	if _, ok := c.indexTopCache["galleries|v2"]; !ok {
+		t.Error("second entry should remain")
+	}
+	if _, ok := c.indexTopCache["galleries|v3"]; !ok {
+		t.Error("newest entry should remain")
+	}
+	if c.indexTopCacheBytes > c.indexTopCacheMaxBytes {
+		t.Errorf("index top cache memory must stay below cap: bytes %d", c.indexTopCacheBytes)
+	}
+
+	// LRU: hit updates access order. Next insert must evict v3 (stale access), not v2.
+	if _, _, err := c.indexTopNodeCached("galleries", "v2"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
+	}
+	if _, _, err := c.indexTopNodeCached("galleries", "v4"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.indexTopCache["galleries|v3"]; ok {
+		t.Error("stale-access entry must be evicted by LRU order")
+	}
+	if _, ok := c.indexTopCache["galleries|v2"]; !ok {
+		t.Error("recently accessed entry must survive LRU eviction")
+	}
+
+	// Evicted key is not a TTL hit anymore: it refetches and memory stays bounded.
+	if _, _, err := c.indexTopNodeCached("galleries", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 5 {
+		t.Errorf("evicted key must refetch: fetches %d", fetches)
+	}
+	if len(c.indexTopCache) > 2 || c.indexTopCacheBytes > c.indexTopCacheMaxBytes {
+		t.Errorf("memory must stay below cap after refetch insert: len %d bytes %d", len(c.indexTopCache), c.indexTopCacheBytes)
+	}
+}
+
 func TestCanonicalGGRuleComposition(t *testing.T) {
 	// mapping 方向は固定（0 → `w1`/`atn`、1 → `w2`/`btn`）。polarity は窓ごとに rotation するため
 	// faithful parse が保持する。両構造で同じ value の w1/w2（atn/btn）が反転することを固定する。

@@ -238,6 +238,7 @@ func (c *Client) indexTopNodeCached(field, version string) (*bnode, string, erro
 
 	c.indexTopCacheMu.Lock()
 	if entry, ok := c.indexTopCache[key]; ok && time.Since(entry.fetchedAt) < topCacheTTL {
+		entry.lastAccess = time.Now()
 		c.indexTopCacheMu.Unlock()
 		return entry.node, version, nil
 	}
@@ -262,7 +263,8 @@ func (c *Client) indexTopNodeCached(field, version string) (*bnode, string, erro
 		if c.indexTopCache == nil {
 			c.indexTopCache = map[string]*indexTopCacheEntry{}
 		}
-		c.indexTopCache[key] = &indexTopCacheEntry{node: node, fetchedAt: time.Now()}
+		now := time.Now()
+		c.putIndexTopCacheLocked(key, &indexTopCacheEntry{node: node, fetchedAt: now, lastAccess: now})
 		c.indexTopCacheMu.Unlock()
 	}
 	return node, actualVersion, nil
