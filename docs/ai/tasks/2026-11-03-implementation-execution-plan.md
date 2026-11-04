@@ -1,9 +1,9 @@
 # assess-20261103-1220 残項目の実装実行計画（サブエージェント1件ずつ・優先順）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 2026-11-04 判断承認反映済み（AGENTS.md Code Scope 実態更新・D-07 clean clone 実測解決・P2 #8 対象外明示・#9 用途定義・CRLF harness known-issue）。第8実行は新セッションで② A-11→A-09（方式確定済み）→③ hitomi準拠確認・B-06/B-07 parity・B-04/A-12・P2・CRLF harness（低優先）
+**Next Action**: 第10実行完了（D-10・D-10追加・B-04・A-12・P2 #8/#9 記録処理・CRLF harness 修正）。残るは既知 issue（flaky LRU tie・低優先）のみ。close
 
 ## 意図 / 背景
 
@@ -188,7 +188,9 @@
 - A-12 合格・close commit `011528a`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行未更新は同一パターン）。実装: `processFileWithYara` skip 分岐（`scanSkipStatus`・`scan_cache` に size/mtime 列・schemaVersion 4→5・非破坏迁移・行削除禁止）、scan 出力に `skipped`。テスト固定 3件（skip hash 1→0・size 不一致/external_removal 再ハッシュ安全側・migration 行保持）。実測（CLI・scratch・`--no-vt`）: run1 hash3 1.511s → run2 skipped=3・hash0・0.022s、scan_time/findings/scan_status 同一、scratch DB user_version=5。go test 1回目既知 flaky のみ FAIL（単独 PASS・2回目 suite ok 16.875s）、pytest 40 passed 9.97s、canonical exe 再 build 成功。
 - 親判断（子持ち帰り）: `output/hitomi-hub/schema.sql`（正典 dataDir コピー・非追跡）の同期は**要**と判定し実施 — 正典 `schema.sql` へ揃え（SHA256 前後: 旧 9A86EA59… → 新 D7EE0DC6…＝正典と一致・無損）。正典 `hitomi.db`（v4）は次回 `ensureSchema`（canonical server 起動時）で揃う（今すぐ手入れ不要・D-03 方針維持）。
 - P2 #8/#9 処理完了（記録のみ・実装今後の項目）: #8 PDF embed 対象外明示（pure-Go decoder 追加なし）、#9 用途定義＝保存検索の新着通知源。backlog 行は decision 参照反映済み（2026-11-04 第8実行前記録処理）。追加作業なし。
-- 次の委譲: CRLF harness 修正（低優先・`tests/test_strip_rebuild.py` の `\n` exact 照合を CRLF checkout で通過させる）。
+- CRLF harness（低優先）合格 commit `5b6e98b`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／既知 issue Status 解決＋archive へ mv・C-06 記録 Next Action 更新（正典 `task_manager.py update`）✓。harness ui.html read 直後 line ending 正規化（`\r\n`→`\n`）追加（exact 照合の意味維持・単なるマッチ除去ではない）、CRLF 回帰テスト `test_strip_rebuild_harness_passes_after_crlf_checkout` 追加。正典 working tree: harness 単独 18 checks 全通過（check 数前後同一）、pytest 41 passed 9.40s、正典 exe SHA256 前後同一（`74BE957D11EA96A511C38DEFE1B57CAD899BA58932D78302972EFD6714DD5DFB`・再 build なし）。clean clone 実測（`C:\Users\fujim\AppData\Local\Temp\kilo\c06-crlf-clone`・autocrlf=true・CRLF checkout サイズ差 7371 vs 7202 確認）: 38 passed・3 skipped、既存 FAIL だった `test_strip_rebuild_mocked_dom_page_move_keeps_img_nodes` 通過、skip 発火維持。flaky LRU tie 単独 PASS（Go suite 未実行・Go 変更なし）。判断持ち帰りなし。
+
+第10実行完了（D-10・D-10追加・B-04＋親実機確認・A-12・P2 #8/#9 記録処理・CRLF harness）。委譲上限撤回後の実施分は 6件（D-10・D-10追加・B-04・A-12・CRLF harness＋親記録）。plan タスクは本記録で close。残るは既知 issue（flaky LRU tie・低優先）のみ。正典 `hitomi.db`（v4）は次回 canonical server 起動時の `ensureSchema` で揃う予定（未確認・次回確認）。
 
 ## Verification
 
@@ -198,6 +200,6 @@
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（close 時正典 `task_manager.py end` で実施 2026-11-04）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（CRLF harness issue 解決・C-06 記録へ反映済み。flaky LRU tie は未解決のため未 mv）
+- [x] `backlog.md` の完了項目を削除（該当する場合）— 該当なし（#7 は判断記録行・#8/#9 は方針確定済みで今後の項目として維持）
