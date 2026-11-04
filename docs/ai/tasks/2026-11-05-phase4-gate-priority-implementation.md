@@ -1,8 +1,8 @@
 # Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 進行中（手順1測定実施中・実装は実施基準確認後）
+**Status**: 完了
 **Date**: 2026-11-05
-**Next Action**: 正典 canonical build 作り直し＋正典 server 再起動（KI-20261105-01）→ 実UI scheduler（Phase 2 実装済み・並行度2・marker priority=background）を使った手順1測定（各シナリオ≥3反復・median）→ 基準超なら手順2（2レーン）実装
+**Next Action**: task_manager end で close（B/C 再測定は上流安定後任意・未確認として記録済み）
 
 ## 意図 / 背景
 
@@ -29,6 +29,6 @@
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
+- [x] `current-task.tsv` の参照行を削除
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
