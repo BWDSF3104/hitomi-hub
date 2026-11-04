@@ -1,2 +1,5 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-05-phase1-visible-priority-implementation.md	未開始（実装開始指示待ち）	実装未開始・明示的な実装開始指示待ち。開始後は検討結果（推奨=IO標準+takeNext優先選択・実行中昇格）と正典合格条件に従い、テスト→canonical build→実機確認→報告
+docs/ai/tasks/2026-11-05-phase3-gallery-info-cache-implementation.md	未開始（実装開始指示待ち）	実装未開始・明示的な実装開始指示待ち。開始後は評価記録の推奨（file方式 cache/galleryinfo・3層参照・TTL30日・上限5000/256MB・stale採用推奨）と正典合格条件（mockテスト4件・canonical build 実機確認・decision記録）に従う
+docs/ai/tasks/2026-11-05-phase2-next-page-prefetch-implementation.md	未開始（実装開始指示待ち）	実装未開始・明示的な実装開始指示待ち。Phase 1（優先1・app/search.html 共有）→本実装の順。推奨=client側スケジューラ（800msアイドル・並行度2・中断・5分クールダウン・マーカー query param）
+docs/ai/tasks/2026-11-05-phase4-gate-priority-implementation.md	未開始（実装開始指示待ち）	実装未開始。Phase 2 実装後の再判定で実施可（並行度1固定なら実施不要＝最安、並行度2なら必要）。実施時は2レーン（猶予300ms・飢餓防止）＋マーカー明示引数。実装前に canonical rebuild・正典 server 再起動（known-issues KI-20261105-01）
