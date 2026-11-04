@@ -23,6 +23,11 @@ check（`acquisitionCheck`）が確認する folder path と、acquire（`acquir
 - 固定テスト単独: `TestViewerAcquisitionCheckUsesSanitizedTitleFolderMatchingAcquire` PASS **0.04s**（修正後の実コード）/ 修正前 scratch 対照 FAIL（上記根拠）
 - ルート `python -m pytest tests/ -v`: **40 passed 7.79s**（`test_canonical_build_freshness.py` 含む）
 - canonical exe 再 build（`go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`）: 成功（server 非起動・UI 実操作確認は親実施）
+- 実機確認（parent・2026-11-04・正典 exe 再 build 後 hash `24D0CFAD72C1D5029F2C2AC4E9F9A43A9CA0D18C02626D4802D8EB48624BDED3`・scratch dataDir/root `docs/ai/tmp/assess-20261103-1220/b04-live`・`--no-vt`・正典 server 8731・served UI 経由 fetch・seed gallery 900101 title `what?/file`・cache fixture `abc123.webp`）:
+  - check1 → 200 `not_exists`・title `what__file`・path `acquisition\what__file`（sanitize 名）
+  - acquire → 200 `copied`・path `acquisition\what__file\001.webp`（check が指す folder と同一 folder へ書かれた）
+  - check2 → 200 `confirm`・path `acquisition\what__file`（check と acquire が同一 folder を指すことを実測）
+  - server 停止後、開始時状態（8731 未稼働）へ復元。正典 DB は非使用（scratch DB のみ）。コンソール error は favicon.ico 404 のみ（非関連）
 
 ## 完了時 Memory Bank 操作
 

@@ -184,7 +184,8 @@
 - 子判断持ち帰り（nozomi dataset name 形）に対する親判断: hitomi 正典 `sanitize`（`searchlib.js:74`）は `/#` 除去のみで space→`_` 変換なし、dataset name は space 形 raw join（live 実測 space 200／underscore 404）。アプリ `SanitizeTerm` の space→`_`（`app/hitomi.go:507-509`）と `TestSearchHTMLPreservesUnderscoreTagTerm` の固定内容（underscore 形 URL）は正典矛盾 → 承認済み方針（A-04/D-09/D-10 条）どおり正典 space 形へ揃える修復を**追加項目**として委譲（単独 commit）。decision `docs/ai/decisions/2026-11-04-nozomi-dataset-name-space-form-correction.md`。acquisition 経路（B-04）非触。
 
 - D-10追加 合格 commit `4a8e823`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／known-issue Status 解決＋archive へ mv・D-10 記録反映 ✓。変更: `SanitizeTerm` を正典形（小文字化＋`/#` 除去のみ・space→`_` 削除）、`nozomiPathParts` に colon split 前 `_`→space、テスト supersede（`TestSearchHTMLColonTagTermUsesCanonicalSpaceFormURL`＋live 固定 `TestNozomiURLSpaceFormLiveReturns200WhenLiveTestEnabled`）。live 実測（呼出し 1・gate 1000ms）: app 構築 URL `female:sole%20female-all.nozomi` → 200・1916712 bytes。go test ok 16.412s（flaky 発火なし）、pytest 40 passed 7.80s、canonical exe 再 build 成功。判断持ち帰りなし（acquisition 非触）。
-- 次の委譲: B-04 → A-12 → P2 #8/#9 → CRLF harness（低優先）。
+- B-04 合格・close commit `8fd5cae`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。check 側を `acquisitionTitleName` へ統一（acquire 側命名不変）。テスト固定 `TestViewerAcquisitionCheckUsesSanitizedTitleFolderMatchingAcquire`（fixture `what?/file`→`what__file`・修正前対照 FAIL 実測）。go test ok 16.493s（flaky 発火なし）、pytest 40 passed 7.79s、canonical exe 再 build 成功。親実機確認（正典 server 8731・scratch・served UI fetch・seed gallery 900101): check1 not_exists `acquisition\what__file` → acquire copied `acquisition\what__file\001.webp` → check2 confirm 同一 folder ✓（server 停止・未稼働へ復元、正典 DB 非使用、error は favicon 404 のみ）。
+- 次の委譲: A-12 → P2 #8/#9 → CRLF harness（低優先）。
 
 ## Verification
 
