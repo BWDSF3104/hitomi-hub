@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math/rand"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -80,18 +81,51 @@ func copyInts(ids []int) []int {
 	return out
 }
 
-func (c *Client) SearchNozomiParts(area, tag, lang string) ([]int, error) {
-	key := area + "|" + tag + "|" + lang
+// resolvedOrder は results.js（89-95）の orderbykey 既定確定の mirror（D-09）:
+// undefined 時 popular → 'year'、else 'added'。既定確定は term parse 後・fetch 前。
+func resolvedOrder(state *searchState) (string, string) {
+	orderby := state.orderby
+	if orderby == "" {
+		orderby = "date"
+	}
+	key := state.orderbykey
+	if key == "" {
+		if orderby == "popular" {
+			key = "year"
+		} else {
+			key = "added"
+		}
+	}
+	return orderby, key
+}
+
+// SearchNozomiParts は hitomi `nozomi_address_from_state`（search.js 612-624・D-09 実測）を mirror。
+// `orderby != 'date' || orderbykey == 'published'` のとき order-key dataset（例 `/n/tag/popular/year/
+// female:yuri-all.nozomi`・area 'all' は `/n/popular/year-all.nozomi`）を選ぶ。集合順序はその dataset
+// 自身の順序で変わる（client sort は正典にない。`order_results` は方向のみ）。dataset 選択が変わるため
+// cache key にも order を含める（date dataset と混ざらない）。
+func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
+	orderby, orderKey := resolvedOrder(state)
+	cacheKey := state.area + "|" + state.tag + "|" + state.language
+	path := nozomiPath(state.area, state.tag, state.language)
+	if orderby != "date" || orderKey == "published" {
+		cacheKey = state.area + "|" + orderby + "|" + orderKey + "|" + state.tag + "|" + state.language
+		if state.area == "" {
+			path = "/n/" + orderby + "/" + url.PathEscape(orderKey+"-"+state.language) + ".nozomi"
+		} else {
+			path = "/n/" + url.PathEscape(state.area) + "/" + url.PathEscape(orderby) + "/" + url.PathEscape(orderKey) + "/" + url.PathEscape(state.tag+"-"+state.language) + ".nozomi"
+		}
+	}
 
 	c.searchCacheMu.Lock()
-	if entry, ok := c.searchCache[key]; ok && time.Since(entry.fetchedAt) < searchCacheTTL {
+	if entry, ok := c.searchCache[cacheKey]; ok && time.Since(entry.fetchedAt) < searchCacheTTL {
 		entry.lastAccess = time.Now()
 		c.searchCacheMu.Unlock()
 		return copyInts(entry.ids), nil
 	}
 	c.searchCacheMu.Unlock()
 
-	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+nozomiPath(area, tag, lang), [2]int64{-1, -1})
+	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+path, [2]int64{-1, -1})
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +139,7 @@ func (c *Client) SearchNozomiParts(area, tag, lang string) ([]int, error) {
 		c.searchCache = map[string]*searchCacheEntry{}
 	}
 	now := time.Now()
-	c.putSearchCacheLocked(key, &searchCacheEntry{ids: copyInts(ids), fetchedAt: now, lastAccess: now})
+	c.putSearchCacheLocked(cacheKey, &searchCacheEntry{ids: copyInts(ids), fetchedAt: now, lastAccess: now})
 	c.searchCacheMu.Unlock()
 
 	return ids, nil
@@ -125,12 +159,15 @@ func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
 			state.language = strings.ToLower(right)
 			// C-04: `language:` は lang filter そのもの。前置 term で fetch 済みの
 			// 同じ area/tag を新 language で再 fetch せず、自前 dataset（index-<lang>）を 1 回だけ fetch する。
-			return c.SearchNozomiParts("", "index", state.language)
+			dataset := *state
+			dataset.area = ""
+			dataset.tag = "index"
+			return c.SearchNozomiParts(&dataset)
 		default:
 			state.area = left
 			state.tag = SanitizeTerm(right)
 		}
-		return c.SearchNozomiParts(state.area, state.tag, state.language)
+		return c.SearchNozomiParts(state)
 	}
 	// A-04: plain term は lang を適用しない（hitomi 正典準拠・意図的）。galleriesindex の
 	// `galleries` は言語キーを持たず key = hash_term(term) のみ。language は `language:` term の
@@ -274,6 +311,15 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 		return nil, 0, errors.New("query has no positive term")
 	}
 
+	// D-09（results.js 89-95 mirror）: orderbykey 既定確定を fetch 前に行う（popular → 'year'、else 'added'）。
+	if state.orderbykey == "" {
+		if state.orderby == "popular" {
+			state.orderbykey = "year"
+		} else {
+			state.orderbykey = "added"
+		}
+	}
+
 	sort.SliceStable(positive, func(i, j int) bool {
 		if strings.Contains(positive[i], ":") && !strings.Contains(positive[j], ":") {
 			return true
@@ -298,13 +344,27 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 
 	var results []int
 	orGroupOffset := 0
+	positiveStart := 1
 	if len(positive) > 0 {
-		ids, err := c.termIDs(&state, positive[0])
-		if err != nil {
-			return nil, 0, err
+		// D-09（results.js 114 mirror・正典実測）: 最初の positive term が plain で
+		// orderbykey != 'added' のとき集合順序の起点は order dataset。term membership は
+		// 後段の positive filter で intersection（順序保持）なので positive[0] は loop 側で処理する。
+		if !strings.Contains(positive[0], ":") && state.orderbykey != "added" {
+			positiveStart = 0
+			ids, err := c.SearchNozomiParts(&state)
+			if err != nil {
+				return nil, 0, err
+			}
+			results = ids
+			applyOrderForInitial(results, &state)
+		} else {
+			ids, err := c.termIDs(&state, positive[0])
+			if err != nil {
+				return nil, 0, err
+			}
+			results = ids
+			applyOrderForInitial(results, &state)
 		}
-		results = ids
-		applyOrderForInitial(results, &state)
 	} else {
 		var groupIDs [][]int
 		for _, term := range orGroups[0] {
@@ -339,8 +399,8 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 		results = next
 	}
 
-	if len(positive) > 1 {
-		for _, term := range positive[1:] {
+	if len(positive) > positiveStart {
+		for _, term := range positive[positiveStart:] {
 			if isLanguageTerm(term) {
 				// C-04: pre-scan で state.language は fetch 済み。この term の dataset は
 				// fetch 済みの language-scoped dataset と同一（subset 保証で intersection no-op）なので

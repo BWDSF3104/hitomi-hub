@@ -17,7 +17,7 @@ func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 		return nil, nil
 	}}
 
-	ids1, err := c.SearchNozomiParts("tag", "female:yuri", "all")
+	ids1, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"})
 	if err != nil {
 		t.Fatalf("SearchNozomiParts: %s", err)
 	}
@@ -25,7 +25,7 @@ func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 		t.Fatalf("first cache result: %v", ids1)
 	}
 
-	ids2, err := c.SearchNozomiParts("tag", "female:yuri", "all")
+	ids2, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"})
 	if err != nil {
 		t.Fatalf("SearchNozomiParts cache: %s", err)
 	}
@@ -37,7 +37,7 @@ func TestSearchNozomiPartsUsesTTLCacheAndCopies(t *testing.T) {
 	}
 
 	ids1[0] = 99
-	ids3, err := c.SearchNozomiParts("tag", "female:yuri", "all")
+	ids3, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"})
 	if err != nil {
 		t.Fatalf("SearchNozomiParts after mutation: %s", err)
 	}
@@ -67,15 +67,15 @@ func TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	// Windows clock granularity can tie same-instant timestamps. Fix access order
 	// explicitly after each insert so LRU eviction order is deterministic.
 	base := time.Now()
-	if _, err := c.SearchNozomiParts("tag", "female:yuri", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	c.searchCache["tag|female:yuri|all"].lastAccess = base.Add(-30 * time.Second)
-	if _, err := c.SearchNozomiParts("tag", "male:yuri", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "male:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	c.searchCache["tag|male:yuri|all"].lastAccess = base.Add(-20 * time.Second)
-	if _, err := c.SearchNozomiParts("tag", "female:cosplay", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:cosplay", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	c.searchCache["tag|female:cosplay|all"].lastAccess = base.Add(-10 * time.Second)
@@ -96,13 +96,13 @@ func TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// LRU: hit updates access order. Insert D must evict C (stale access), not B (accessed).
-	if _, err := c.SearchNozomiParts("tag", "male:yuri", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "male:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 3 {
 		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
 	}
-	if _, err := c.SearchNozomiParts("tag", "female:lolita", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:lolita", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := c.searchCache["tag|female:cosplay|all"]; ok {
@@ -113,7 +113,7 @@ func TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// Evicted key is not a TTL hit anymore: it refetches.
-	if _, err := c.SearchNozomiParts("tag", "female:yuri", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 5 {
@@ -137,13 +137,13 @@ func TestSearchCacheSizeCapBoundsMemory(t *testing.T) {
 		}
 	}
 
-	if _, err := c.SearchNozomiParts("tag", "female:yuri", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.SearchNozomiParts("tag", "male:yuri", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "male:yuri", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.SearchNozomiParts("tag", "female:cosplay", "all"); err != nil {
+	if _, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:cosplay", language: "all"}); err != nil {
 		t.Fatal(err)
 	}
 	if c.searchCacheBytes > c.searchCacheMaxBytes {
@@ -498,6 +498,103 @@ func TestApplySearchOrderDoesNotDoubleReverseAsc(t *testing.T) {
 	applySearchOrder(ids, state)
 	if len(ids) != 3 || ids[0] != 30 || ids[1] != 20 || ids[2] != 10 {
 		t.Fatalf("asc order should reverse only once, got %v", ids)
+	}
+}
+
+func TestSearchHTMLPopularOrderFetchesOrderDatasetPerCanonicalHitomi(t *testing.T) {
+	// D-09（正典 mirror・実測 2026-11-04）: hitomi の正典 sort は client 側ではなく
+	// `nozomi_address_from_state`（search.js 612-624）の dataset 選択。`orderby:popular` の既定 key は
+	// results.js 89-95 で 'year'。colon term は order dataset を fetch し、その順序が集合順序になる
+	// （`order_results` は方向のみ・desc は reverse なし）。live 実測: 200・date dataset と順序不同
+	// （docs/ai/tmp/assess-20261103-1220/d09_live_observation.txt）。
+	var urls []string
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "/n/tag/popular/year/female:yuri-all.nozomi") {
+			return beIDs([]uint32{5, 10, 15}), nil
+		}
+		return nil, nil
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri orderby:popular", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 1 || !strings.Contains(urls[0], "/n/tag/popular/year/female:yuri-all.nozomi") {
+		t.Fatalf("orderby:popular must fetch order-keyed dataset: %v", urls)
+	}
+	if total != 3 || ids[0] != 5 || ids[1] != 10 || ids[2] != 15 {
+		t.Fatalf("order dataset order must be preserved: total %d ids %v", total, ids)
+	}
+}
+
+func TestSearchHTMLPlainTermOrderStartsFromOrderDatasetPerCanonicalHitomi(t *testing.T) {
+	// D-09: results.js 114 — 最初の positive term が plain で orderbykey != 'added'（popular 既定 'year'）
+	// のとき集合順序の起点は order dataset（area 'all'）。term membership は後段 intersection で保持。
+	key := hashTerm("furry")
+	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 24}}, make([]uint64, btreeOrder+1))
+	data := append([]byte{0, 0, 0, 3}, beIDs([]uint32{10, 20, 30})...)
+
+	var urls []string
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		switch {
+		case strings.Contains(rawurl, "/n/popular/year-all.nozomi"):
+			return beIDs([]uint32{30, 10, 40, 20}), nil
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		case strings.HasSuffix(rawurl, ".data"):
+			return data, nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("furry orderby:popular", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 30 || ids[1] != 10 || ids[2] != 20 {
+		t.Fatalf("plain term order must start from order dataset: total %d ids %v", total, ids)
+	}
+	orderFetch := false
+	for _, u := range urls {
+		if strings.Contains(u, "/n/popular/year-all.nozomi") {
+			orderFetch = true
+		}
+		if strings.Contains(u, "/n/index-all.nozomi") {
+			t.Fatalf("plain term with order key must not use date-added index dataset: %v", urls)
+		}
+	}
+	if !orderFetch || len(urls) != 4 {
+		t.Fatalf("order dataset + membership fetch required: %v", urls)
+	}
+}
+
+func TestSearchHTMLPopularOrderAscReversesOrderDatasetOncePerCanonicalHitomi(t *testing.T) {
+	// A-3 合格条件維持: direction は order dataset に対して 1 回だけ適用（二重 reverse なし）。
+	var urls []string
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		urls = append(urls, rawurl)
+		if strings.Contains(rawurl, "/n/tag/popular/year/female:yuri-all.nozomi") {
+			return beIDs([]uint32{5, 10, 15}), nil
+		}
+		return nil, nil
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri orderby:popular orderbydirection:asc", "all", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || ids[0] != 15 || ids[1] != 10 || ids[2] != 5 {
+		t.Fatalf("asc must reverse order dataset once: ids %v", ids)
+	}
+	if fetches != 1 || len(urls) != 1 || !strings.Contains(urls[0], "/n/tag/popular/year/female:yuri-all.nozomi") {
+		t.Fatalf("paths: fetches %d %v", fetches, urls)
 	}
 }
 
