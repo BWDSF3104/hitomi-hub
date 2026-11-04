@@ -22,6 +22,13 @@
 
 ## Verification
 
+### 親控（機械的確認・残件化）
+
+- 実装コミット `5132c41`・KI `5a15578` 確認済み（tree clean）。再測定の判断は段階2（remote 変動排除）で仕分済み。
+- 差し戻し2度目の失敗: 報告されたコミット `168a198`（hitomi-hub）と `704d0b7`（Common_Operations）は実在せず（HEAD `5a15578`/`787dc0b`）、Verification・report への append なし。再測定の数値（median 896.3ms）は正典リポジトリの記録に証拠として残っていないため合格扱いせず、本項目を残件（進行中）とする。次の対応: P4 実施後に本項目の合格条件（first card display ≤ baseline+1枠）を自子で再測定し、正典リポジトリへ記録・commit/push して閉じる（`docs/ai/tmp` の commit は不可・gitignore 対象）。
+
+
+
 - `go vet .` ✓ ／ `go test -count=1 -timeout 300s .` ✓（17.269s）／個別 guard tests（`TestStorageURLUsesFormatNotNameExt|TestCanonicalGGRuleComposition|TestThumbnailURLMatchesVerifiedTNPath|TestBackgroundPrefetchMarkerRecordedSeparatelyInMetrics`）✓。
 - `python -m pytest tests/ -v` 53 tests ✓（`test_search_prefetch.py`・`test_canonical_build_freshness.py` 含む）。node harness 40 checks ✓。Phase 1 harness（`TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit`）✓。
 - canonical build ✓（`output/hitomi-hub/hub.exe`）。正典 server run E（fresh root `p2_phase2_fresh5`・port 8732・fresh isolated tab）。
