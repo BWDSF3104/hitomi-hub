@@ -185,7 +185,10 @@
 
 - D-10追加 合格 commit `4a8e823`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／known-issue Status 解決＋archive へ mv・D-10 記録反映 ✓。変更: `SanitizeTerm` を正典形（小文字化＋`/#` 除去のみ・space→`_` 削除）、`nozomiPathParts` に colon split 前 `_`→space、テスト supersede（`TestSearchHTMLColonTagTermUsesCanonicalSpaceFormURL`＋live 固定 `TestNozomiURLSpaceFormLiveReturns200WhenLiveTestEnabled`）。live 実測（呼出し 1・gate 1000ms）: app 構築 URL `female:sole%20female-all.nozomi` → 200・1916712 bytes。go test ok 16.412s（flaky 発火なし）、pytest 40 passed 7.80s、canonical exe 再 build 成功。判断持ち帰りなし（acquisition 非触）。
 - B-04 合格・close commit `8fd5cae`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。check 側を `acquisitionTitleName` へ統一（acquire 側命名不変）。テスト固定 `TestViewerAcquisitionCheckUsesSanitizedTitleFolderMatchingAcquire`（fixture `what?/file`→`what__file`・修正前対照 FAIL 実測）。go test ok 16.493s（flaky 発火なし）、pytest 40 passed 7.79s、canonical exe 再 build 成功。親実機確認（正典 server 8731・scratch・served UI fetch・seed gallery 900101): check1 not_exists `acquisition\what__file` → acquire copied `acquisition\what__file\001.webp` → check2 confirm 同一 folder ✓（server 停止・未稼働へ復元、正典 DB 非使用、error は favicon 404 のみ）。
-- 次の委譲: A-12 → P2 #8/#9 → CRLF harness（低優先）。
+- A-12 合格・close commit `011528a`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行未更新は同一パターン）。実装: `processFileWithYara` skip 分岐（`scanSkipStatus`・`scan_cache` に size/mtime 列・schemaVersion 4→5・非破坏迁移・行削除禁止）、scan 出力に `skipped`。テスト固定 3件（skip hash 1→0・size 不一致/external_removal 再ハッシュ安全側・migration 行保持）。実測（CLI・scratch・`--no-vt`）: run1 hash3 1.511s → run2 skipped=3・hash0・0.022s、scan_time/findings/scan_status 同一、scratch DB user_version=5。go test 1回目既知 flaky のみ FAIL（単独 PASS・2回目 suite ok 16.875s）、pytest 40 passed 9.97s、canonical exe 再 build 成功。
+- 親判断（子持ち帰り）: `output/hitomi-hub/schema.sql`（正典 dataDir コピー・非追跡）の同期は**要**と判定し実施 — 正典 `schema.sql` へ揃え（SHA256 前後: 旧 9A86EA59… → 新 D7EE0DC6…＝正典と一致・無損）。正典 `hitomi.db`（v4）は次回 `ensureSchema`（canonical server 起動時）で揃う（今すぐ手入れ不要・D-03 方針維持）。
+- P2 #8/#9 処理完了（記録のみ・実装今後の項目）: #8 PDF embed 対象外明示（pure-Go decoder 追加なし）、#9 用途定義＝保存検索の新着通知源。backlog 行は decision 参照反映済み（2026-11-04 第8実行前記録処理）。追加作業なし。
+- 次の委譲: CRLF harness 修正（低優先・`tests/test_strip_rebuild.py` の `\n` exact 照合を CRLF checkout で通過させる）。
 
 ## Verification
 
