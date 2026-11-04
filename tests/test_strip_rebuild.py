@@ -39,14 +39,14 @@ def test_strip_rebuild_harness_passes_after_crlf_checkout(tmp_path):
         pytest.fail("node toolchain is required for the CRLF checkout regression test")
 
     harness_src = HARNESS.read_text(encoding="utf-8")
-    ui_src = (ROOT / "app" / "ui.html").read_text(encoding="utf-8")
+    ui_src = (ROOT / "app" / "viewer.html").read_text(encoding="utf-8")
 
     tests_dir = tmp_path / "tests"
     app_dir = tmp_path / "app"
     tests_dir.mkdir()
     app_dir.mkdir()
     (tests_dir / HARNESS.name).write_text(harness_src.replace("\n", "\r\n"), encoding="utf-8", newline="")
-    (app_dir / "ui.html").write_text(ui_src.replace("\n", "\r\n"), encoding="utf-8", newline="")
+    (app_dir / "viewer.html").write_text(ui_src.replace("\n", "\r\n"), encoding="utf-8", newline="")
 
     result = subprocess.run(
         ["node", str(tests_dir / HARNESS.name)],

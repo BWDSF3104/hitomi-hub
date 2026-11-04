@@ -3,12 +3,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const html = readFileSync(join(root, "app", "ui.html"), "utf8").replace(/\r\n/g, "\n");
+const html = readFileSync(join(root, "app", "viewer.html"), "utf8").replace(/\r\n/g, "\n");
 
 function extract(name) {
   const re = new RegExp("^function " + name + "\\([^)]*\\) \\{[\\s\\S]*?^\\}", "m");
   const m = html.match(re);
-  if (!m) throw new Error("function not found in app/ui.html: " + name);
+  if (!m) throw new Error("function not found in app/viewer.html: " + name);
   return m[0];
 }
 
@@ -148,7 +148,7 @@ const run = new Function(
 );
 
 const showPageBody = body("async function showPage() {", "\nfunction renderStrip() {");
-const openGalleryBody = body("async function openGallery(id, page, second) {", "\nasync function showLists(showGen, openGen) {");
+const openGalleryBody = body("async function openGallery(id, page, second) {", "\nfunction renderStrip() {");
 const renderStripBody = body("function renderStrip() {", "\nfunction highlightStrip() {");
 const highlightBody = body("function highlightStrip() {", "\nfunction refreshStrip() {");
 

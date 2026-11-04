@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>hitomi hub search</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }
+  h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
+  .cols { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
+  .side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }
+  .main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }
+  section { margin-bottom: 1rem; }
+  h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
+  form { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+  input { padding: .35rem; background: #1d2126; color: #e8eaed; border: 1px solid #2f343b; }
+  button { padding: .35rem .6rem; background: #2f343b; color: #e8eaed; border: 0; cursor: pointer; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
+  a { color: #8ab4f8; text-decoration: none; }
+  .meta { font-size: .9rem; color: #9aa0a6; }
+  .note { font-size: .85rem; color: #f0a441; }
+  .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
+  .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; height: var(--search-card-height); overflow: hidden; }
+  .card .text { display: flex; flex-direction: column; min-height: 0; max-height: var(--search-card-height); overflow: hidden; }
+  .cover, .search-card-cover { object-fit: cover; background: #1d2126; }
+  .cover, .search-card-cover { width: 130px; height: 130px; }
+  .card a { font-weight: 600; }
+  .tags {
+    font-size: .9rem;
+    line-height: 1.25;
+    max-height: calc(var(--search-card-height) - 2rem);
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 9;
+  }
+</style>
+</head>
+<body>
+<h1>hitomi hub search（検索ページ）</h1>
+<div class="cols">
+  <div class="side">
+    <section>
+      <h2>検索（hitomi search.html と同じ term routing）</h2>
+      <form id="search">
+        <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
+        <input id="lang" value="all" size="8">
+        <input id="page" value="1" size="4">
+        <button id="search-prev" type="button">前</button>
+        <button id="search-next" type="button">次</button>
+        <button id="search-submit" type="submit">検索</button>
+      </form>
+      <div id="search-page-status" class="meta"></div>
+      <div id="perf-status" class="meta"></div>
+      <div id="search-status" class="status"></div>
+      <div id="count" class="meta"></div>
+      <ul id="results"></ul>
+    </section>
+    <section>
+      <h2>保存検索</h2>
+      <form id="saved-search">
+        <input id="qname" placeholder="name" size="10">
+        <input id="qtext" placeholder="female:yuri language:english" size="22">
+        <button>save</button>
+      </form>
+      <ul id="queries"></ul>
+    </section>
+    <section>
+      <h2>お気に入り / 未読</h2>
+      <ul id="favorites"></ul>
+      <ul id="unread"></ul>
+    </section>
+  </div>
+  <div class="main">
+    <section>
+      <h2>閲覧</h2>
+      <div id="gallery" class="meta">カードをクリックすると <a href="/">viewer</a>（閲覧ページ）で開きます</div>
+      <div id="note" class="note"></div>
+    </section>
+  </div>
+</div>
+<script>
+const api = (p) => fetch(p, { cache: "no-store" }).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  data._x_cache = r.headers.get("x-cache") || null;
+  data._x_search_timing = r.headers.get("x-search-timing") || null;
+  if (!r.ok) throw new Error(data.error || (r.status + " " + p));
+  return data;
+});
+const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify(body) }).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || (r.status + " " + p));
+  return data;
+});
+
+const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";
+const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";
+const TITLE_GROUPS_STORAGE_KEY = "hitomi_hub_title_groups";
+const SEARCH_CARD_CONCURRENCY = 4;
+const readListsDebounceMs = 250;
+let listsDebounceTimer = null;
+let listsWaiters = [];
+let listsFetchPending = null;
+let searchGeneration = 0;
+let currentSearchTotal = 0;
+let perfStatus = { searchMs: 0, serverTiming: "", cardsLoaded: 0, cardTotalMs: 0, cacheDistribution: {} };
+const searchCardCache = new Map();
+const titleGroups = new Map();
+
+function escapeHTML(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+function targetAttr() {
+  return newTabMode ? " target='_blank'" : "";
+}
+function newTabHref(hash) {
+  return newTabMode ? window.location.pathname + window.location.search + hash : hash;
+}
+// cross-page viewer link: search page lives at /search, viewer page at /. The route must be absolute to "/" so a fragment-only navigation cannot stay on the search page.
+function route(id, page, second) {
+  const hash = second ? "#/g/" + id + "/page/" + page + "-" + second : "#/g/" + id + "/page/" + page;
+  return "/" + hash;
+}
+
+function thumbURL(hash, format, gallery, variant) {
+  if (!hash) return "";
+  let u = "/api/thumb/" + hash + "?format=" + encodeURIComponent(format || "webp");
+  if (gallery) u += "&gallery=" + encodeURIComponent(gallery);
+  if (variant) u += "&variant=" + encodeURIComponent(variant);
+  return u;
+}
+
+function normalizeTitleKey(r) {
+  return String(r.title || r.japanese_title || r.id || "").trim().toLowerCase();
+}
+
+function loadTitleGroups() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TITLE_GROUPS_STORAGE_KEY));
+    if (!raw) return;
+    for (const [key, group] of Object.entries(raw)) titleGroups.set(key, group);
+  } catch (err) {}
+}
+
+function saveTitleGroups() {
+  try {
+    localStorage.setItem(TITLE_GROUPS_STORAGE_KEY, JSON.stringify(Object.fromEntries(titleGroups)));
+  } catch (err) {}
+}
+
+function setSearchTitleGroup(r) {
+  const key = normalizeTitleKey(r);
+  if (!key || r.id === undefined) return;
+  const existing = titleGroups.get(key);
+  if (!existing || existing.language !== "japanese" || r.language === "japanese") {
+    titleGroups.set(key, { bestId: r.id, language: r.language || "", name: r.japanese_title || r.title || String(r.id) });
+    saveTitleGroups();
+  }
+}
+
+function sameTitleJapaneseAnchor(r) {
+  const key = normalizeTitleKey(r);
+  const group = titleGroups.get(key);
+  if (!key || !group || r.language === "japanese" || group.language !== "japanese" || Number(group.bestId) === Number(r.id)) return "";
+  return "<div class='meta'>同名の日本語版: <a href='" + route(group.bestId, 1) + "'" + targetAttr() + ">#" + group.bestId + "</a></div>";
+}
+
+function renderSearchCard(r) {
+  searchCardCache.set(r.id, r);
+  setSearchTitleGroup(r);
+  const tags = (r.tags || []).join(", ");
+  const tagsTitle = tags ? " title='" + escapeHTML(tags) + "'" : "";
+  const anchor = sameTitleJapaneseAnchor(r);
+  const thumbnail = searchCardCoverSource(r);
+  const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
+  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
+}
+
+function searchCardCoverSource(card) {
+  return card.thumbnail || (card.files && card.files[0] ? thumbURL(card.files[0].hash, card.format, card.id, "bigtn") : "");
+}
+
+// pure TN cover: the search page does not own the objectURL cache, so the cover source is only the server TN URL. No full objectURL preference, no current priority wait.
+async function loadSearchCardCover(r, searchGen = searchGeneration) {
+  if (searchGen !== searchGeneration) return;
+  const img = document.getElementById("results").querySelector("img[data-search-id=\"" + r.id + "\"]");
+  if (!img) return;
+  const src = searchCardCoverSource(r);
+  if (src) img.src = src;
+}
+
+function parseSearchHash(hash) {
+  const match = hash.match(/^#\/q\/([^/]+)(?:\/page\/(\d+))?$/);
+  if (!match) return null;
+  return { query: decodeURIComponent(match[1]), page: Number(match[2] || 1) };
+}
+function searchRoute(query, page) {
+  return "#/q/" + encodeURIComponent(query) + "/page/" + page;
+}
+function saveSearchState(state) {
+  try {
+    localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {}
+}
+function loadSearchState() {
+  try {
+    return JSON.parse(localStorage.getItem(SEARCH_STORAGE_KEY));
+  } catch (err) {
+    return null;
+  }
+}
+function restoreSearchState() {
+  const state = loadSearchState();
+  if (!state || !state.query) return;
+  const queryInput = document.getElementById("query");
+  const langInput = document.getElementById("lang");
+  const pageInput = document.getElementById("page");
+  const status = document.getElementById("search-status");
+  const results = document.getElementById("results");
+  const count = document.getElementById("count");
+  queryInput.value = state.query;
+  if (langInput && state.lang) langInput.value = state.lang;
+  if (pageInput) pageInput.value = String(state.page || 1);
+  const ids = Array.isArray(state.ids) ? state.ids : [];
+  currentSearchTotal = Number(state.total || 0);
+  renderSearchPageStatus();
+  if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
+  status.textContent = "検索結果復元: " + state.query;
+  results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+  loadSearchCards(ids, searchGeneration);
+}
+function searchTotalPages(total) {
+  return Math.max(1, Math.ceil(Number(total || 0) / 25));
+}
+
+function recordPerfCache(value) {
+  if (!value) return;
+  perfStatus.cacheDistribution[value] = (perfStatus.cacheDistribution[value] || 0) + 1;
+}
+
+function renderPerfStatus() {
+  const el = document.getElementById("perf-status");
+  if (!el) return;
+  if (!perfStatus.searchMs && !perfStatus.cardsLoaded) {
+    el.textContent = "";
+    return;
+  }
+  const cacheText = Object.keys(perfStatus.cacheDistribution).length ? "・cache " + Object.keys(perfStatus.cacheDistribution).map((k) => k + "=" + perfStatus.cacheDistribution[k]).join(" ") : "";
+  el.textContent = "perf: /api/search " + Math.round(perfStatus.searchMs) + "ms" + (perfStatus.serverTiming ? "・server " + perfStatus.serverTiming : "") + "・cards " + perfStatus.cardsLoaded + " " + Math.round(perfStatus.cardTotalMs) + "ms" + cacheText;
+}
+function renderSearchPageStatus() {
+  const status = document.getElementById("search-page-status");
+  if (!status) return;
+  const page = Number(document.getElementById("page").value || "1");
+  const total = Number(currentSearchTotal || 0);
+  const totalPages = searchTotalPages(total);
+  const prev = document.getElementById("search-prev");
+  const next = document.getElementById("search-next");
+  if (prev) prev.disabled = page <= 1;
+  if (next) next.disabled = total > 0 && page >= totalPages;
+  status.textContent = "page " + page + " / " + (total ? totalPages : "-") + "・total " + total;
+}
+async function setSearchPage(delta) {
+  const total = Number(currentSearchTotal || 0);
+  const totalPages = searchTotalPages(total);
+  const page = Number(document.getElementById("page").value || "1");
+  const target = page + delta;
+  if (!total || target < 1 || target > totalPages) return;
+  document.getElementById("page").value = String(target);
+  await runSearch();
+}
+async function loadSearchCards(ids, searchGen = searchGeneration) {
+  const status = document.getElementById("search-status");
+  const results = document.getElementById("results");
+  const queue = ids.slice();
+  let processed = 0;
+
+  async function processCard(id) {
+    if (searchGen !== searchGeneration) return;
+    status.textContent = "カード読み込み " + processed + "/" + ids.length + ": " + id;
+    const li = results.querySelector("[data-search-id='" + id + "']");
+    const cardStart = performance.now();
+    try {
+      const card = await api("/api/search-card/" + id);
+      if (searchGen !== searchGeneration) return;
+      perfStatus.cardsLoaded++;
+      perfStatus.cardTotalMs += performance.now() - cardStart;
+      recordPerfCache(card._x_cache);
+      renderPerfStatus();
+      if (li) {
+        li.outerHTML = renderSearchCard(card);
+        await loadSearchCardCover(card, searchGen);
+      }
+    } catch (err) {
+      if (searchGen !== searchGeneration) return;
+      perfStatus.cardsLoaded++;
+      perfStatus.cardTotalMs += performance.now() - cardStart;
+      renderPerfStatus();
+      if (li) li.innerHTML = "<span class='meta'>" + escapeHTML(err.message) + "</span>";
+    }
+    processed++;
+  }
+
+  async function worker() {
+    while (queue.length && searchGen === searchGeneration) {
+      await processCard(queue.shift());
+    }
+  }
+
+  const workers = [];
+  const workerCount = Math.min(SEARCH_CARD_CONCURRENCY, ids.length);
+  for (let i = 0; i < workerCount; i++) workers.push(worker());
+  await Promise.all(workers);
+}
+
+function debounceLists() {
+  return new Promise((resolve) => {
+    listsWaiters.push(resolve);
+    if (listsDebounceTimer) clearTimeout(listsDebounceTimer);
+    listsDebounceTimer = setTimeout(() => {
+      listsDebounceTimer = null;
+      const waiters = listsWaiters;
+      listsWaiters = [];
+      for (const resolve of waiters) resolve();
+    }, readListsDebounceMs);
+  });
+}
+
+async function showLists(searchGen) {
+  if (searchGen !== undefined && searchGen !== searchGeneration) return;
+  await debounceLists();
+  if (searchGen !== undefined && searchGen !== searchGeneration) return;
+  let pending = listsFetchPending;
+  if (!pending) {
+    pending = api("/api/lists").then((data) => { if (listsFetchPending === pending) listsFetchPending = null; return data; }, (err) => { if (listsFetchPending === pending) listsFetchPending = null; throw err; });
+    listsFetchPending = pending;
+  }
+  const lists = await pending;
+  if (searchGen !== undefined && searchGen !== searchGeneration) return;
+  document.getElementById("queries").innerHTML = lists.queries.map((q) =>
+    "<li><a href='#/q/" + encodeURIComponent(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
+  document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
+    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
+  document.getElementById("unread").innerHTML = lists.unread.map((row) =>
+    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
+}
+
+async function runSearch() {
+  const query = document.getElementById("query").value.trim();
+  const lang = document.getElementById("lang").value.trim() || "all";
+  const page = Number(document.getElementById("page").value || "1");
+  const searchGen = ++searchGeneration;
+  const status = document.getElementById("search-status");
+  const results = document.getElementById("results");
+  const submit = document.getElementById("search-submit");
+  const originalText = submit.dataset.original || submit.textContent;
+  submit.dataset.original = originalText;
+  status.textContent = "検索実行中: " + query;
+  submit.disabled = true;
+  submit.textContent = "実行中…";
+  results.innerHTML = "<li class='meta'>検索実行中…</li>";
+  const searchStart = performance.now();
+  try {
+    const data = await api("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25");
+    if (searchGen !== searchGeneration) return;
+    perfStatus.searchMs = performance.now() - searchStart;
+    perfStatus.serverTiming = data._x_search_timing || "";
+    recordPerfCache(data._x_cache);
+    renderPerfStatus();
+    const ids = data.ids || (data.results || []).map((r) => r.id);
+    currentSearchTotal = Number(data.total || 0);
+    renderSearchPageStatus();
+    document.getElementById("count").textContent = data.total + " 件・page " + data.page;
+    status.textContent = "検索完了・カード読み込み " + ids.length + "件";
+    results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+    saveSearchState({ query, lang, page, ids, total: data.total });
+    history.replaceState(null, "", searchRoute(query, page));
+    await loadSearchCards(ids, searchGen);
+    if (searchGen !== searchGeneration) return;
+    await showLists(searchGen);
+    status.textContent = "検索完了・カード表示済み " + ids.length + "件";
+  } catch (err) {
+    if (searchGen !== searchGeneration) return;
+    status.textContent = "検索エラー: " + err.message;
+    document.getElementById("note").textContent = err.message;
+  } finally {
+    if (searchGen === searchGeneration) {
+      submit.disabled = false;
+      submit.textContent = originalText;
+    }
+  }
+}
+
+async function handleCardClick(e) {
+  const t = e.target.closest("[data-id][data-page]");
+  if (!t) return;
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  const id = Number(t.dataset.id);
+  const page = Number(t.dataset.page);
+  if (newTabMode) {
+    window.open(route(id, page), "_blank");
+    return;
+  }
+  window.location.href = route(id, page);
+}
+
+document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
+document.getElementById("search-prev").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(-1); });
+document.getElementById("search-next").addEventListener("click", (e) => { e.preventDefault(); setSearchPage(1); });
+document.getElementById("saved-search").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("qname").value.trim();
+  const text = document.getElementById("qtext").value.trim();
+  if (!name || !text) return;
+  try { await post("/api/query", { name, query: text }); await showLists(); }
+  catch (err) { document.getElementById("note").textContent = err.message; }
+});
+document.getElementById("results").addEventListener("click", handleCardClick);
+
+window.addEventListener("hashchange", async () => {
+  const search = parseSearchHash(window.location.hash);
+  if (search) {
+    document.getElementById("query").value = search.query;
+    document.getElementById("page").value = String(search.page);
+    renderSearchPageStatus();
+    await runSearch();
+  }
+});
+
+loadTitleGroups();
+showLists();
+const initialSearch = parseSearchHash(window.location.hash);
+if (initialSearch) {
+  restoreSearchState();
+  document.getElementById("query").value = initialSearch.query;
+  document.getElementById("page").value = String(initialSearch.page);
+  renderSearchPageStatus();
+  runSearch();
+} else {
+  restoreSearchState();
+  runSearch();
+}
+</script>
+</body>
+</html>

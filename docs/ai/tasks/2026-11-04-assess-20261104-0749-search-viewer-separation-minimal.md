@@ -1,8 +1,8 @@
 # 案A（2ページ分割）の最小版：検索と閲覧の完全分離（assess-20261104-0749 項目1）
 
-**Status**: 進行中
+**Status**: 進行中（実装・テスト改修完了、コミット前）
 **Date**: 2026-11-04
-**Next Action**: 判断保留4点（lists 所有ページ / 共有 core / landing 挙動変更承認 / freshness 正典ルールの2ファイル化承認）のユーザー確定 → 実装計画。実装開始指示なしにはコード変更不可
+**Next Action**: A1 実装の A1 変更のみコミット/push。AGENTS.md の Canonical rule 条文章変更は write-protected 領域のまま個別承認待ち。Google Drive 画面確認スクリーンショットは I:\マイドライブ\kilo\assess-20261104-0749-search-viewer-separation-minimal\ に保存済み。
 
 ## 意図 / 背景
 
@@ -97,13 +97,44 @@
   3. 既定 landing を search → viewer へ変更する挙動変更の承認是否需要
   4. `tests/test_canonical_build_freshness.py` の正典ルール（exact bytes 照合）を 2 ファイルへ変更する承認
 
+### 判断保留の解決（ユーザー承認 2026-11-04 08:22・推奨どおり採用）
+
+正典: `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md`
+
+1. 一覧の所有ページ → 検索ページのみ。閲覧ページは `showLists` を呼ばない。ページ間同期機構（BroadcastChannel）は第1版なし。
+2. 小道具（`escapeHTML`・読み込み helper・世代番号 guard・TN URL 組み立て） → ページごとに複製（自己完結）。共有ファイル embed 案は不採用。
+3. 起動ページ → `GET /` = viewer、`GET /search` = search。hash namespace はページごとに単独、回送分岐なし。search URL は `/search#/q/...`。既定 landing を search とする案は不採用。
+4. freshness test → `app/viewer.html`・`app/search.html` の2本照合、失敗メッセージに両ファイル名、画面確認は viewer 基準＋search の served 画面確認を追加。`AGENTS.md` の条文章変更は write-protected 領域のため個別の明示承認が必要（方向承認済み・ファイル編集未実施）。
+
+`docs/ai/decisions/2026-11-01-viewer-single-page-web.md` の「1 ページ Web」の点は上記により部分 supersede（冒頭に Superseded by を追加。native GUI 不採用・`embed` 同梱・bind `127.0.0.1`・local-first 画像経路・SQLite 単一接続は維持）。
+
+### 実装（2026-11-04）
+
+- `app/ui.html` を削除（ゴミ箱送済み）。`app/viewer.html`・`app/search.html` を追加。
+- `app/viewer.go`: `//go:embed viewer.html search.html`、`GET /` は `viewer.html`、`GET /search` は `search.html`。
+- `app/viewer.html`: viewer 自己完結（reader・strip・nav・acquisition・view mode・objectURL LRU・generation guard）。search-owned `showLists`・`searchCardCache`・search objectURL keys は持たない。`prefetchPageImage` は `galleryId !== current.id || backgroundGalleryId !== galleryId` を維持。
+- `app/search.html`: search 自己完結（form・card list・saved searches・favorites/unread・TN-only cover・viewer への絶対リンク `/#/g/...`）。`searchCardCoverSource(card)` は `card.thumbnail` または TN `bigtn` URL のみ。objectURL cache・`currentPriorityDone` 待ちなし。
+- `app/viewer_test.go`: `uiText(t, "viewer.html")` / `uiText(t, "search.html")` へ振り分け、search TN-only・viewer-only objectURL LRU・viewer-only read/favorite sync・cross-page route を再_target。
+- `tests/test_canonical_build_freshness.py`: `app/viewer.html` と `app/search.html` の byte 一致を正典 `hub.exe` へ照合、失敗メッセージに両ファイル名。
+- `tests/strip_rebuild_dom_harness.mjs`: `app/viewer.html`、`openGallery` end anchor を `function renderStrip() {` へ変更。
+- `tests/read_lists_debounce_harness.mjs`: viewer read helper と search lists helper を分離して実行。
+
 ## Verification
 
 - `go vet .`（app）=> 問題なし
-- `go test -count=1 -timeout 300s .`（app）=> `ok hitomi-hub/app 16.023s`（経過 16.0 s）
-- `python -m pytest tests/test_canonical_build_freshness.py -v` => 2 passed（2.70 s）
-- 正典 exe 再構築（`go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`）→ `hub.exe view` で canonical server 起動 → 上記画面確認（合格）。実測値は「画面確認」節の通り。
-- 調査のみ: ソース未変更（変更は本タスク記録のみ）。コミットなし。
+- `go test -count=1 -run '^TestEmbeddedUI' .`（app）=> `ok hitomi-hub/app 0.165s`（UI test 全件）
+- `go test -count=1 -timeout 300s .`（app）=> `ok hitomi-hub/app 17.337s`
+- `python -m pytest tests/ -v` => 51 passed（8.92 s）
+- `node tests/strip_rebuild_dom_harness.mjs` => 18 checks passed
+- `node tests/read_lists_debounce_harness.mjs` => 16 checks passed
+- CLI download（canonical exe・real gallery `4252697`・`--limit 1`）: `attempted=1`, `written=1`, `skipped=0`。保存 file `scratch/p3_canonical_fresh/Galleries/4252697/899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9.webp`、`357106` bytes。
+- Canonical UI/network confirmation（canonical server `http://127.0.0.1:8731`）:
+  - `/api/image/899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9?format=webp` => HTTP 200、`x-cache: miss`、`content-type: image/webp`。
+  - viewer page `/#/g/4252697/page/1`: reader display img 1件、`naturalWidth=2880`、`naturalHeight=1942`。
+  - search page `/search`: 25 cards、25 TN covers、`/api/thumb/...?format=webp&gallery=...&variant=bigtn` HTTP 200、blob objectURL なし、`/api/image` resource なし。
+  - Google Drive task-specific folder: `I:\マイドライブ\kilo\assess-20261104-0749-search-viewer-separation-minimal\`（`viewer_confirmation.png`, `search_confirmation.png`）。
+- `AGENTS.md` の Canonical rule 条文章は未変更。既存テストは `tests/test_canonical_build_freshness.py` 条、canonical build command、UI confirmation 文字列を保持し、照合対象のみ 2 html へ変更済み。
+
 
 ## 完了時 Memory Bank 操作
 

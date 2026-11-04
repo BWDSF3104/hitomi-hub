@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-04-assess-20261104-0749-search-viewer-separation-minimal.md	進行中	判断保留4点（lists 所有ページ / 共有 core / landing 挙動変更承認 / freshness 正典ルールの2ファイル化承認）のユーザー確定 → 実装計画。実装開始指示なしにはコード変更不可
+docs/ai/tasks/2026-11-04-assess-20261104-0749-search-viewer-separation-minimal.md	進行中（実装・テスト改修完了、コミット前）	A1 実装の A1 変更のみコミット/push。AGENTS.md の Canonical rule 条文章変更は write-protected 領域のまま個別承認待ち。Google Drive 画面確認スクリーンショットは I:\マイドライブ\kilo\assess-20261104-0749-search-viewer-separation-minimal\ に保存済み。

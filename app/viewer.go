@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-//go:embed ui.html
+//go:embed viewer.html search.html
 var uiPage embed.FS
 
 type viewer struct {
@@ -112,6 +112,7 @@ func (v *viewer) putInfoCacheLocked(id int, entry *infoCacheEntry) {
 func (v *viewer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", v.index)
+	mux.HandleFunc("GET /search", v.serveSearchPage)
 	mux.HandleFunc("GET /api/lists", v.lists)
 	mux.HandleFunc("GET /api/search", v.search)
 	mux.HandleFunc("GET /api/search-card/{id}", v.searchCard)
@@ -212,7 +213,15 @@ func (v *viewer) index(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	page, err := uiPage.ReadFile("ui.html")
+	v.serveHTML(w, "viewer.html")
+}
+
+func (v *viewer) serveSearchPage(w http.ResponseWriter, r *http.Request) {
+	v.serveHTML(w, "search.html")
+}
+
+func (v *viewer) serveHTML(w http.ResponseWriter, name string) {
+	page, err := uiPage.ReadFile(name)
 	if err != nil {
 		http.Error(w, "ui: "+err.Error(), http.StatusInternalServerError)
 		return

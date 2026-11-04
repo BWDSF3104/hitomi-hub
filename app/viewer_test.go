@@ -17,6 +17,32 @@ import (
 	"time"
 )
 
+func sliceBetween(t *testing.T, s, start, end string) string {
+	t.Helper()
+	startAt := strings.Index(s, start)
+	if startAt < 0 {
+		t.Fatalf("slice start not found: %q", start)
+	}
+	endAt := strings.Index(s[startAt:], end)
+	if endAt < 0 || endAt == 0 {
+		t.Fatalf("slice end not found after start: %q", end)
+	}
+	return s[startAt : startAt+endAt]
+}
+
+func uiText(t *testing.T, names ...string) string {
+	t.Helper()
+	var out []string
+	for _, name := range names {
+		page, err := uiPage.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, string(page))
+	}
+	return strings.Join(out, "\n")
+}
+
 func TestSafeGalleryPathStaysInsideGalleryDir(t *testing.T) {
 	root := filepath.Join("Galleries")
 	cases := []string{"4252697/899dc.webp", "4252697/../secret", "/hitomi.db",
@@ -1420,12 +1446,9 @@ func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 }
 
 func TestEmbeddedUIUsesLocalThumbProxy(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(page), "/api/thumb/") || !strings.Contains(string(page), "thumbURL") {
-		t.Errorf("ui should use local /api/thumb proxy: got %q", string(page))
+	s := uiText(t, "viewer.html", "search.html")
+	if !strings.Contains(s, "/api/thumb/") || !strings.Contains(s, "thumbURL") {
+		t.Errorf("ui should use local /api/thumb proxy: got %q", s)
 	}
 }
 
@@ -1445,11 +1468,7 @@ func TestSearchResultUsesCoverOnlyThumbnail(t *testing.T) {
 }
 
 func TestEmbeddedUIReaderStripUsesFullCacheOrPlaceholder(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if strings.Contains(s, `if (!entry.local && i !== 0) return;`) {
 		t.Errorf("ui reader strip must not hide non-local entries: got %q", s)
 	}
@@ -1477,11 +1496,7 @@ func TestEmbeddedUIReaderStripUsesFullCacheOrPlaceholder(t *testing.T) {
 }
 
 func TestEmbeddedUIStripControlsUseSelectableGroup(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="strip-controls"`) || !strings.Contains(s, `id="strip-group"`) || !strings.Contains(s, `id="strip-group-status"`) {
 		t.Errorf("ui should expose strip group controls: got %q", s)
 	}
@@ -1505,75 +1520,69 @@ func TestEmbeddedUIStripControlsUseSelectableGroup(t *testing.T) {
 }
 
 func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	viewer := uiText(t, "viewer.html")
+	search := uiText(t, "search.html")
+	for _, s := range []string{viewer, search} {
+		if !strings.Contains(s, `const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";`) || !strings.Contains(s, `function targetAttr() {`) || !strings.Contains(s, `target='_blank'`) {
+			t.Errorf("ui should support a query-param new-tab policy while preserving same-tab hash routes: got %q", s)
+		}
+		if !strings.Contains(s, `function newTabHref(hash) {`) || !strings.Contains(s, `window.location.pathname + window.location.search + hash`) {
+			t.Errorf("new-tab mode must build an absolute URL for same-document fragment links because target is ignored on fragment-only navigation: got %q", s)
+		}
 	}
-	s := string(page)
-	if !strings.Contains(s, `const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";`) || !strings.Contains(s, `function targetAttr() {`) || !strings.Contains(s, `target='_blank'`) {
-		t.Errorf("ui should support a query-param new-tab policy while preserving same-tab hash routes: got %q", s)
-	}
-	if !strings.Contains(s, `function newTabHref(hash) {`) || !strings.Contains(s, `window.location.pathname + window.location.search + hash`) {
-		t.Errorf("new-tab mode must build an absolute URL for same-document fragment links because target is ignored on fragment-only navigation: got %q", s)
-	}
-	renderStart := strings.Index(s, "function renderSearchCard(r) {")
-	renderBody := s[renderStart:strings.Index(s, "\nasync function loadSearchCardCover(r, searchGen = searchGeneration) {")]
+
+	renderBody := sliceBetween(t, search, "function renderSearchCard(r) {", "async function loadSearchCardCover(r, searchGen = searchGeneration) {")
 	if !strings.Contains(renderBody, `targetAttr()`) {
 		t.Errorf("search card links should use the new-tab query policy: got %q", renderBody)
 	}
-	listStart := strings.Index(s, "async function showLists(showGen, openGen) {")
-	listBody := s[listStart:strings.Index(s, "\nfunction renderStripLoading(id) {")]
-	if !strings.Contains(listBody, `targetAttr()`) || !strings.Contains(listBody, `targetAttr()`) {
+	listBody := sliceBetween(t, search, "async function showLists(searchGen) {", "async function runSearch() {")
+	if !strings.Contains(listBody, `targetAttr()`) {
 		t.Errorf("saved search, favorites, and unread links should use the new-tab query policy: got %q", listBody)
 	}
-	stripStart := strings.Index(s, "function renderStrip() {")
-	stripBody := s[stripStart:strings.Index(s, "\nfunction highlightStrip() {")]
+	stripBody := sliceBetween(t, viewer, "function renderStrip() {", "function highlightStrip() {")
 	if !strings.Contains(stripBody, `targetAttr()`) {
 		t.Errorf("strip links should use the new-tab query policy: got %q", stripBody)
 	}
-	handlerStart := strings.Index(s, "async function handleCardClick(e) {")
-	if handlerStart < 0 {
-		t.Fatalf("ui should have a shared card click handler for #results and #thumbs: got %q", s)
-	}
-	handlerEnd := strings.Index(s, "\ndocument.getElementById(\"results\").addEventListener(\"click\", handleCardClick);")
-	if handlerEnd <= handlerStart {
-		t.Fatalf("card click handler must be wired to #results: got %q", s)
-	}
-	handlerBody := s[handlerStart:handlerEnd]
-	guard := `if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;`
-	guardAt := strings.Index(handlerBody, guard)
-	preventAt := strings.Index(handlerBody, `e.preventDefault();`)
-	if guardAt < 0 || preventAt < 0 {
-		t.Errorf("card click handler must keep the modifier-key native passthrough and plain-click preventDefault: got %q", handlerBody)
-	} else if guardAt > preventAt {
-		t.Errorf("modifier-key clicks must return before preventDefault so native new-tab behavior stays: got %q", handlerBody)
-	}
-	openAt := strings.Index(handlerBody, `window.open(newTabHref(route(id, page)), "_blank");`)
-	galleryAt := strings.Index(handlerBody, `await openGallery(id, page);`)
-	if openAt < 0 || galleryAt < 0 {
-		t.Errorf("card click handler must open a new tab in new-tab mode and keep same-tab openGallery otherwise: got %q", handlerBody)
-	} else {
-		if !strings.Contains(handlerBody, `if (newTabMode) {`) {
-			t.Errorf("the new-tab branch must depend on newTabMode: got %q", handlerBody)
-		}
-		if openAt > galleryAt {
-			t.Errorf("new-tab mode must open the new tab and return before same-tab openGallery: got %q", handlerBody)
+
+	viewerHandlerBody := sliceBetween(t, viewer, "async function handleCardClick(e) {", "document.getElementById(\"thumbs\")")
+	searchHandlerBody := sliceBetween(t, search, "async function handleCardClick(e) {", "document.getElementById(\"results\")")
+	for _, handlerBody := range []string{viewerHandlerBody, searchHandlerBody} {
+		guard := `if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;`
+		guardAt := strings.Index(handlerBody, guard)
+		preventAt := strings.Index(handlerBody, `e.preventDefault();`)
+		if guardAt < 0 || preventAt < 0 || guardAt > preventAt {
+			t.Errorf("card click handler must keep the modifier-key native passthrough before preventDefault: got %q", handlerBody)
 		}
 	}
-	if !strings.Contains(s, `document.getElementById("results").addEventListener("click", handleCardClick);`) || !strings.Contains(s, `document.getElementById("thumbs").addEventListener("click", handleCardClick);`) {
-		t.Errorf("the shared card click handler must be wired to #results and #thumbs: got %q", s)
+
+	viewerOpenAt := strings.Index(viewerHandlerBody, `window.open(newTabHref(route(id, page)), "_blank");`)
+	viewerGalleryAt := strings.Index(viewerHandlerBody, `await openGallery(id, page);`)
+	if viewerOpenAt < 0 || viewerGalleryAt < 0 || viewerOpenAt > viewerGalleryAt {
+		t.Errorf("viewer card click handler must open a new tab in new-tab mode before same-tab openGallery: got %q", viewerHandlerBody)
 	}
-	if !strings.Contains(s, `window.addEventListener("hashchange"`) {
-		t.Errorf("same-tab hashchange routing must remain available when new-tab mode is not requested: got %q", s)
+	if !strings.Contains(viewerHandlerBody, `if (newTabMode) {`) {
+		t.Errorf("viewer new-tab branch must depend on newTabMode: got %q", viewerHandlerBody)
+	}
+
+	searchOpenAt := strings.Index(searchHandlerBody, `window.open(route(id, page), "_blank");`)
+	searchNavigateAt := strings.Index(searchHandlerBody, `window.location.href = route(id, page);`)
+	if searchOpenAt < 0 || searchNavigateAt < 0 || searchOpenAt > searchNavigateAt {
+		t.Errorf("search card click handler must open cross-page new-tab route before same-tab navigation to viewer: got %q", searchHandlerBody)
+	}
+	if !strings.Contains(searchHandlerBody, `if (newTabMode) {`) {
+		t.Errorf("search new-tab branch must depend on newTabMode: got %q", searchHandlerBody)
+	}
+
+	if !strings.Contains(search, `document.getElementById("results").addEventListener("click", handleCardClick);`) || !strings.Contains(viewer, `document.getElementById("thumbs").addEventListener("click", handleCardClick);`) {
+		t.Errorf("card click handlers must be wired to #results on search and #thumbs on viewer: got %q / %q", search, viewer)
+	}
+	if !strings.Contains(viewer, `window.addEventListener("hashchange"`) || !strings.Contains(search, `window.addEventListener("hashchange"`) {
+		t.Errorf("same-tab hashchange routing must remain available when new-tab mode is not requested: got %q", viewer)
 	}
 }
 
 func TestEmbeddedUIIndependentScrollPanels(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html", "search.html")
 	if !strings.Contains(s, `body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }`) {
 		t.Errorf("body should constrain the viewport so panels can scroll independently: got %q", s)
 	}
@@ -1586,11 +1595,7 @@ func TestEmbeddedUIIndependentScrollPanels(t *testing.T) {
 }
 
 func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "search.html")
 	if !strings.Contains(s, `id="search-status"`) || !strings.Contains(s, `検索実行中`) {
 		t.Errorf("ui should show search executing status: got %q", s)
 	}
@@ -1606,11 +1611,7 @@ func TestEmbeddedUIShowsSearchExecutingStatus(t *testing.T) {
 }
 
 func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="prefetch-status"`) {
 		t.Errorf("ui should show background prefetch status: got %q", s)
 	}
@@ -1661,63 +1662,47 @@ func TestEmbeddedUIPrefetchesFullImagesInBackground(t *testing.T) {
 }
 
 func TestEmbeddedUIProtectsAsyncReaderWrites(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	viewer := uiText(t, "viewer.html")
+	if !strings.Contains(viewer, `let openGeneration = 0;`) || !strings.Contains(viewer, `let showGeneration = 0;`) || !strings.Contains(viewer, `let renderGeneration = 0;`) {
+		t.Errorf("ui should guard async reader renders with generations: got %q", viewer)
 	}
-	s := string(page)
-	if !strings.Contains(s, `let openGeneration = 0;`) || !strings.Contains(s, `let showGeneration = 0;`) || !strings.Contains(s, `let renderGeneration = 0;`) {
-		t.Errorf("ui should guard async reader renders with generations: got %q", s)
-	}
-	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
-	if openStart < 0 {
-		t.Fatalf("openGallery function not found")
-	}
-	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
-	if !strings.Contains(openBody, `const gen = ++openGeneration;`) || !strings.Contains(openBody, `if (gen !== openGeneration) return;`) || !strings.Contains(openBody, `await showLists(showGeneration, gen)`) {
+
+	openBody := sliceBetween(t, viewer, "async function openGallery(id, page, second) {", "function renderStrip() {")
+	if !strings.Contains(openBody, `const gen = ++openGeneration;`) || !strings.Contains(openBody, `if (gen !== openGeneration) return;`) {
 		t.Errorf("openGallery should ignore stale async gallery loads: got %q", openBody)
 	}
-	showStart := strings.Index(s, "async function showPage() {")
-	if showStart < 0 {
-		t.Fatalf("showPage function not found")
+	if strings.Contains(openBody, `showLists(`) {
+		t.Errorf("openGallery on viewer must not call search-owned showLists: got %q", openBody)
 	}
-	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+
+	showBody := sliceBetween(t, viewer, "async function showPage() {", "async function openGallery(id, page, second) {")
 	if !strings.Contains(showBody, `const showGen = ++showGeneration;`) || !strings.Contains(showBody, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
 		t.Errorf("showPage should ignore stale async reader updates: got %q", showBody)
 	}
-	if !strings.Contains(showBody, `refreshStrip();`) {
-		t.Errorf("showPage should update the strip immediately before waiting for async read updates: got %q", showBody)
+	if !strings.Contains(showBody, `refreshStrip();`) || !strings.Contains(showBody, `runBackgroundRead(showGen, openGen);`) {
+		t.Errorf("showPage should update the strip immediately and move read writes to a generation-guarded helper: got %q", showBody)
 	}
-	if strings.Contains(showBody, `await post("/api/read"`) || strings.Contains(showBody, `await showLists()`) {
-		t.Errorf("showPage display path should not block on post read or showLists: got %q", showBody)
+	if strings.Contains(showBody, `await post("/api/read"`) || strings.Contains(showBody, `showLists(`) {
+		t.Errorf("showPage display path should not block on post read or search-owned showLists: got %q", showBody)
 	}
-	if !strings.Contains(s, `function runBackgroundReadAndLists(showGen, openGen) {`) || !strings.Contains(s, `showLists(showGen, openGen)`) {
-		t.Errorf("showPage should move read and lists updates to a generation-guarded background helper: got %q", s)
+
+	readHelper := sliceBetween(t, viewer, "function runBackgroundRead(showGen, openGen) {", "async function showPage() {")
+	if strings.Contains(readHelper, `showLists(`) {
+		t.Errorf("viewer read helper must not call search-owned showLists: got %q", readHelper)
 	}
-	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
-	if loadStart < 0 {
-		t.Fatalf("loadFullImage function not found")
-	}
-	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+
+	loadBody := sliceBetween(t, viewer, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {", "function renderReader() {")
 	if !strings.Contains(loadBody, `const targetRender = Number(img.dataset.render);`) || !strings.Contains(loadBody, `loadRender !== renderGeneration`) || !strings.Contains(loadBody, `Number(img.dataset.render) === targetRender`) {
 		t.Errorf("loadFullImage should not write stale renders: got %q", loadBody)
 	}
-	renderStart := strings.Index(s, "function renderReader() {")
-	if renderStart < 0 {
-		t.Fatalf("renderReader function not found")
-	}
-	renderBody := s[renderStart:strings.Index(s, "\nasync function runPriority(displayed, signal) {")]
+	renderBody := sliceBetween(t, viewer, "function renderReader() {", "async function runPriority(displayed, signal) {")
 	if !strings.Contains(renderBody, `renderGeneration++;`) || !strings.Contains(renderBody, `data-render='`) {
 		t.Errorf("renderReader should mark the current render generation: got %q", renderBody)
 	}
 }
 
 func TestEmbeddedUIDebouncesResizeRenderToSingleCall(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	handlerStart := strings.Index(s, "window.addEventListener(\"resize\", () => {")
 	if handlerStart < 0 {
 		t.Fatalf("resize handler not found")
@@ -1770,89 +1755,71 @@ func TestEmbeddedUIDebouncesResizeRenderToSingleCall(t *testing.T) {
 }
 
 func TestEmbeddedUIDebouncesReadAndListsToSingleCall(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	viewer := uiText(t, "viewer.html")
+	search := uiText(t, "search.html")
+
+	viewerReadBlock := sliceBetween(t, viewer, "const readListsDebounceMs = 250;", "async function showPage() {")
+	if !strings.Contains(viewerReadBlock, `const readListsDebounceMs = 250;`) {
+		t.Fatalf("viewer read debounce constant not found")
 	}
-	s := string(page)
-	blockStart := strings.Index(s, "const readListsDebounceMs = 250;")
-	if blockStart < 0 {
-		t.Fatalf("read/lists debounce constant not found")
-	}
-	block := s[blockStart:strings.Index(s, "\nasync function showPage() {")]
-	helperStart := strings.Index(block, "function runBackgroundReadAndLists(showGen, openGen) {")
-	if helperStart < 0 {
-		t.Fatalf("read helper not found")
-	}
-	helper := block[helperStart:]
-	clearIndex := strings.Index(helper, `clearTimeout(readListsDebounceTimer)`)
-	setTimeoutIndex := strings.Index(helper, `setTimeout(() => {`)
-	postIndex := strings.Index(helper, `post("/api/read", { gallery_id: current.id, page: current.page })`)
+	readHelper := sliceBetween(t, viewer, "function runBackgroundRead(showGen, openGen) {", "async function showPage() {")
+	clearIndex := strings.Index(readHelper, `clearTimeout(readListsDebounceTimer)`)
+	setTimeoutIndex := strings.Index(readHelper, `setTimeout(() => {`)
+	postIndex := strings.Index(readHelper, `post("/api/read", { gallery_id: current.id, page: current.page })`)
 	if clearIndex < 0 || setTimeoutIndex < 0 || clearIndex >= setTimeoutIndex {
-		t.Errorf("consecutive page movements should coalesce to one debounced read run: got %q", helper)
+		t.Errorf("viewer consecutive page movements should coalesce to one debounced read run: got %q", readHelper)
 	}
 	if postIndex < 0 || postIndex < setTimeoutIndex {
-		t.Errorf("read post should only run inside the debounced timer callback, not synchronously per showPage: got %q", helper)
+		t.Errorf("viewer read post should only run inside the debounced timer callback: got %q", readHelper)
 	}
-	if strings.Count(helper, `post("/api/read"`) != 1 {
-		t.Errorf("debounced run should post exactly once per burst: got %q", helper)
+	if strings.Count(readHelper, `post("/api/read"`) != 1 {
+		t.Errorf("viewer debounced run should post exactly once per burst: got %q", readHelper)
 	}
-	if !strings.Contains(helper, `if (readKey === lastReadPostKey)`) {
-		t.Errorf("re-showing the same gallery and page should skip the duplicate post: got %q", helper)
+	if !strings.Contains(readHelper, `if (readKey === lastReadPostKey)`) {
+		t.Errorf("viewer re-showing the same gallery and page should skip the duplicate post: got %q", readHelper)
 	}
-	skipKeyIndex := strings.Index(helper, `lastReadPostKey = readKey;`)
+	skipKeyIndex := strings.Index(readHelper, `lastReadPostKey = readKey;`)
 	if skipKeyIndex < 0 || skipKeyIndex < postIndex {
-		t.Errorf("the duplicate skip key must be recorded after the post succeeds, inside the then callback: got %q", helper)
+		t.Errorf("viewer duplicate skip key must be recorded after the post succeeds: got %q", readHelper)
 	}
-	if !strings.Contains(helper, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) || !strings.Contains(helper[setTimeoutIndex:], `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
-		t.Errorf("read helper must keep the generation guard at entry and inside the debounced run: got %q", helper)
+	if !strings.Contains(readHelper, `if (showGen !== showGeneration || openGen !== openGeneration) return;`) || !strings.Contains(readHelper[setTimeoutIndex:], `if (showGen !== showGeneration || openGen !== openGeneration) return;`) {
+		t.Errorf("viewer read helper must keep the generation guard at entry and inside the debounced run: got %q", readHelper)
 	}
-	if !strings.Contains(block, `function debounceLists() {`) {
-		t.Errorf("the lists display must be debounced through a shared debounce helper: got %q", block)
+
+	searchBlock := sliceBetween(t, search, "const readListsDebounceMs = 250;", "async function runSearch() {")
+	listsHelper := sliceBetween(t, searchBlock, "function debounceLists() {", "async function showLists(searchGen) {")
+	if !strings.Contains(searchBlock, `function debounceLists() {`) {
+		t.Fatalf("search lists debounce helper not found")
 	}
-	listsHelper := block[:helperStart]
 	if strings.Index(listsHelper, `clearTimeout(listsDebounceTimer)`) < 0 || strings.Index(listsHelper, `clearTimeout(listsDebounceTimer)`) >= strings.Index(listsHelper, `setTimeout(() => {`) {
-		t.Errorf("consecutive list displays should coalesce to one debounced run: got %q", listsHelper)
+		t.Errorf("search consecutive list displays should coalesce to one debounced run: got %q", listsHelper)
 	}
-	if !strings.Contains(block, `showLists(showGen, openGen)`) || !strings.Contains(block, `highlightStrip();`) {
-		t.Errorf("debounced run must keep the guarded lists display and strip highlight: got %q", block)
-	}
-	listsStart := strings.Index(s, "async function showLists(showGen, openGen) {")
-	if listsStart < 0 {
-		t.Fatalf("showLists function not found")
-	}
-	listsBody := s[listsStart:strings.Index(s, "\nfunction renderStripLoading(id) {")]
+	listsBody := sliceBetween(t, search, "async function showLists(searchGen) {", "async function runSearch() {")
 	if !strings.Contains(listsBody, `await debounceLists();`) {
-		t.Errorf("showLists should wait for the debounce window before fetching: got %q", listsBody)
+		t.Errorf("search showLists should wait for the debounce window before fetching: got %q", listsBody)
 	}
 	if !strings.Contains(listsBody, `if (!pending)`) || !strings.Contains(listsBody, `listsFetchPending`) {
-		t.Errorf("showLists should share one in-flight lists fetch per debounce window: got %q", listsBody)
+		t.Errorf("search showLists should share one in-flight lists fetch per debounce window: got %q", listsBody)
 	}
 	if strings.Count(listsBody, `api("/api/lists")`) != 1 {
-		t.Errorf("showLists should fetch lists at most once per window: got %q", listsBody)
+		t.Errorf("search showLists should fetch lists at most once per window: got %q", listsBody)
 	}
-	if strings.Count(listsBody, `if (showGen !== undefined && (showGen !== showGeneration || openGen !== openGeneration)) return;`) < 3 {
-		t.Errorf("showLists must keep the generation guard before and after the async debounce and fetch: got %q", listsBody)
+	if strings.Count(listsBody, `if (searchGen !== undefined && searchGen !== searchGeneration) return;`) < 3 {
+		t.Errorf("search showLists must keep the search generation guard before and after the async debounce and fetch: got %q", listsBody)
 	}
 	if !strings.Contains(listsBody, `targetAttr()`) {
-		t.Errorf("showLists render must be unchanged: got %q", listsBody)
+		t.Errorf("search showLists render must keep the new-tab target policy: got %q", listsBody)
 	}
-	showStart := strings.Index(s, "async function showPage() {")
-	if showStart < 0 {
-		t.Fatalf("showPage function not found")
+
+	viewerShowBody := sliceBetween(t, viewer, "async function showPage() {", "async function openGallery(id, page, second) {")
+	if strings.Contains(viewerShowBody, `await post("/api/read"`) || strings.Contains(viewerShowBody, `showLists`) {
+		t.Errorf("viewer showPage display path must not block on the debounced read or search-owned lists run: got %q", viewerShowBody)
 	}
-	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
-	if strings.Contains(showBody, `await post("/api/read"`) || strings.Contains(showBody, `await showLists`) {
-		t.Errorf("showPage display path must not block on the debounced read or lists run: got %q", showBody)
+	if !strings.Contains(viewerShowBody, `runBackgroundRead(showGen, openGen);`) {
+		t.Errorf("viewer showPage must keep the generation-guarded background read helper call: got %q", viewerShowBody)
 	}
-	if !strings.Contains(showBody, `runBackgroundReadAndLists(showGen, openGen);`) {
-		t.Errorf("showPage must keep the generation-guarded background helper call: got %q", showBody)
-	}
-	loadStart := strings.Index(s, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {")
-	if loadStart < 0 {
-		t.Fatalf("loadFullImage function not found")
-	}
-	loadBody := s[loadStart:strings.Index(s, "\nfunction renderReader() {")]
+
+	loadBody := sliceBetween(t, viewer, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {", "function renderReader() {")
 	if !strings.Contains(loadBody, `fetch(fullSrc, { cache: "no-store", signal })`) || !strings.Contains(loadBody, `const blob = await r.blob();`) || !strings.Contains(loadBody, `const objectUrl = URL.createObjectURL(blob);`) || !strings.Contains(loadBody, `img.src = objectUrl;`) {
 		t.Errorf("debounce must not change the objectURL display path: got %q", loadBody)
 	}
@@ -1865,57 +1832,45 @@ func TestEmbeddedUIDebouncesReadAndListsToSingleCall(t *testing.T) {
 }
 
 func TestEmbeddedUIPageMovementKeepsStripNodes(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	viewer := uiText(t, "viewer.html")
+	if !strings.Contains(viewer, `let stripRenderedGallery = null;`) || !strings.Contains(viewer, `let stripRenderedGroup = null;`) {
+		t.Errorf("viewer should track the rendered strip window per gallery: got %q", viewer)
 	}
-	s := string(page)
-	if !strings.Contains(s, `let stripRenderedGallery = null;`) || !strings.Contains(s, `let stripRenderedGroup = null;`) {
-		t.Errorf("ui should track the rendered strip window per gallery: got %q", s)
-	}
-	showStart := strings.Index(s, "async function showPage() {")
-	if showStart < 0 {
-		t.Fatalf("showPage function not found")
-	}
-	showBody := s[showStart:strings.Index(s, "\nfunction renderStrip() {")]
+
+	showBody := sliceBetween(t, viewer, "async function showPage() {", "async function openGallery(id, page, second) {")
 	if !strings.Contains(showBody, `refreshStrip();`) || strings.Contains(showBody, `renderStrip();`) {
 		t.Errorf("showPage page movement should update strip via refreshStrip only, not full rebuild: got %q", showBody)
 	}
-	refreshStart := strings.Index(s, "function refreshStrip() {")
-	if refreshStart < 0 {
-		t.Fatalf("refreshStrip function not found")
-	}
-	refreshBody := s[refreshStart:strings.Index(s, "\nasync function openGallery(id, page, second) {")]
-	if !strings.Contains(refreshBody, `stripRenderedGallery === current.id && group === stripRenderedGroup`) || !strings.Contains(refreshBody, `highlightStrip();`) {
-		t.Errorf("refreshStrip should change only the active class when the rendered group window is unchanged: got %q", refreshBody)
-	}
-	if strings.Index(refreshBody, `highlightStrip();`) > strings.Index(refreshBody, `renderStrip();`) {
-		t.Errorf("refreshStrip should return after highlight-only before any full rebuild: got %q", refreshBody)
-	}
-	renderStart := strings.Index(s, "function renderStrip() {")
-	renderBody := s[renderStart:strings.Index(s, "\nfunction highlightStrip() {")]
-	if !strings.Contains(renderBody, `stripRenderedGallery = current.id;`) || !strings.Contains(renderBody, `stripRenderedGroup = group;`) {
-		t.Errorf("renderStrip should record the rendered gallery and group window: got %q", renderBody)
-	}
-	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
-	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
+
+	openBody := sliceBetween(t, viewer, "async function openGallery(id, page, second) {", "function renderStrip() {")
 	if !strings.Contains(openBody, `stripRenderedGallery = null;`) || !strings.Contains(openBody, `stripRenderedGroup = null;`) {
 		t.Errorf("openGallery should reset strip rebuild state so gallery open rebuilds once: got %q", openBody)
 	}
 	if strings.Contains(openBody, `renderStrip();`) {
 		t.Errorf("openGallery should not rebuild the strip again after showPage: got %q", openBody)
 	}
-	if !strings.Contains(s, `function highlightStrip() {`) || !strings.Contains(s, `img.classList.toggle("current"`) {
-		t.Errorf("highlightStrip should toggle the active class on existing strip img nodes: got %q", s)
+
+	renderBody := sliceBetween(t, viewer, "function renderStrip() {", "function highlightStrip() {")
+	if !strings.Contains(renderBody, `stripRenderedGallery = current.id;`) || !strings.Contains(renderBody, `stripRenderedGroup = group;`) {
+		t.Errorf("renderStrip should record the rendered gallery and group window: got %q", renderBody)
+	}
+
+	refreshBody := sliceBetween(t, viewer, "function refreshStrip() {", "function renderStripLoading")
+	if !strings.Contains(refreshBody, `stripRenderedGallery === current.id && group === stripRenderedGroup`) || !strings.Contains(refreshBody, `highlightStrip();`) {
+		t.Errorf("refreshStrip should change only the active class when the rendered group window is unchanged: got %q", refreshBody)
+	}
+	if strings.Index(refreshBody, `highlightStrip();`) > strings.Index(refreshBody, `renderStrip();`) {
+		t.Errorf("refreshStrip should return after highlight-only before any full rebuild: got %q", refreshBody)
+	}
+
+	highlightBody := sliceBetween(t, viewer, "function highlightStrip() {", "function refreshStrip() {")
+	if !strings.Contains(highlightBody, `img.classList.toggle("current"`) {
+		t.Errorf("highlightStrip should toggle the active class on existing strip img nodes: got %q", highlightBody)
 	}
 }
 
 func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	updateStart := strings.Index(s, "function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")
 	if updateStart < 0 {
 		t.Fatalf("updatePrefetchCounts function not found")
@@ -1963,22 +1918,20 @@ func TestEmbeddedUIStaleAsyncWritesDoNotPolluteStatusOrStrip(t *testing.T) {
 }
 
 func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	viewer := uiText(t, "viewer.html")
+	search := uiText(t, "search.html")
+
+	if !strings.Contains(viewer, `const galleryCache = new Map();`) {
+		t.Errorf("viewer should cache opened gallery data for immediate navigation: got %q", viewer)
 	}
-	s := string(page)
-	if !strings.Contains(s, `const galleryCache = new Map();`) || !strings.Contains(s, `const searchCardCache = new Map();`) {
-		t.Errorf("ui should cache opened gallery data and search card metadata for immediate navigation: got %q", s)
+	if !strings.Contains(search, `const searchCardCache = new Map();`) || !strings.Contains(search, `function renderSearchCard(r) {`) || !strings.Contains(search, `searchCardCache.set(r.id, r);`) {
+		t.Errorf("search should cache search card metadata for immediate display: got %q", search)
 	}
-	if !strings.Contains(s, `function renderSearchCard(r) {`) || !strings.Contains(s, `searchCardCache.set(r.id, r);`) || !strings.Contains(s, `function showGalleryMetaFromCache(id) {`) {
-		t.Errorf("renderSearchCard should cache card metadata and showGalleryMetaFromCache should use it: got %q", s)
+	if strings.Contains(viewer, `searchCardCache`) {
+		t.Errorf("viewer open path must not depend on search-page card cache: got %q", viewer)
 	}
-	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
-	if openStart < 0 {
-		t.Fatalf("openGallery function not found")
-	}
-	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
+
+	openBody := sliceBetween(t, viewer, "async function openGallery(id, page, second) {", "function renderStrip() {")
 	if !strings.Contains(openBody, `if (prefetchAbort) prefetchAbort.abort();`) || !strings.Contains(openBody, `if (backgroundSignal) backgroundSignal.abort();`) {
 		t.Errorf("openGallery should abort old prefetch immediately before the gallery API await: got %q", openBody)
 	}
@@ -1986,32 +1939,26 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 		t.Errorf("openGallery should update the gallery route immediately before waiting for gallery data: got %q", openBody)
 	}
 	if !strings.Contains(openBody, `showGalleryMetaFromCache(id);`) || !strings.Contains(openBody, `const cached = galleryCache.get(id);`) || !strings.Contains(openBody, `if (cached) {`) || !strings.Contains(openBody, `galleryCache.set(id, data);`) {
-		t.Errorf("openGallery should use cached search card metadata and cached gallery data for immediate page movement: got %q", openBody)
+		t.Errorf("openGallery should use cached gallery data for immediate page movement: got %q", openBody)
 	}
-	if !strings.Contains(s, `function showGalleryMetaFromCache(id) {`) || !strings.Contains(s, `<span class='meta'>loading</span>`) || !strings.Contains(s, `setPrefetchStatus("gallery read load: " + id);`) {
-		t.Errorf("showGalleryMetaFromCache should show loading status before async gallery data arrives: got %q", s)
+
+	cacheBody := sliceBetween(t, viewer, "function showGalleryMetaFromCache(id) {", "function updateThumbCache(key, objectUrl) {")
+	if !strings.Contains(cacheBody, `const card = galleryCache.get(id);`) || !strings.Contains(cacheBody, `<span class='meta'>loading</span>`) || !strings.Contains(cacheBody, `setPrefetchStatus("gallery read load: " + id);`) {
+		t.Errorf("showGalleryMetaFromCache should show loading status before async gallery data arrives: got %q", cacheBody)
+	}
+	if strings.Contains(cacheBody, `searchCardCache`) {
+		t.Errorf("viewer showGalleryMetaFromCache must use viewer gallery cache, not search card cache: got %q", cacheBody)
 	}
 }
 
 func TestEmbeddedUIResetsBackgroundGalleryAfterOpenGalleryAbort(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
-	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
-	if openStart < 0 {
-		t.Fatalf("openGallery function not found")
-	}
-	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
+	viewer := uiText(t, "viewer.html")
+	openBody := sliceBetween(t, viewer, "async function openGallery(id, page, second) {", "function renderStrip() {")
 	if !strings.Contains(openBody, `backgroundGalleryId = null;`) {
 		t.Errorf("openGallery should reset backgroundGalleryId after abort so ensureBackgroundPrefetch creates a new controller: got %q", openBody)
 	}
-	retryStart := strings.Index(s, "async function manualRetryFailedFullImages() {")
-	if retryStart < 0 {
-		t.Fatalf("manualRetryFailedFullImages function not found")
-	}
-	retryBody := s[retryStart:strings.Index(s, "\nfunction startBackgroundWorkers(signal) {")]
+
+	retryBody := sliceBetween(t, viewer, "async function manualRetryFailedFullImages() {", "function startBackgroundWorkers(signal) {")
 	if !strings.Contains(retryBody, `catch (err) {`) || !strings.Contains(retryBody, `updatePrefetchCounts("error", entry, current.id, true);`) {
 		t.Errorf("manualRetryFailedFullImages should catch aborted fetch errors instead of leaking unhandled rejection: got %q", retryBody)
 	}
@@ -2049,47 +1996,37 @@ func TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen(t *testing.T) {
 }
 
 func TestEmbeddedUIShowsImmediateReaderLoadingForUncachedGallery(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	viewer := uiText(t, "viewer.html")
+	search := uiText(t, "search.html")
+
+	if strings.Contains(viewer, `function galleryDataFromCard(card) {`) || strings.Contains(viewer, `searchCardCache`) {
+		t.Errorf("viewer should not use search-page card cache for immediate gallery open: got %q", viewer)
 	}
-	s := string(page)
-	if !strings.Contains(s, `function galleryDataFromCard(card) {`) || !strings.Contains(s, `card.files`) {
-		t.Errorf("ui should use full search card data for immediate gallery open: got %q", s)
+	if !strings.Contains(search, `searchCardCache`) || !strings.Contains(search, `function searchCardCoverSource(card) {`) || !strings.Contains(search, `card.thumbnail`) {
+		t.Errorf("search page should keep search card cache metadata and TN cover helper for its own card display: got %q", search)
 	}
-	if !strings.Contains(s, `function renderGalleryLoading(id, page, second) {`) || !strings.Contains(s, `data-reader-loading`) || !strings.Contains(s, `読込中`) {
-		t.Errorf("ui should render immediate reader loading for uncached gallery data: got %q", s)
+
+	openBody := sliceBetween(t, viewer, "async function openGallery(id, page, second) {", "function renderStrip() {")
+	if !strings.Contains(viewer, `function renderGalleryLoading(id, page, second) {`) || !strings.Contains(viewer, `data-reader-loading`) || !strings.Contains(viewer, `読込中`) {
+		t.Errorf("viewer should render immediate reader loading for uncached gallery data: got %q", viewer)
 	}
-	openStart := strings.Index(s, "async function openGallery(id, page, second) {")
-	if openStart < 0 {
-		t.Fatalf("openGallery function not found")
-	}
-	openBody := s[openStart:strings.Index(s, "\nasync function showLists(showGen, openGen) {")]
-	if !strings.Contains(openBody, `const card = searchCardCache.get(id);`) || !strings.Contains(openBody, `const fullCardData = galleryDataFromCard(card);`) || !strings.Contains(openBody, `if (fullCardData) {`) {
-		t.Errorf("openGallery should use full cached search card data immediately: got %q", openBody)
-	}
+
 	metaStart := strings.Index(openBody, `showGalleryMetaFromCache(id);`)
 	loadingStart := strings.Index(openBody, `renderGalleryLoading(id, page, second);`)
-	awaitStart := strings.Index(openBody, `await api("/api/gallery/" + id);`)
-	if metaStart < 0 || loadingStart < 0 || awaitStart < 0 || metaStart > loadingStart || loadingStart > awaitStart {
-		t.Errorf("openGallery should show loading UI before waiting for uncached gallery data: got %q", openBody)
-	}
-	if !strings.Contains(openBody, `renderStripLoading(id);`) || !strings.Contains(s, `data-strip-loading`) {
-		t.Errorf("openGallery should immediately replace old strip thumbnails with loading placeholder: got %q", openBody)
-	}
-	stripStart := strings.Index(openBody, `renderGalleryLoading(id, page, second);`)
 	stripLoadingStart := strings.Index(openBody, `renderStripLoading(id);`)
-	if stripStart < 0 || stripLoadingStart < 0 || stripLoadingStart > awaitStart {
-		t.Errorf("openGallery should clear old strip thumbnails before waiting for uncached gallery data: got %q", openBody)
+	awaitStart := strings.Index(openBody, `await api("/api/gallery/" + id);`)
+	if metaStart < 0 || loadingStart < 0 || stripLoadingStart < 0 || awaitStart < 0 {
+		t.Errorf("openGallery should show loading UI before waiting for uncached gallery data: got %q", openBody)
+	} else if metaStart > loadingStart || loadingStart > stripLoadingStart || stripLoadingStart > awaitStart {
+		t.Errorf("openGallery should show reader and strip loading before waiting for uncached gallery data: got %q", openBody)
+	}
+	if !strings.Contains(viewer, `data-strip-loading`) {
+		t.Errorf("openGallery should immediately replace old strip thumbnails with loading placeholder: got %q", viewer)
 	}
 }
 
 func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "search.html")
 	if !strings.Contains(s, `const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";`) || !strings.Contains(s, `let searchGeneration = 0;`) {
 		t.Errorf("ui should persist search state and guard async search writes: got %q", s)
 	}
@@ -2129,11 +2066,7 @@ func TestEmbeddedUIPreservesSearchStateAcrossReload(t *testing.T) {
 }
 
 func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="view-mode"`) || !strings.Contains(s, `value="double"`) || !strings.Contains(s, `value="fullscreen"`) {
 		t.Errorf("ui should expose reader view modes: got %q", s)
 	}
@@ -2193,11 +2126,7 @@ func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 }
 
 func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `function displayPlaceholder(entry) { return ""; }`) {
 		t.Errorf("ui should use empty display placeholders so reader display does not add extra TN requests: got %q", s)
 	}
@@ -2278,17 +2207,13 @@ func TestEmbeddedUIShowsPlaceholderThumbUntilFullLoaded(t *testing.T) {
 }
 
 func TestEmbeddedUIObjectUrlLruEvictsOnlyOldestUnprotected(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+	viewer := uiText(t, "viewer.html")
+	search := uiText(t, "search.html")
 	for _, want := range []string{
 		`const fullObjectUrlLru = new Map();`,
 		`const currentDisplayObjectUrlKeys = new Set();`,
-		`const currentSearchObjectUrlKeys = new Set();`,
 		`const currentGalleryObjectUrlKeys = new Set();`,
-		`function isFullObjectUrlProtected(key) { return currentDisplayObjectUrlKeys.has(key) || currentSearchObjectUrlKeys.has(key) || currentGalleryObjectUrlKeys.has(key); }`,
+		`function isFullObjectUrlProtected(key) { return currentDisplayObjectUrlKeys.has(key) || currentGalleryObjectUrlKeys.has(key); }`,
 		`function revokeFullObjectUrl(key) {`,
 		`URL.revokeObjectURL(objectUrl);`,
 		`fullObjectUrlLru.delete(key);`,
@@ -2302,71 +2227,81 @@ func TestEmbeddedUIObjectUrlLruEvictsOnlyOldestUnprotected(t *testing.T) {
 		`revokeFullObjectUrl(key);`,
 		`if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) { evictFullObjectUrls(key); }`,
 	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("objectURL LRU must revoke only the oldest unprotected key, got %q", want)
+		if !strings.Contains(viewer, want) {
+			t.Errorf("viewer objectURL LRU must revoke only the oldest unprotected key, got %q", want)
 		}
 	}
-	if strings.Contains(s, `revokeFullObjectUrls();`) {
-		t.Errorf("objectURL LRU should not revoke all stored object URLs when the cache limit is crossed: got %q", s)
+	if strings.Contains(viewer, `revokeFullObjectUrls();`) {
+		t.Errorf("viewer objectURL LRU should not revoke all stored object URLs when the cache limit is crossed: got %q", viewer)
 	}
 	for _, want := range []string{
 		`currentDisplayObjectUrlKeys.clear();`,
-		`currentSearchObjectUrlKeys.clear();`,
 		`currentGalleryObjectUrlKeys.clear();`,
 		`markDisplayObjectUrlKey(img.dataset.key);`,
-		`markSearchObjectUrlKey(key);`,
 		`markGalleryObjectUrlKey(key);`,
 	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("current display/search/gallery objectURL keys must be protected from LRU eviction, got %q", want)
+		if !strings.Contains(viewer, want) {
+			t.Errorf("viewer current display/gallery objectURL keys must be protected from LRU eviction, got %q", want)
+		}
+	}
+	for _, forbidden := range []string{`currentSearchObjectUrlKeys`, `markSearchObjectUrlKey`, `URL.createObjectURL`, `fullObjectUrls`, `fullObjectUrlLru`, `activeObjectUrlKeys`} {
+		if strings.Contains(search, forbidden) {
+			t.Errorf("search page must not own the objectURL LRU cache, got %q", forbidden)
 		}
 	}
 }
 
 func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
+	search := uiText(t, "search.html")
+	if strings.Contains(search, "class='mini'") {
+		t.Errorf("search card should render only cover thumbnail: got %q", search)
 	}
-	s := string(page)
-	if strings.Contains(s, "class='mini'") {
-		t.Errorf("search card should render only cover thumbnail: got %q", s)
+	if !strings.Contains(search, "<img class='search-card-cover'") || !strings.Contains(search, "data-search-id") || !strings.Contains(search, "loading='lazy'") || !strings.Contains(search, "src=''") {
+		t.Errorf("search card should render a lazy TN-only cover placeholder: got %q", search)
 	}
-	if !strings.Contains(s, "<img class='search-card-cover'") || !strings.Contains(s, "r.thumbnail") {
-		t.Errorf("search card should use cover thumbnail source: got %q", s)
+	if !strings.Contains(search, `function renderSearchCard(r) {`) || !strings.Contains(search, `function searchCardCoverSource(card) {`) || !strings.Contains(search, `async function loadSearchCardCover(r, searchGen = searchGeneration) {`) {
+		t.Errorf("search card should build the cover through search-owned TN helpers: got %q", search)
 	}
-	if !strings.Contains(s, `function searchCardCoverSource(card) {`) || !strings.Contains(s, `function loadSearchCardCover(r, searchGen = searchGeneration) {`) {
-		t.Errorf("search card cover should be loaded lazily after current priority, using full cache if available: got %q", s)
+	if strings.Contains(search, `currentPriorityDone`) || strings.Contains(search, `URL.createObjectURL`) || strings.Contains(search, `fetchCachedBlob`) {
+		t.Errorf("search card must not use full objectURL or current priority waiting: got %q", search)
 	}
-	if !strings.Contains(s, `src=''`) || !strings.Contains(s, `await currentPriorityDone;`) {
-		t.Errorf("search card should render metadata-first placeholder before loading low priority TN cover: got %q", s)
+
+	renderStart := strings.Index(search, "function renderSearchCard(r) {")
+	if renderStart < 0 {
+		t.Fatalf("renderSearchCard function not found")
 	}
-	loadCardStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
+	renderBody := search[renderStart:strings.Index(search, "function searchCardCoverSource(card) {")]
+	if !strings.Contains(renderBody, `searchCardCoverSource(r);`) || !strings.Contains(renderBody, `escapeHTML(tags)`) || !strings.Contains(renderBody, `sameTitleJapaneseAnchor(r)`) {
+		t.Errorf("renderSearchCard should use TN cover source, escaped tags, and same-title anchor: got %q", renderBody)
+	}
+
+	loadHelper := sliceBetween(t, search, "async function loadSearchCardCover(r, searchGen = searchGeneration) {", "function parseSearchHash(hash) {")
+	if !strings.Contains(loadHelper, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadHelper, `const src = searchCardCoverSource(r);`) || !strings.Contains(loadHelper, `img.src = src;`) {
+		t.Errorf("loadSearchCardCover should set TN cover only, with search generation guard: got %q", loadHelper)
+	}
+
+	loadCardStart := strings.Index(search, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
 	if loadCardStart < 0 {
 		t.Fatalf("loadSearchCards function not found")
 	}
-	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
+	loadCardBody := search[loadCardStart:strings.Index(search, "async function runSearch() {")]
 	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
-		t.Errorf("loadSearchCards should load card covers after current priority: got %q", loadCardBody)
+		t.Errorf("loadSearchCards should load TN covers through the search generation guard: got %q", loadCardBody)
 	}
 }
 
 func TestEmbeddedUISearchCardLoadsCardsWithBoundedParallelWorkers(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+	search := uiText(t, "search.html")
 
-	if !strings.Contains(s, `const SEARCH_CARD_CONCURRENCY = 4;`) {
-		t.Errorf("ui should bound search card workers to 4: got %q", s)
+	if !strings.Contains(search, `const SEARCH_CARD_CONCURRENCY = 4;`) {
+		t.Errorf("search page should bound search card workers to 4: got %q", search)
 	}
 
-	loadCardStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
+	loadCardStart := strings.Index(search, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
 	if loadCardStart < 0 {
 		t.Fatalf("loadSearchCards function not found")
 	}
-	loadCardBody := s[loadCardStart:strings.Index(s, "async function runSearch() {")]
+	loadCardBody := search[loadCardStart:strings.Index(search, "async function runSearch() {")]
 	if strings.Contains(loadCardBody, `for (let i = 0; i < ids.length; i++) {`) {
 		t.Errorf("loadSearchCards should not fetch all ids sequentially: got %q", loadCardBody)
 	}
@@ -2376,17 +2311,20 @@ func TestEmbeddedUISearchCardLoadsCardsWithBoundedParallelWorkers(t *testing.T) 
 	if !strings.Contains(loadCardBody, `const cardStart = performance.now();`) || !strings.Contains(loadCardBody, `recordPerfCache(card._x_cache);`) {
 		t.Errorf("parallel card workers must keep per-card API timing and cache distribution: got %q", loadCardBody)
 	}
-	if !strings.Contains(s, `async function loadSearchCardCover(r, searchGen = searchGeneration) {`) || !strings.Contains(s, `await currentPriorityDone;`) || !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
-		t.Errorf("cover load must remain current-priority guarded while card fetch workers are bounded: got %q", loadCardBody)
+	loadHelper := sliceBetween(t, search, "async function loadSearchCardCover(r, searchGen = searchGeneration) {", "function parseSearchHash(hash) {")
+	if !strings.Contains(loadHelper, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadHelper, `const src = searchCardCoverSource(r);`) {
+		t.Errorf("cover load must remain search-generation guarded and TN-only while card fetch workers are bounded: got %q", loadHelper)
+	}
+	if strings.Contains(loadHelper, `await currentPriorityDone;`) || strings.Contains(loadCardBody, `await currentPriorityDone;`) {
+		t.Errorf("search cover workers must not wait for viewer current priority: got %q", loadHelper)
+	}
+	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
+		t.Errorf("loadSearchCards should call the TN cover helper: got %q", loadCardBody)
 	}
 }
 
 func TestEmbeddedUISearchTagsAreaIsClamped(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "search.html")
 	if !strings.Contains(s, "--search-card-height: 130px") {
 		t.Errorf("search card should define --search-card-height: got %q", s)
 	}
@@ -2424,11 +2362,7 @@ func TestEmbeddedUISearchTagsAreaIsClamped(t *testing.T) {
 }
 
 func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 
 	if !strings.Contains(s, `const displayPassByEntry = new Map();`) || !strings.Contains(s, `const sourceStatusByEntry = new Map();`) || !strings.Contains(s, `const sourceTypeByEntry = new Map();`) || !strings.Contains(s, `const activeObjectUrlKeys = new Set();`) {
 		t.Errorf("ui should separate displayPass, sourceStatus, sourceType, and active objectURL cache: got %q", s)
@@ -2484,11 +2418,7 @@ func TestEmbeddedUIPageSwitchDisplayStatusSeparation(t *testing.T) {
 }
 
 func TestEmbeddedUIHasSpreadDirectionToggle(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `let spreadDirection = "rtl";`) || !strings.Contains(s, `const SPREAD_DIRECTION_STORAGE_KEY = "hitomi_hub_spread_direction";`) {
 		t.Errorf("ui should default RTL spread display and persist spread direction: got %q", s)
 	}
@@ -2499,7 +2429,7 @@ func TestEmbeddedUIHasSpreadDirectionToggle(t *testing.T) {
 	if dirStart < 0 {
 		t.Fatalf("setSpreadDirection function not found")
 	}
-	dirBody := s[dirStart:strings.Index(s, "\nfunction galleryDataFromCard(card) {")]
+	dirBody := s[dirStart:strings.Index(s, "\nfunction syncReadStateCache(id, patch) {")]
 	if !strings.Contains(dirBody, `startFullPrefetch();`) {
 		t.Errorf("setSpreadDirection should preserve full image display by starting background prefetch after render: got %q", dirBody)
 	}
@@ -2543,11 +2473,7 @@ func TestEmbeddedUIHasSpreadDirectionToggle(t *testing.T) {
 }
 
 func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="view-mode-buttons"`) || !strings.Contains(s, `data-mode="single"`) || !strings.Contains(s, `data-mode="double"`) || !strings.Contains(s, `data-mode="fullscreen"`) {
 		t.Errorf("ui should expose view mode buttons: got %q", s)
 	}
@@ -2601,11 +2527,7 @@ func TestEmbeddedUIHasViewModeButtonsAndState(t *testing.T) {
 }
 
 func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `let fullscreenState = "off";`) || !strings.Contains(s, `let lastViewMode = "double";`) {
 		t.Errorf("ui should keep fullscreen presentation state and last layout mode separately: got %q", s)
 	}
@@ -2687,11 +2609,7 @@ func TestEmbeddedUISeparatesFullscreenStateAndRestoreLastViewMode(t *testing.T) 
 }
 
 func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="retry-failed"`) || !strings.Contains(s, `retry failed`) || !strings.Contains(s, `manualRetryFailedFullImages()`) || !strings.Contains(s, `manualRetryingKeys`) || !strings.Contains(s, `manualRetryRunning`) || !strings.Contains(s, `allowRecount = false`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "error"`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "no_full"`) {
 		t.Errorf("ui should expose a manual full-image retry button with manual-only recount and error/no_full targeting: got %q", s)
 	}
@@ -2728,11 +2646,7 @@ func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 }
 
 func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 
 	if !strings.Contains(s, `function renderRetryButtonState() {`) || !strings.Contains(s, `button.disabled = manualRetryRunning || !current.id || !(Number(counts.errorDone) > 0 || Number(counts.noFullDone) > 0);`) {
 		t.Errorf("retry button should use combined error/no_full state with current gallery and manual-run guard: got %q", s)
@@ -2813,11 +2727,7 @@ func TestEmbeddedUIManualFullImageRetryPassCriteria(t *testing.T) {
 }
 
 func TestEmbeddedUIManualRetryUsesForceQueryInEntrySource(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 
 	entryStart := strings.Index(s, "function entrySource(entry, galleryId = current.id, force = false) {")
 	entryEnd := strings.Index(s, "\nfunction storeFullCache(entry, status, objectUrl, galleryId = current.id) {")
@@ -2851,11 +2761,7 @@ func TestEmbeddedUIManualRetryUsesForceQueryInEntrySource(t *testing.T) {
 }
 
 func TestEmbeddedUIHasSearchPrevNextButtons(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "search.html")
 	if !strings.Contains(s, `id="search-prev"`) || !strings.Contains(s, `id="search-next"`) || !strings.Contains(s, `id="search-page-status"`) {
 		t.Errorf("ui should expose search page prev/next buttons and status: got %q", s)
 	}
@@ -2897,11 +2803,7 @@ func TestEmbeddedUIHasSearchPrevNextButtons(t *testing.T) {
 }
 
 func TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html", "search.html")
 
 	searchStart := strings.Index(s, `<form id="search">`)
 	if searchStart < 0 {
@@ -2956,71 +2858,63 @@ func TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit(t *testing.T) {
 }
 
 func TestEmbeddedUIFavoriteToggleSyncsReadStateCaches(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+	viewer := uiText(t, "viewer.html")
 
-	helperStart := strings.Index(s, "function syncReadStateCache(id, patch) {")
+	helperStart := strings.Index(viewer, "function syncReadStateCache(id, patch) {")
 	if helperStart < 0 {
 		t.Fatalf("syncReadStateCache not found")
 	}
-	helperEnd := strings.Index(s[helperStart:], "\n}")
+	helperEnd := strings.Index(viewer[helperStart:], "\n}")
 	if helperEnd < 0 {
 		t.Fatalf("syncReadStateCache close brace not found")
 	}
-	helper := s[helperStart : helperStart+helperEnd]
-	if !strings.Contains(helper, "searchCardCache.get(id)") || !strings.Contains(helper, "galleryCache.get(id)") {
-		t.Errorf("syncReadStateCache must update read_state on both searchCardCache and galleryCache: got %q", helper)
+	helper := viewer[helperStart : helperStart+helperEnd]
+	if !strings.Contains(helper, "galleryCache.get(id)") || strings.Contains(helper, "searchCardCache") {
+		t.Errorf("viewer syncReadStateCache must update viewer galleryCache only, not search-owned card cache: got %q", helper)
 	}
 
-	favStart := strings.Index(s, `document.getElementById("fav").addEventListener("click", async () => {`)
+	favStart := strings.Index(viewer, `document.getElementById("fav").addEventListener("click", async () => {`)
 	if favStart < 0 {
 		t.Fatalf("fav click handler not found")
 	}
-	favEnd := strings.Index(s[favStart:], "\n});")
+	favEnd := strings.Index(viewer[favStart:], "\n});")
 	if favEnd < 0 {
 		t.Fatalf("fav click handler close not found")
 	}
-	favBody := s[favStart : favStart+favEnd]
+	favBody := viewer[favStart : favStart+favEnd]
 	onPos := strings.Index(favBody, "const on = !current.favorite;")
 	postPos := strings.Index(favBody, `await post("/api/fav", { gallery_id: current.id, on });`)
 	updatePos := strings.Index(favBody, "current.favorite = on ? 1 : 0;")
 	syncPos := strings.Index(favBody, "syncReadStateCache(current.id, { favorite: current.favorite });")
 	if onPos < 0 || postPos < 0 || updatePos < 0 || syncPos < 0 {
-		t.Fatalf("fav handler must compute on from current.favorite, post, update current.favorite, then sync caches: got %q", favBody)
+		t.Fatalf("fav handler must compute on from current.favorite, post, update current.favorite, then sync viewer cache: got %q", favBody)
 	}
 	if onPos > postPos || postPos > updatePos || updatePos > syncPos {
 		t.Errorf("fav handler order must be on computed from current.favorite before post, then current.favorite update, then cache sync: got %q", favBody)
 	}
 
-	completeStart := strings.Index(s, `document.getElementById("complete").addEventListener("click", async () => {`)
+	completeStart := strings.Index(viewer, `document.getElementById("complete").addEventListener("click", async () => {`)
 	if completeStart < 0 {
 		t.Fatalf("complete click handler not found")
 	}
-	completeEnd := strings.Index(s[completeStart:], "\n});")
+	completeEnd := strings.Index(viewer[completeStart:], "\n});")
 	if completeEnd < 0 {
 		t.Fatalf("complete click handler close not found")
 	}
-	completeBody := s[completeStart : completeStart+completeEnd]
+	completeBody := viewer[completeStart : completeStart+completeEnd]
 	cPostPos := strings.Index(completeBody, `await post("/api/read", { gallery_id: current.id, page: current.page, complete: true });`)
 	cSyncPos := strings.Index(completeBody, "syncReadStateCache(current.id, { last_page: current.page, fully_read: 1 });")
 	if cPostPos < 0 || cSyncPos < 0 || cPostPos > cSyncPos {
 		t.Errorf("complete handler must sync caches after post: got %q", completeBody)
 	}
 
-	if !strings.Contains(s, "favorite: s.favorite") {
-		t.Errorf("setGalleryMeta must take favorite from cached read_state so cache re-display reflects the synced value")
+	if !strings.Contains(viewer, "favorite: s.favorite") {
+		t.Errorf("viewer setGalleryMeta must take favorite from cached read_state so cache re-display reflects the synced value")
 	}
 }
 
 func TestEmbeddedUIHasSearchMeasurementStatus(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "search.html")
 	if !strings.Contains(s, `id="perf-status"`) || !strings.Contains(s, `function renderPerfStatus() {`) || !strings.Contains(s, `function recordPerfCache(value) {`) {
 		t.Errorf("ui should expose search measurement status: got %q", s)
 	}
@@ -3051,11 +2945,7 @@ func TestEmbeddedUIHasSearchMeasurementStatus(t *testing.T) {
 }
 
 func TestEmbeddedUIHasSameTitleJapaneseAnchor(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "search.html")
 	if !strings.Contains(s, `const titleGroups = new Map();`) || !strings.Contains(s, `const TITLE_GROUPS_STORAGE_KEY = "hitomi_hub_title_groups";`) {
 		t.Errorf("ui should keep same-title Japanese group cache separately from search storage: got %q", s)
 	}
@@ -3083,11 +2973,7 @@ func TestEmbeddedUIHasSameTitleJapaneseAnchor(t *testing.T) {
 }
 
 func TestEmbeddedUIShowsGalleryViewerPositionOnly(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="reader-position"`) {
 		t.Errorf("ui should expose gallery/viewer position display: got %q", s)
 	}
@@ -3142,11 +3028,7 @@ func TestEmbeddedUIShowsGalleryViewerPositionOnly(t *testing.T) {
 }
 
 func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `function updateTabTitle(title) {`) || !strings.Contains(s, `document.title = String(display) + " - hitomi hub viewer";`) {
 		t.Errorf("ui should update document title from current work title: got %q", s)
 	}
@@ -3163,9 +3045,9 @@ func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
 	if cacheStart < 0 {
 		t.Fatalf("showGalleryMetaFromCache function not found")
 	}
-	cacheBody := s[cacheStart:strings.Index(s, "\nfunction searchCardCoverSource(card) {")]
-	if !strings.Contains(cacheBody, `updateTabTitle((card && card.japanese_title) || title || id);`) {
-		t.Errorf("showGalleryMetaFromCache should set tab title from cached card title: got %q", cacheBody)
+	cacheBody := sliceBetween(t, s, "function showGalleryMetaFromCache(id) {", "function updateThumbCache(key, objectUrl) {")
+	if !strings.Contains(cacheBody, `updateTabTitle((card && card.gallery && card.gallery.japanese_title) || title || id);`) {
+		t.Errorf("viewer showGalleryMetaFromCache should set tab title from cached gallery title: got %q", cacheBody)
 	}
 
 	loadingStart := strings.Index(s, "function renderGalleryLoading(id, page, second) {")
@@ -3173,8 +3055,8 @@ func TestEmbeddedUIUpdatesTabTitleForCurrentWork(t *testing.T) {
 		t.Fatalf("renderGalleryLoading function not found")
 	}
 	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")]
-	if !strings.Contains(loadingBody, `updateTabTitle((card && card.japanese_title) || title || id);`) {
-		t.Errorf("renderGalleryLoading should set tab title from cached card title while loading: got %q", loadingBody)
+	if !strings.Contains(loadingBody, `updateTabTitle((card && card.gallery && card.gallery.japanese_title) || title || id);`) {
+		t.Errorf("renderGalleryLoading should set tab title from cached gallery title while loading: got %q", loadingBody)
 	}
 }
 
@@ -3424,11 +3306,7 @@ func TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot(t *testing.T) {
 }
 
 func TestEmbeddedUIHasAcquisitionHandler(t *testing.T) {
-	page, err := uiPage.ReadFile("ui.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(page)
+s := uiText(t, "viewer.html")
 
 	if !strings.Contains(s, `id="acquisition-controls"`) ||
 		!strings.Contains(s, `id="acquisition-start"`) ||

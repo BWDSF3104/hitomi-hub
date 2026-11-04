@@ -1,6 +1,8 @@
 # ビューアは埋め込み 1 ページのローカル Web（native GUI 不採用）
 
-**Status**: 採用
+**Superseded by**: `2026-11-04-search-viewer-separation-approach-approved.md`（「1 ページ Web」の点のみ。検索と閲覧を2ページへ分割。native GUI 不採用・`embed` 同梱・既定 bind `127.0.0.1`・local-first 画像経路・SQLite 単一接続は維持）
+
+**Status**: 承認済み（2026-11-01）／部分 supersede（2026-11-04）
 **Date**: 2026-11-01
 
 ## 決定
