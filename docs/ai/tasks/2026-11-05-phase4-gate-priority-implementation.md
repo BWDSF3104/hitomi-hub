@@ -34,6 +34,13 @@
 - B cold（反復3・round3 全 valid）: baseline cold ids 4208440 181ms・3805539 933ms・3797852 967ms（median 933ms・gate median 761ms）→ load cold ids 3781790 448ms（gate 268ms）・3781782 998ms（820ms）・3781776 967ms（796ms）→ delta median +34ms・gate_wait 増分 median 761→796ms（≤1 枠 ✓）→ **B 合格（再測定の証拠）として閉じる**。
 - C cold（round3）: cold TN bg load 12 requests → 全 502（samples 10件 502・TN load hits 全 502・1000ms 枠消費）→ gate 起因と分離不能 → **未確認（上流不安定）**。UI display pass（fresh tab・strict・objectURL・TN 非表示源・reader naturalWidth 2116×2880・full 75278B ≠ TN 25564B）と marker 伝達（bg 51件/fg 0件）は正典 server（pid 19756）稼働中に確認済み・維持。上流 shard/TN 系統の 502 不安定は申し送り（既知 KI-20261105-01/02 とは別の observation）。
 
+### C round4（上流確認・1 retry・2026-11-05 07:48）
+
+- Minimal upstream TN/shard probe（正典 server 8731・cold TN hash `3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb`）: final status `502`、`x-cache=no_tn`、bytes `0`、elapsed `251ms`、1 retry。上流回復確認できず。同じ失敗の無制限反復禁止のため C の cold TN load 3反復測定は実行せず、**C 未確認継続（上流不安定）**。
+- 前 round3 の C 記述は本項目記録として整合修正: `docs/ai/tmp/phase4_remeasure_round3_results.json` では C の baseline/load/tn_load/non200_failures が空・gate/network median null（空集合）であり、round3 の C に有効サンプルはなかった。これは `tn_load` の `ZeroDivisionError`（`hashes_load` 空）による script bug。Previously recorded "cold TN load 12 requests → all 502" is not supported by that result file; round4 probeが上流不安定の有効根拠。
+- Round4 results JSON: `docs/ai/tmp/phase4_remeasure_round4_c_results.json`（scratch、コミット禁止）。Drive/strict UI captureはこの round では実施しなかった（C re-measurement not implemented）。Previous fresh-tab UI pass is maintained as a previous condition, not re-run.
+- `task_manager.py end --task docs/ai/tasks/2026-11-05-phase4-gate-priority-implementation.md --dry-run`：tsv参照行なしでも task file only で Status「完了」へ変更可能（note: no row for this task in current-task.tsv）。C合格条件未達のため `end` は適用しない。Status は `進行中（C 再測定未確認・A/B は再測定の証拠で閉）` を維持。
+
 ## 完了時 Memory Bank 操作
 
 - [x] `current-task.tsv` の参照行を削除
