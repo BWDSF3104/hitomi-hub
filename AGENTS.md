@@ -41,14 +41,8 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 
 ## Canonical Latest Build / UI Confirmation Test Rule
 
-- `python -m pytest tests/ -v` must pass, including `tests/test_canonical_build_freshness.py`.
-- `tests/test_canonical_build_freshness.py` verifies that canonical `output/hitomi-hub/hub.exe` contains the exact bytes of current `app/ui.html`. A stale `hub.exe` fails.
-- UI confirmation procedure:
-  1. Run `go vet . && go test -count=1 -timeout 300s .` in `app`.
-  2. Rebuild canonical exe from `app`: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`
-  3. Stop running canonical server.
-  4. Start canonical server from that rebuilt exe, default `http://127.0.0.1:8731`.
-  5. Use served UI/network response from that server; do not accept source `ui.html` string tests alone as UI confirmation.
+- 正典（直接記載は廃止・ポインタ化 2026-11-04）: `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md`
+  - ポインタ化の記録: `docs/ai/decisions/2026-11-04-agents-md-rule-pointer-ization.md`
 
 ## Development
 

@@ -135,6 +135,16 @@
   - Google Drive task-specific folder: `I:\マイドライブ\kilo\assess-20261104-0749-search-viewer-separation-minimal\`（`viewer_confirmation.png`, `search_confirmation.png`）。
 - `AGENTS.md` の Canonical rule 条文章は未変更。既存テストは `tests/test_canonical_build_freshness.py` 条、canonical build command、UI confirmation 文字列を保持し、照合対象のみ 2 html へ変更済み。
 
+### 残件実施（2026-11-04 09:43・親記録）
+
+作業前チェック（viewer に触る項目で必須）の decision 読了記録 — 実装時はファイル名明記が欠落していたため、ここで記録する（読了 2026-11-04）:
+
+- `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`
+- `docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`
+- `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`
+
+正典条のポインタ化（ユーザー承認 2026-11-04 09:32）: `AGENTS.md:42-45` の直接記載を廃止し参照行のみへ。記録 `docs/ai/decisions/2026-11-04-agents-md-rule-pointer-ization.md`。上記「条文章は未変更」の点はこれで解消。
+
 
 ## 完了時 Memory Bank 操作
 
