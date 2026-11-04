@@ -176,6 +176,15 @@
 
 第9実行（このセッション）の委譲5件（A-11・A-09・A-04・D-09・D-08）で上限到達・終了。D-10 は実施順の都合で後回し（第10実行）。第10実行（新セッション）は D-10 → B-04 → A-12 → P2 #8/#9 → CRLF harness（低優先）。
 
+## 第10実行（2026-11-04・委譲上限撤回指示後・このセッションで続行）
+
+- 委譲前状態: HEAD `b6b6ef1`、git status clean。
+
+- D-10 合格・close commit `d3feb4b`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。正典結論: hitomi index key は **space 型**（`results.js:30`・`search.js:653`、live 実測 key `92ef4857` あり／`95e737a6` なし）→ アプリ現挙動正典一致・挙動変更なし、テスト固定 `TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi`。呼出し 37（index 33＋nozomi 4）・gate 1000ms。go vet clean、go test ok 16.627s（flaky 発火なし）、pytest 40 passed 8.32s（freshness 含む）。実機 UI 確認該当なし。
+- 子判断持ち帰り（nozomi dataset name 形）に対する親判断: hitomi 正典 `sanitize`（`searchlib.js:74`）は `/#` 除去のみで space→`_` 変換なし、dataset name は space 形 raw join（live 実測 space 200／underscore 404）。アプリ `SanitizeTerm` の space→`_`（`app/hitomi.go:507-509`）と `TestSearchHTMLPreservesUnderscoreTagTerm` の固定内容（underscore 形 URL）は正典矛盾 → 承認済み方針（A-04/D-09/D-10 条）どおり正典 space 形へ揃える修復を**追加項目**として委譲（単独 commit）。decision `docs/ai/decisions/2026-11-04-nozomi-dataset-name-space-form-correction.md`。acquisition 経路（B-04）非触。
+
+- 次の委譲: D-10追加（nozomi path space 形・単独 commit）→ B-04 → A-12 → P2 #8/#9 → CRLF harness（低優先）。
+
 ## Verification
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
