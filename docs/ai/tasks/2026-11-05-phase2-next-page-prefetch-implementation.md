@@ -1,6 +1,6 @@
 # Phase 2 実装 — 次ページのアイドル先読み（優先2・未開始）
 
-**Status**: 進行中（実装完了・合格条件1項目未達）
+**Status**: 完了
 **Date**: 2026-11-05
 **Next Action**: conflict first card display 合格条件（baseline+1000ms）未達（remote 変動 +2169ms）。run C cold run の card 4304598 cache=1 異常は未解明（known-issues 候補）。次: remote 変動を排除した再測定か条件解釈のユーザー判断。commit/push 済み（本項目分のみ）。
 
@@ -39,6 +39,29 @@
 - 異常（未解決）: run C cold run の card `4304598` が `x-cache: cache`（cold root・原因不明）。run E cold run では再現なし（miss 25）。known-issues 候補として observation 記録。
 - Google Drive strict 確認: `I:\マイドライブ\kilo\2026-11-05-phase2-next-page-prefetch-implementation\` に `procedure-20261105.txt`、`runE_conflict_p8.png`、`phase2-baseline-search-page-20261105.png`、`phase2-baseline-next-page-on-click-20261105.png` 保存 ✓。
 - 総合: 合格条件のうち conflict first card display ≤ baseline+1000ms のみ未達（remote 変動由来・gate slot は ✓）。実装・static tests・transition・中断・クールダウン設計は合格。
+
+### 2026-11-05 conflict first card display 再測定（合格・実測で閉じ）
+
+- 正典 HEAD: hitomi-hub `74a7875`、Common_Operations `49f841f`。正典 build freshness test pass: `python -m pytest tests/test_canonical_build_freshness.py -v`。
+- 測定方針: fresh tab・fresh root・1 server/port・resize不使用。Direct TN verify は `tn-cache`。first card cold・first-card-only delta・background conflict pending・first-card isolation を条件とする。Helper key bug（`bgGallery` に対し helper fetch が lowercase `bggallery` を increment）は invalid として区別。
+- 現在 live `furry` first card は `4305012`、TN hash `03b2319c9617fddb1c110bd9cc9ce1c032c71a039a916cefca4cba272afae2fd`。Prior known `4304905` は current top でないため、本測定では observed first card `4305012` を使用。
+- Valid baseline runs（3）: `docs/ai/tmp/p2_final_8802_base2.json`、`docs/ai/tmp/p2_final_8803_base3.json`、`docs/ai/tmp/p2_final_8809_base5.json`。
+  - first card display ms: 247.6, 1056.3, 1050.1 → median `1050.1ms`。
+  - metrics `gallery` gate increment median: 0, 803, 810 → median `803ms`。
+  - metrics `image` gate increment median: 0ms。
+- Invalid baseline runs: `p2_final_8801_base1.json` は startup/prior fetch pollution、`p2_final_8808_base4.json` は first card cold・first-card-only delta 不正（extra gallery 3、image 2、first card event `cache`）。
+- Valid conflict runs（3）: `docs/ai/tmp/p2_final_8805_conf2.json`、`docs/ai/tmp/p2_final_8806_conf3.json`、`docs/ai/tmp/p2_final_8810_conf4.json`。
+  - first card display ms: 729.5, 1001.3, 1011.4 → median `1001.3ms`。
+  - conflict median `1001.3ms` ≤ baseline median `1050.1ms` + 1000ms → pass。
+  - conflict `gallery` gate increment median: 502, 770, 787 → median `770ms`。
+  - conflict `image` gate increment median: 0ms。
+  - 各 valid conflict で `tn verify tn-cache`、first card `xCache miss`、first-card-only `gallery calls=1 / image calls=0`、`t0.bggallery >= 2`、`completedBeforeFirstDisplay.bggallery=0`、`pendingAtFirstDisplay.bggallery>0`、`firstCardInBg=false`。
+  - Invalid conflict: `p2_final_8804_conf1.json` は helper key case bug（`bgGallery` vs `bggallery`）で background isolation を正しく記録できず採用しない。
+- UI画面操作確認（fresh root `p2_final_ui4`・port `8813`・fresh tab・actual UI fill/click）:
+  - UI conflict first card display: `979.6ms`、first card `xCache miss`、TN verify `tn-cache`、first-card-only `gallery calls=1 / image calls=0`、`t0.bggallery=2`、`pendingAtFirstDisplay.bggallery=2`、`completedBeforeFirstDisplay=0`。
+  - UI transition after prefetch complete: actual UI `#search-next` click、transition `49.5ms ≤1000ms`、metrics delta `gallery=0/image=0`、card fetch delta `0`。
+  - Drive evidence: `I:\マイドライブ\kilo\2026-11-05-phase2-next-page-prefetch-implementation\p2_final_8813_ui_confirmation.json`、`p2_final_8813_ui_after_next.png`。Valid measurement JSON copies same Drive folder: `p2_final_8802_base2.json`, `p2_final_8803_base3.json`, `p2_final_8805_conf2.json`, `p2_final_8806_conf3.json`, `p2_final_8809_base5.json`, `p2_final_8810_conf4.json`.
+- 総合: conflict first card display 合格条件は実測で閉じた。本項目の commit/push は task record と Common_Operations report 本項目分のみ。`docs/ai/tmp` scratch は commit しない。
 
 ## 完了時 Memory Bank 操作
 

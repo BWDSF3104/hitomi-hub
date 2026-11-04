@@ -1,2 +1,1 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-05-phase2-next-page-prefetch-implementation.md	進行中（実装完了・合格条件1項目未達）	conflict first card display 合格条件（baseline+1000ms）未達（remote 変動 +2169ms）。run C cold run の card 4304598 cache=1 異常は未解明（known-issues 候補）。次: remote 変動を排除した再測定か条件解釈のユーザー判断。commit/push 済み（本項目分のみ）。
