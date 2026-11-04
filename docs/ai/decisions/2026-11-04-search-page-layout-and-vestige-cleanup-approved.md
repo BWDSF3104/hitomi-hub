@@ -46,6 +46,11 @@
 - `tests/strip_rebuild_dom_harness.mjs`: viewer 側 anchor（`renderStrip` 終端）は無影響。
 - `tests/test_canonical_build_freshness.py`: 変更後 2 html byte 照合を再実行。
 
+### 記録補足（実測 2026-11-04・コミット `01baa01`）
+
+- L2094・L2470 の記述（両ファイルで `function route(id, page, second) {` を assert）は事実と異なる。実テストは `uiText(t, "viewer.html")` の viewer のみで、検索側は新 test で `viewerLink(id, page)` を assert した。設計の意図（viewer は3引数維持・検索側は単独 link helper）は変更なし。
+- fullscreen chrome の nav/control 非表示は selector と固定 test で確認済み。browser-linked fullscreen criteria の実測（normal screen capture の before/after）は未完了（残件）。
+
 ## 実装開始
 
 実装開始指示は未受領（2026-11-04 10:10 時点で設計方針の選択のみ）。ソース・テストは無変更。着手には明示的な実装開始指示が必要。
