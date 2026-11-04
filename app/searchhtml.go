@@ -132,6 +132,9 @@ func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
 		}
 		return c.SearchNozomiParts(state.area, state.tag, state.language)
 	}
+	// A-04: plain term は lang を適用しない（hitomi 正典準拠・意図的）。galleriesindex の
+	// `galleries` は言語キーを持たず key = hash_term(term) のみ。language は `language:` term の
+	// dataset としてのみ結果へ入る。live 確認 2026-11-04・テストで固定。
 	return c.IndexIDs("galleries", term)
 }
 

@@ -182,6 +182,45 @@ func TestSearchHTMLPlainTermUsesIndexExactTerm(t *testing.T) {
 	}
 }
 
+func TestSearchHTMLPlainTermIgnoresLangPerCanonicalHitomi(t *testing.T) {
+	// A-04 固定（hitomi 正典確認 2026-11-04）: search.js `get_galleryids_for_query` plain term 分岐は
+	// key = hash_term(term) の B-tree 降下だけで state.language を使わない。galleriesindex に言語キーは
+	// なく（live 実測: `furry` 32901件中 26949 件が index-english 外）、lang は `language:` term の
+	// dataset としてのみ結果へ入る。plain term + lang は言語条件なし集合になる挙動を固定する。
+	key := hashTerm("furry")
+	leaf := beNode(1, [][]byte{key}, [][2]int64{{1000, 24}}, make([]uint64, btreeOrder+1))
+	data := append([]byte{0, 0, 0, 3}, beIDs([]uint32{10, 20, 30})...)
+
+	var urls []string
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		urls = append(urls, rawurl)
+		switch {
+		case strings.HasSuffix(rawurl, "/version"):
+			return []byte("1793467632"), nil
+		case strings.HasSuffix(rawurl, ".index"):
+			return leaf, nil
+		default:
+			return data, nil
+		}
+	}}
+
+	ids, total, err := c.SearchHTML("furry", "english", 1, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 10 || ids[1] != 20 || ids[2] != 30 {
+		t.Fatalf("plain term must not be language-filtered: total %d ids %v", total, ids)
+	}
+	for _, u := range urls {
+		if strings.Contains(u, ".nozomi") || strings.Contains(u, "/n/") {
+			t.Fatalf("plain term must not fetch language dataset: %v", urls)
+		}
+		if !strings.Contains(u, "galleriesindex") {
+			t.Fatalf("plain term must descend galleriesindex only: %v", urls)
+		}
+	}
+}
+
 func TestSearchHTMLPreservesUnderscoreTagTerm(t *testing.T) {
 	var urls []string
 	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
