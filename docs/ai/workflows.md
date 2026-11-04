@@ -2,7 +2,7 @@
 
 ## Git
 
-- commit・push は検証完了時点で判断可。前提: 変更の詳細についてユーザーから承認を受けていること
+- commit・push は検証完了時点で判断可（自己判断による実施を許可・事前承認不要）。Commit Checklist の検証は実施の前提として維持
 - commit message: prefix は英語、説明は日本語
 - GitHub: `BWDSF3104/hitomi-hub`（public・MIT）
 
