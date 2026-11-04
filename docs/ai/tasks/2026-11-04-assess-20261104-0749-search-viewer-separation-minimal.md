@@ -1,6 +1,6 @@
 # 案A（2ページ分割）の最小版：検索と閲覧の完全分離（assess-20261104-0749 項目1）
 
-**Status**: 進行中（実装・テスト改修完了、コミット前）
+**Status**: 完了
 **Date**: 2026-11-04
 **Next Action**: A1 実装の A1 変更のみコミット/push。AGENTS.md の Canonical rule 条文章変更は write-protected 領域のまま個別承認待ち。Google Drive 画面確認スクリーンショットは I:\マイドライブ\kilo\assess-20261104-0749-search-viewer-separation-minimal\ に保存済み。
 
