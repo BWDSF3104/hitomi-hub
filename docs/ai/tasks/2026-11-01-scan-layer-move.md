@@ -1,6 +1,6 @@
 # hitomi-hub 分割とスキャン層の移動（単一正典リポジトリ化）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-01
 **Next Action**: 記録済みの問題は解消（YARA 役割分担・ggset drift → archive）。残りは backlog の P2（#8 AVIF の pdf embed、#9 `bookmark_queries.notify` の用途）。完了判定はユーザーの承認後、`current-task.tsv` の行削除と archive 操作で締める
 

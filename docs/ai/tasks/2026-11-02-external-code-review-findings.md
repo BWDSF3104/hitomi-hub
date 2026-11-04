@@ -1,6 +1,6 @@
 # 外部コードレビュー指摘記録
 
-**Status**: 前回高項目の実装確認は完了。Strict UI actual physical confirmation は `openGallery` background reset について完了。実際物理画面 `3840x2160`、fresh tab、normal OS screen capture、actual UI click、direct server baseline match を確認し、スクリーンショットはタスク別 Google Drive フォルダへ保存した。manual full-image retry は `errorDone > 0` の再現条件が確認できるまで低優先度で保留。
+**Status**: 完了
 **Date**: 2026-11-02
 **Next Action**: manual full-image retry の actual UI `errorDone > 0` entry 再現条件が確認できるまで保留。確認できた場合は strict UI screenshot を `I:\マイドライブ\kilo\2026-11-02-external-code-review-findings` に追加する。
 
