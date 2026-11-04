@@ -1,8 +1,8 @@
 # Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 進行中（C 再測定未確認・A/B は再測定の証拠で閉）
+**Status**: 進行中（C 再測定未確認・direct TN 404/shard 200・proxy mapping分離不能）
 **Date**: 2026-11-05
-**Next Action**: C 再測定未確認（上流502）。上流安定後 cold TN load・1 retry・gate 準守で再試行。A weak note 維持・B 閉済み。tsv 参照行は close 時削除済み
+**Next Action**: C direct check classification recorded. Re-measure only when TN path/hash availability or proxy status mapping is clarified; no code change.
 
 ## 意図 / 背景
 
@@ -40,6 +40,19 @@
 - 前 round3 の C 記述は本項目記録として整合修正: `docs/ai/tmp/phase4_remeasure_round3_results.json` では C の baseline/load/tn_load/non200_failures が空・gate/network median null（空集合）であり、round3 の C に有効サンプルはなかった。これは `tn_load` の `ZeroDivisionError`（`hashes_load` 空）による script bug。Previously recorded "cold TN load 12 requests → all 502" is not supported by that result file; round4 probeが上流不安定の有効根拠。
 - Round4 results JSON: `docs/ai/tmp/phase4_remeasure_round4_c_results.json`（scratch、コミット禁止）。Drive/strict UI captureはこの round では実施しなかった（C re-measurement not implemented）。Previous fresh-tab UI pass is maintained as a previous condition, not re-run.
 - `task_manager.py end --task docs/ai/tasks/2026-11-05-phase4-gate-priority-implementation.md --dry-run`：tsv参照行なしでも task file only で Status「完了」へ変更可能（note: no row for this task in current-task.tsv）。C合格条件未達のため `end` は適用しない。Status は `進行中（C 再測定未確認・A/B は再測定の証拠で閉）` を維持。
+
+### C direct upstream check（正典 server 経由なし・2026-11-05 08:20）
+
+- Canonical live gg direct fetch: `https://ltn.gold-usergeneratedcontent.net/gg.js` → `200`、bytes `21507`、`595ms`。Parsed live gg: bucket `1793833201/`, initial o `0`, case assign `1`, hash-derived value `2974`, `m = 0`（live case set に `2974` なし）。
+- Direct TN webp for hash `3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb`: `https://atn.gold-usergeneratedcontent.net/webpbigtn/b/9e/3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb.webp` → attempts `404,404`、final status `404`、bytes `153`、elapsed `425ms`。TN direct max 2 attempts used; no further TN repetition.
+- Direct shard/full webp for same hash: `https://w1.gold-usergeneratedcontent.net/1793833201/2974/3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb.webp` → status `200`、bytes `528370`、elapsed `1176ms`.
+- Proxy route from round4 for same hash was `502`, `x-cache=no_tn`, bytes `0`, `251ms`. Direct TN status (`404`) does not match proxy status (`502`), so cannot claim "上流不安定" as sole root cause. The direct error confirms TN direct non-200 for the canonical live URL, while shard/full is alive for this hash.
+- Root cause candidates:
+  1. `fetchRemoteWithGate` treats any non-2xx as error, and `thumbProxy` maps any image/TN fetch error to `writeNoTN` → BadGateway `502`. Direct status is not preserved; proxy 502 can be status mapping of a direct 404.
+  2. The proxy's actual live/snapshot GG state was not independently captured; TN subdomain can be `atn` or `btn` depending on parsed GG, so proxy may have used a different live/snapshot mapping.
+  3. TN path may legitimately 404 for this hash/format. Code-derived status mapping remains possible, but direct evidence separates shard/full 200 from TN-only blocker.
+- `known-issues/` entry is not added under the direct-normal (200) branch because direct TN was not 200. Classification: **C continues unconfirmed; direct check based classification, not upstream instability assertion.**
+- Scratch result: `docs/ai/tmp/phase4_direct_upstream_check_results.json`（コミット禁止）。No implementation/code change. Viewer full route order and TN display-source prohibition remain unchanged.
 
 ## 完了時 Memory Bank 操作
 
