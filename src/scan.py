@@ -433,7 +433,9 @@ def process_file(conn: sqlite3.Connection, path: Path, root: Path, cfg: dict, st
         rules, yara_error = run_yara_with_runner(path, rules_path or DATA_DIR / "rules" / "structural.yar", yr_path, cfg["limits"], runner)
         if yara_error:
             if status != "hit":
-                status = "scan_error"
+                # Go 正典表現（B-07・`bfdc83e`）: YARA 実行失敗は構造 pass を scan_error へ上書きしない。
+                # 判定不能（not_evaluated）へ維持し、失敗は scan_source（structural+yara_error）で表現（retry 判定用）
+                status = "not_evaluated"
             source = "structural+yara_error"
         elif rules:
             status = "hit"

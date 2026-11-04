@@ -1,4 +1,3 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-04-b07-python-yara-error-parity.md	進行中	委譲（第11実行②・単独 commit・テスト固定）
 docs/ai/tasks/2026-11-04-b10-non-httperror-tuple-convention.md	進行中	委譲（第11実行③・単独 commit・テスト固定）
 docs/ai/tasks/2026-11-04-test-search-cache-flaky-lru-tie-determinism.md	進行中	委譲（第11実行④・単独 commit・単独実行+suite確認）

@@ -422,7 +422,12 @@ def test_process_file_negative_vt_cache_avoids_fetch(tmp_path):
     conn.close()
 
 
-def test_process_file_yara_exit1_error_is_scan_error(tmp_path):
+def test_process_file_yara_exit1_error_keeps_not_evaluated_and_not_finding(tmp_path):
+    # B-07残件①（Go 正典表現への parity・`app/scan_test.go` の同名 Go テストと同形）:
+    # YARA error で構造 pass の scan_status を scan_error へ上書きせず not_evaluated 維持。
+    # export skip 条件（hit/scan_error）は変更なし。YARA error は not_evaluated なので
+    # export される（Go 側 TestExportCBZExportsStructuralPassWithYaraErrorAsNotEvaluated と同一挙動。
+    # Python 参照実装に export 経路はないため、status が skip 集合に属さないことで固定）
     conn = make_db(tmp_path)
     root = tmp_path
     cbz = make_zip(root / "Galleries" / "53" / "53.cbz", {"ok.webp": PNG})
@@ -435,11 +440,139 @@ def test_process_file_yara_exit1_error_is_scan_error(tmp_path):
     runner = lambda cmd: SimpleNamespace(returncode=1, stdout='{"rules":[{"identifier":"Zip_Path_Traversal"}]}')
     status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {},
                                runner=runner, yr=cfg["yr"])
-    assert status == "scan_error"
-    assert summary.get("scan_error") == 1
+    assert status == "not_evaluated"
+    assert summary.get("not_evaluated") == 1
+    assert summary.get("scan_error", 0) == 0
+    assert status not in ("hit", "scan_error")  # export skip 条件（hit/scan_error）で skip されない
     assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 0
     source = conn.execute("SELECT scan_source FROM files").fetchone()[0]
     assert source == "structural+yara_error"
+    conn.close()
+
+
+def test_process_file_yara_execution_failure_keeps_not_evaluated(tmp_path):
+    # 回帰対照（Go TestProcessFileYaraExecutionFailureKeepsNotEvaluated）: runner 例外も同表現
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "58" / "58.cbz", {"ok.webp": PNG})
+    cfg = json.loads(json.dumps(CFG))
+    cfg["yr"] = "tools/yr.exe"
+    cfg["virustotal"]["enabled"] = False
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    def runner(cmd):
+        raise OSError("missing yr")
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {},
+                               runner=runner, yr=cfg["yr"])
+    assert status == "not_evaluated"
+    assert summary.get("not_evaluated") == 1
+    assert summary.get("scan_error", 0) == 0
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 0
+    assert conn.execute("SELECT scan_source FROM files").fetchone()[0] == "structural+yara_error"
+    conn.close()
+
+
+def test_process_file_structural_hit_keeps_hit_on_yara_error(tmp_path):
+    # 回帰（Go TestProcessFileStructuralHitKeepsHitOnYaraError）: hit は hit のまま・findings 1
+    conn = make_db(tmp_path)
+    root = tmp_path
+    # Go 同一 fixture（`../evil.txt`・path_traversal のみ）。`../evil.exe` は executable_entry も hit し findings 2 になる
+    cbz = make_zip(root / "Galleries" / "59" / "59.cbz", {"../evil.txt": PNG})
+    cfg = json.loads(json.dumps(CFG))
+    cfg["yr"] = "tools/yr.exe"
+    cfg["virustotal"]["enabled"] = False
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    runner = lambda cmd: SimpleNamespace(returncode=1, stdout="")
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {},
+                               runner=runner, yr=cfg["yr"])
+    assert status == "hit"
+    assert summary.get("hit") == 1
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 1
+    row = conn.execute("SELECT scan_status, scan_source FROM files").fetchone()
+    assert row == ("hit", "structural+yara_error")
+    conn.close()
+
+
+def test_process_file_bad_zip_scan_error_keeps_scan_error_without_yara_call(tmp_path):
+    # 回帰（Go TestProcessFileBadZipScanErrorKeepsScanErrorWithoutYaraCall）: 構造 scan_error は不変・YARA 呼出 0
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = root / "Galleries" / "60" / "60.cbz"
+    cbz.parent.mkdir(parents=True, exist_ok=True)
+    cbz.write_bytes(b"PK\x03\x04garbage")
+    cfg = json.loads(json.dumps(CFG))
+    cfg["yr"] = "tools/yr.exe"
+    cfg["virustotal"]["enabled"] = False
+    state = {"window": [], "total": 0}
+    summary = {}
+    calls = []
+
+    def runner(cmd):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="")
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {},
+                               runner=runner, yr=cfg["yr"])
+    assert status == "scan_error"
+    assert summary.get("scan_error") == 1
+    assert calls == []
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 1
+    row = conn.execute("SELECT scan_status, scan_source FROM files").fetchone()
+    assert row == ("scan_error", "structural")
+    conn.close()
+
+
+def test_process_file_yara_success_no_rules_keeps_pass(tmp_path):
+    # 回帰（Go TestProcessFileYaraSuccessNoRulesKeepsPass）: YARA 成功で rule なしは構造 pass 維持
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "61" / "61.cbz", {"ok.webp": PNG})
+    cfg = json.loads(json.dumps(CFG))
+    cfg["yr"] = "tools/yr.exe"
+    cfg["virustotal"]["enabled"] = False
+    state = {"window": [], "total": 0}
+    summary = {}
+
+    runner = lambda cmd: SimpleNamespace(returncode=0, stdout="")
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=lambda url, key: {},
+                               runner=runner, yr=cfg["yr"])
+    assert status == "pass"
+    assert summary.get("pass") == 1
+    assert conn.execute("SELECT COUNT(1) FROM findings").fetchone()[0] == 0
+    assert conn.execute("SELECT scan_source FROM files").fetchone()[0] == "structural"
+    conn.close()
+
+
+def test_process_file_yara_error_file_enters_vt_gate(tmp_path):
+    # B-07残件②（decision 2026-11-02 #3 と整合・現状許容）: not_evaluated の YARA error ファイルは
+    # VT gate（status not in hit/scan_error）に入る。VT gate・quota・TTL・negative cache の意味は不変
+    conn = make_db(tmp_path)
+    root = tmp_path
+    cbz = make_zip(root / "Galleries" / "62" / "62.cbz", {"ok.webp": PNG})
+    sha = scan.sha256_file(cbz)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["yr"] = "tools/yr.exe"
+    cfg["virustotal"]["enabled"] = True
+    cfg["virustotal"]["api_key"] = "testkey"
+    state = {"window": [], "total": 0}
+    summary = {}
+    calls = []
+
+    def fetch(url, key):
+        calls.append(url)
+        return {}, 404
+
+    status = scan.process_file(conn, cbz, root, cfg, state, summary, fetch=fetch,
+                               runner=lambda cmd: SimpleNamespace(returncode=1, stdout=""), yr=cfg["yr"])
+    assert status == "not_evaluated"
+    assert len(calls) == 1  # YARA error で VT gate に入る（構造 scan_error と異なり gate 通過）
+    assert calls[0].endswith("/files/" + sha)
+    row = conn.execute("SELECT verdict, detail FROM scan_cache WHERE sha256 = ?", (sha,)).fetchone()
+    assert row == ("unknown_to_vt", "unknown_to_vt")  # negative cache 意味不変
     conn.close()
 
 
