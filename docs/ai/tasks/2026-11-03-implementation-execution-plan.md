@@ -163,6 +163,16 @@
 - ③④: 方針確定のみ（記録）。実装は今後の項目。`backlog.md` の #8/#9 行へ decision 参照追記。
 - 次の実行は新セッションで ② A-11 → A-09（方式確定済み）→ ③（hitomi 準拠確認、B-06/B-07 parity、B-04・A-12、P2 #8/#9、CRLF harness 修正は低優先）。
 
+## 第9実行（2026-11-04・このセッションで続行・上限5件）
+
+- 委譲前状態: HEAD `515b428`、tsv clean。
+
+- A-11 合格・close commit `678fbd7`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行未更新は同一パターン）。streaming 実装（page ごと decode→encode→sequential・buffer 再利用・xref map・A-8 構文維持）。親判断（追加作業なし）: peak gate「3⅓P＋1MB＋8MB noise margin」の解釈を是とする（sharp な無保持証明は liveDelta ≤1MB・実測33KB。gate は上界証明として機能）。未実施: live gallery 実機 large export（合格条件が mocked fixture 基準と定め通りなので条件成立に影響なし）。
+- A-09 合格・close commit `2b254ee`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。実測（canonical server 8731・開始時状態未稼働へ復元）: Range 0-1023 → 206・Content-Range、If-None-Match → 304、plain GET 200・Accept-Ranges・x-cache cache/local 維持、UI no-store fetch 200・naturalWidth 1740（actual pixels 判定維持）。Drive `I:\マイドライブ\kilo\2026-11-04-a09-serve-stored-image-full-read\`。親判断（追加作業なし）: ETag = stat modtime+size 由来の設計を是とする（内容変更なしで 304 正しく機能）。子判断項目①→ known-issue 記録: `docs/ai/known-issues/2026-11-04-test-search-cache-size-cap-flaky-lru-tie.md`（C-05 flaky・単独実行 PASS・修復は実施段階）。
+- 次の委譲: A-04（hitomi 準拠確認）。
+- A-04 合格・close commit `8adf764`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記と known-issue のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。hitomi 正典確認（live 応答観察・呼出し 10・gate 1000ms 維持）: galleriesindex は言語キーなし（`furry` 32901・index-english 170609・intersection 5952）→ plain term に lang を掛けない。アプリ現挙動は正典一致のため挙動変更なし、テスト固定（`TestSearchHTMLPlainTermIgnoresLangPerCanonicalHitomi`）＋記録明記で合格。子判断項目（flaky LRU tie の解釈）に対する親判断: 是とする（C-05 close 済み・単独実行 PASS・既知 issue 記録済み・本項目非触）。
+- D-09 合格・close commit `a6a02b7`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記と known-issue のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。正典確認: `orderby` は client sort ではなく `nozomi_address_from_state`（search.js 612-624）の dataset 選択で集合順序を変える（live 実測 2026-11-04・呼出し 4）。実装は正典 mirror の最小変更（order 分区・orderbykey 既定 popular→year/else added・plain term 初期分岐の順序起点・cache key に order 追加・A-3 方向処理不変・C-04 維持）。go test ok 20.822s（追加3件・flaky 発火なし）、pytest 40 passed。判断持ち帰りなし（観察: popular/date dataset 件数微差は集合同一性未確認・順序判定に影響なし。or-only query の初期順序差は C-06/C-07/C-09 確定済み挙動として非触）。
+
 ## Verification
 
 - plan タスク自体は docs/ai 記録のみ。code change なし。
