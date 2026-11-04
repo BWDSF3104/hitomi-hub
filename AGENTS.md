@@ -63,7 +63,7 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 
 ## Code Scope
 
-- 検索・ダウンロード・UI・既読/お気に入りの書き込み口は未実装。実装は `docs/ai/backlog.md` に記録
+- 実装済み: search（nozomi・searchhtml・searchindex）・download・viewer/UI・既読/お気に入り書き込み口・scan（Go・Python 参照実装）・YARA・VT lookup。未実装は `docs/ai/backlog.md` の P2 項目のみ（#8 は対象外と決定 2026-11-04、#9 は用途定義 2026-11-04）
 - ウイルス判定引擎をアプリ側で所有しない。構造検査とハッシュ評判のみ
 
 ## Documentation

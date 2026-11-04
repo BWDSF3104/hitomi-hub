@@ -3,7 +3,7 @@
 **Status**: 進行中
 **Date**: 2026-11-03
 **Backlog**: assess-20261103-1220
-**Next Action**: 第7実行完了（A-13 7144dd1・A-06 c02bf83・C-10 a58e352・D-07 aac4767・D-06 77181d5・委譲上限5件）。次の実行は新セッションで② A-11→A-09、その後③判断項目。ユーザー判断要: AGENTS.md Code Scope「UI未実装」とREADME/実装の矛盾（D-06判断持ち帰り）。D-07残件: clean clone skip実発火未実施（scratch模拟）
+**Next Action**: 2026-11-04 判断承認反映済み（AGENTS.md Code Scope 実態更新・D-07 clean clone 実測解決・P2 #8 対象外明示・#9 用途定義・CRLF harness known-issue）。第8実行は新セッションで② A-11→A-09（方式確定済み）→③ hitomi準拠確認・B-06/B-07 parity・B-04/A-12・P2・CRLF harness（低優先）
 
 ## 意図 / 背景
 
@@ -154,6 +154,14 @@
 - C-10 合格・close commit `a58e352`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ。子 plan ファイルを commit せず ✓）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行の未更新は A-06 と同一パターン）。証拠: go test 66.946s→5.094s、gate semantics tests 全 PASS・本番既定 1000ms 不変、pytest 40 passed。判断持ち帰りなし。
 - D-07 合格・close commit `aac4767`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓。残件（未検証として報告）: isolated clean clone 上の skip 実発火は未実施（scratch 模拟 `docs/ai/tmp/assess-20261103-1220/` の simulate_skip.py・test_skip_sim.py で代替・1 skipped）。正典 exe SHA256 前後同一（無損）✓。
 - D-06 合格・close commit `77181d5`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓（未コミットは plan の本 progress 追記のみ）／個別記録 Status 完了・tsv 参照行削除と子報告一致 ✓（Next Action 行未更新は A-06/C-10 と同一パターン）。docs のみ（歴史的記録保持＋正典決定へ整合注記、pytest 40 passed 8.86s 無損）。判断持ち帰り（ユーザー判断）: プロジェクト AGENTS.md「Code Scope」の「UI…書き込み口は未実装」が write-protected で変更不可、README・実装と矛盾 → 正典更新か維持かの判定が必要。第7実行の委譲上限5件（A-13・A-06・C-10・D-07・D-06）に到達。次の実行（新セッション）は ② A-11 → A-09、その後 ③ 判断項目（A-04/D-09/D-10 hitomi 準拠確認、B-06/B-07 parity、B-04・A-12、P2 #8/#9）。
+
+## 第8実行前の記録処理（2026-11-04・残件判断のユーザー承認後）
+
+- 判断承認の正典記録: `docs/ai/decisions/2026-11-04-remaining-judgments-approved.md`（① AGENTS.md Code Scope 実態へ更新・② D-07 clean clone 実測追加・③ P2 #8 PDF embed 対象外明示・④ P2 #9 用途定義＝保存検索の新着通知源）。
+- ① 実施: プロジェクト `AGENTS.md` Code Scope 該当行を実態へ更新（search・download・viewer/UI・read/fav・scan・YARA・VT lookup 実装済み、未実装は P2 のみ）。ユーザー承認に基づく write-protected 正典の変更（明示承認 2026-11-04）。
+- ② 実施（parent 実測・goal 手順の委譲外）: `git clone` → clean clone（`C:\Users\fujim\AppData\Local\Temp\kilo\d07-clean-clone`）で `python -m pytest tests/ -v` → `test_canonical_executable_embeds_current_ui` **SKIPPED**（skip 発火確認・D-07 合格条件成立）。全体 36 passed / 3 skipped / 1 failed。failed は別件新規 issue: `docs/ai/known-issues/2026-11-04-strip-rebuild-harness-crlf-fragile-in-clean-clone.md`（C-06 harness の `\n` exact 照合が clone checkout の CRLF 変換で失敗。正典 working tree では同一 harness 18 checks 全通過を対照実測）。D-07 記録の未確認点は解決として更新。
+- ③④: 方針確定のみ（記録）。実装は今後の項目。`backlog.md` の #8/#9 行へ decision 参照追記。
+- 次の実行は新セッションで ② A-11 → A-09（方式確定済み）→ ③（hitomi 準拠確認、B-06/B-07 parity、B-04・A-12、P2 #8/#9、CRLF harness 修正は低優先）。
 
 ## Verification
 
