@@ -62,6 +62,7 @@
   - UI transition after prefetch complete: actual UI `#search-next` click、transition `49.5ms ≤1000ms`、metrics delta `gallery=0/image=0`、card fetch delta `0`。
   - Drive evidence: `I:\マイドライブ\kilo\2026-11-05-phase2-next-page-prefetch-implementation\p2_final_8813_ui_confirmation.json`、`p2_final_8813_ui_after_next.png`。Valid measurement JSON copies same Drive folder: `p2_final_8802_base2.json`, `p2_final_8803_base3.json`, `p2_final_8805_conf2.json`, `p2_final_8806_conf3.json`, `p2_final_8809_base5.json`, `p2_final_8810_conf4.json`.
 - 総合: conflict first card display 合格条件は実測で閉じた。本項目の commit/push は task record と Common_Operations report 本項目分のみ。`docs/ai/tmp` scratch は commit しない。
+- Actual commit hashes: hitomi-hub `30be0e9`（task record・push済み）、Common_Operations `dd81189`（report evidence・push済み）。この hash lineの commit は本項目の task record 分のみ。
 
 ## 完了時 Memory Bank 操作
 
