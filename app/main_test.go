@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestResolveRootUsesCwdWithoutGitParent(t *testing.T) {
@@ -401,6 +402,256 @@ func TestMigrateSchemaRefusesDuplicatesWithoutDeletingRows(t *testing.T) {
 	}
 	if indexDef(t, db, "idx_findings_unique") != "" {
 		t.Errorf("unique index must not be created while duplicates exist")
+	}
+}
+
+// A-12: scan_cache への size / mtime 追加は列追加のみ（既存行の削除禁止・D-03 非破壊迁移規約）
+func TestMigrateSchemaAddsScanCacheSizeMtimeWithoutDeletingRows(t *testing.T) {
+	dataDir = dataRoot()
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sha := strings.Repeat("a", 64)
+	// 移行前の scan_cache 形状（v4・size / mtime 列なし・VT verdict 既存行あり）を再現する
+	if _, err := db.Exec(`CREATE TABLE scan_cache (
+		sha256 TEXT PRIMARY KEY, verdict TEXT NOT NULL, engine TEXT NOT NULL,
+		threat_name TEXT, detail TEXT, cached_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO scan_cache (sha256, verdict, engine, threat_name, detail, cached_at) VALUES (?, ?, ?, ?, ?, ?)",
+		sha, "pass", "virustotal", "", "positives=0", nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	rows, err := db.Query("PRAGMA table_info(scan_cache)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		have[name] = true
+	}
+	rows.Close()
+	if !have["size"] || !have["mtime"] {
+		t.Fatalf("scan_cache must have size / mtime columns after migration: got %v", have)
+	}
+	var verdict, detail string
+	if err := db.QueryRow("SELECT verdict, detail FROM scan_cache WHERE sha256 = ?", sha).Scan(&verdict, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "pass" || detail != "positives=0" {
+		t.Errorf("existing VT verdict row must survive the migration: got verdict=%q detail=%q", verdict, detail)
+	}
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatal(err)
+	}
+	if userVersion != schemaVersion {
+		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
+	}
+}
+
+func findingsSnapshot(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	rows, err := db.Query("SELECT path, sha256, rule, detail FROM findings ORDER BY path, rule, detail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var path, sha, rule string
+		var detail sql.NullString
+		if err := rows.Scan(&path, &sha, &rule, &detail); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, path+"\t"+sha+"\t"+rule+"\t"+detail.String)
+	}
+	return strings.Join(out, "\n")
+}
+
+// A-12 合格条件固定: 2 回目 scan で unchanged ファイルの hash 計算回数は 0（skip）、
+// findings / scan_status は 1 回目と同一。skip は VT gate を走らせない（回数を増やさない）。
+func TestProcessFileSkipsUnchangedFileBySizeAndMtime(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"})
+	c := cfg()
+	c.Yr = ""
+	c.VirusTotal = VTConfig{Enabled: true, MaxPerMinute: 5, MaxDaily: 5, APIKey: "k"}
+
+	hashCalls := 0
+	origHash := hashFunc
+	hashFunc = func(p string) (string, error) {
+		hashCalls++
+		return origHash(p)
+	}
+	defer func() { hashFunc = origHash }()
+
+	fetchCalls := 0
+	fetch := func(url, key string) (map[string]any, int, error) {
+		fetchCalls++
+		return nil, 404, nil
+	}
+
+	summary1 := map[string]int{}
+	status1 := processFile(db, c, &RateState{}, dir, path, summary1, fetch)
+	if status1 != "pass" {
+		t.Fatalf("run 1 status: got %s", status1)
+	}
+	if hashCalls != 1 || fetchCalls != 1 {
+		t.Fatalf("run 1 must hash and gate once: hashCalls %d fetchCalls %d", hashCalls, fetchCalls)
+	}
+	var statusRow1, scanTime1 string
+	if err := db.QueryRow("SELECT scan_status, scan_time FROM files").Scan(&statusRow1, &scanTime1); err != nil {
+		t.Fatal(err)
+	}
+	findings1 := findingsSnapshot(t, db)
+
+	summary2 := map[string]int{}
+	status2 := processFile(db, c, &RateState{}, dir, path, summary2, fetch)
+	if status2 != status1 {
+		t.Errorf("run 2 status: got %s want %s", status2, status1)
+	}
+	if hashCalls != 1 {
+		t.Errorf("unchanged file must skip hash on second scan: hashCalls %d want 1", hashCalls)
+	}
+	if fetchCalls != 1 {
+		t.Errorf("skip must not increase VT gate calls: fetchCalls %d", fetchCalls)
+	}
+	if summary2["skipped"] != 1 {
+		t.Errorf("run 2 summary must count skipped: got %v", summary2)
+	}
+	var statusRow2, scanTime2 string
+	if err := db.QueryRow("SELECT scan_status, scan_time FROM files").Scan(&statusRow2, &scanTime2); err != nil {
+		t.Fatal(err)
+	}
+	if statusRow2 != statusRow1 {
+		t.Errorf("scan_status must be kept: got %s want %s", statusRow2, statusRow1)
+	}
+	if findingsSnapshot(t, db) != findings1 {
+		t.Errorf("findings must be identical to run 1")
+	}
+
+	// mtime 不一致は再ハッシュ（安全側）
+	newTime := time.Now().Add(2 * time.Hour)
+	if err := os.Chtimes(path, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	summary3 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary3, fetch); status != status1 {
+		t.Errorf("mtime mismatch status: got %s", status)
+	}
+	if hashCalls != 2 {
+		t.Errorf("mtime mismatch must rehash: hashCalls %d want 2", hashCalls)
+	}
+	if findingsSnapshot(t, db) != findings1 {
+		t.Errorf("findings must stay identical after mtime mismatch rehash")
+	}
+
+	// scan_cache record なし（行削除）は再ハッシュ（安全側）
+	sha, err := Sha256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DELETE FROM scan_cache WHERE sha256 = ?", sha); err != nil {
+		t.Fatal(err)
+	}
+	summary4 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary4, fetch); status != status1 {
+		t.Errorf("missing record status: got %s", status)
+	}
+	if hashCalls != 3 {
+		t.Errorf("missing scan_cache record must rehash: hashCalls %d want 3", hashCalls)
+	}
+	if findingsSnapshot(t, db) != findings1 {
+		t.Errorf("findings must stay identical after missing record rehash")
+	}
+}
+
+// A-12: size / mtime 一致で skip、external_removal 記録は安全側で再ハッシュ
+func TestProcessFileRehashesOnSizeMismatchAndExternalRemoval(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	path := makeZip(t, dir, map[string]string{"ok.txt": "y"}) // path PK（rel）衝突回避で dir2 は別名を使う
+
+	hashCalls := 0
+	origHash := hashFunc
+	hashFunc = func(p string) (string, error) {
+		hashCalls++
+		return origHash(p)
+	}
+	defer func() { hashFunc = origHash }()
+
+	c := cfg()
+	c.Yr = ""
+	summary := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary, nil); status != "pass" {
+		t.Fatalf("run 1 status: got %s", status)
+	}
+	if hashCalls != 1 {
+		t.Fatalf("run 1 hash calls: got %d", hashCalls)
+	}
+
+	// size 不一致（内容は同じだがサイズ変更）→ 再ハッシュ
+	data, err := os.ReadFile(path) // 有効な zip のまま複製を先に取る（path は overwritten される）
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("PK\x03\x04garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary2 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary2, nil); status != "scan_error" {
+		t.Fatalf("size mismatch status: got %s", status)
+	}
+	if hashCalls != 2 {
+		t.Errorf("size mismatch must rehash: hashCalls %d want 2", hashCalls)
+	}
+
+	// 安定した pass ファイルで external_removal 記録のみ変えて skip しないこと（安全側）
+	dir2 := t.TempDir()
+	path2 := filepath.Join(dir2, "second.cbz") // path PK（rel）衝突を避ける
+	if err := os.WriteFile(path2, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary3 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir2, path2, summary3, nil); status != "pass" {
+		t.Fatalf("run 3 status: got %s", status)
+	}
+	if hashCalls != 3 {
+		t.Errorf("new file must hash: hashCalls %d want 3", hashCalls)
+	}
+	rel2, err := filepath.Rel(dir2, path2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE files SET scan_status = 'external_removal' WHERE path = ?", rel2); err != nil {
+		t.Fatal(err)
+	}
+	before := hashCalls
+	summary4 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir2, path2, summary4, nil); status != "pass" {
+		t.Fatalf("external_removal status: got %s", status)
+	}
+	if hashCalls != before+1 {
+		t.Errorf("external_removal record must rehash (safe side): hashCalls %d want %d", hashCalls, before+1)
+	}
+	if summary4["skipped"] != 0 {
+		t.Errorf("external_removal must not be counted as skipped: got %v", summary4)
 	}
 }
 

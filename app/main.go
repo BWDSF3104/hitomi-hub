@@ -222,7 +222,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 // execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
 type execer interface {
@@ -305,6 +305,9 @@ func ensureSchema(db *sql.DB) error {
 // migrateSchema は user_version 段階移行。既存行は削除しない。findings の unique index を
 // path を key に含める定義へ揃える（定義置換のみ）。新 key に重複行が残る場合は CREATE が
 // 失敗し、エラーを返してデータの対応を運用判断へ委ねる（D-03）。
+// A-12（schemaVersion 5）: scan_cache に scan skip 判定用の size / mtime を追加する。
+// 追加のみで既存行を削除しない（D-03 の非破壊迁移規約）。DB に記録のない file は skip
+// 判定できないため再ハッシュ（安全側）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -313,10 +316,54 @@ func migrateSchema(db *sql.DB, current int) error {
 	if err := db.QueryRow("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'findings'").Scan(&tables); err != nil {
 		return err
 	}
-	if tables == 0 {
+	if tables > 0 {
+		if err := ensureFindingsUniqueIndex(db); err != nil {
+			return err
+		}
+	}
+	if current < 5 {
+		if err := ensureScanCacheSizeMtime(db); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureScanCacheSizeMtime は scan_cache へ size / mtime 列を追加する（A-12）。
+// 列追加のみ・既存行はそのまま。新 DB は schema.sql 定義で揃う（正典 DB は次回
+// ensureSchema 実行で自然に揃う・D-03 承認済み）。
+func ensureScanCacheSizeMtime(db *sql.DB) error {
+	var exists int
+	if err := db.QueryRow("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'scan_cache'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
 		return nil
 	}
-	return ensureFindingsUniqueIndex(db)
+	have := map[string]bool{}
+	rows, err := db.Query("PRAGMA table_info(scan_cache)")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for _, col := range []string{"size", "mtime"} {
+		if have[col] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE scan_cache ADD COLUMN " + col + " INTEGER"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const findingsUniqueIndexSQL = "CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(path, sha256, rule, detail)"
@@ -383,6 +430,45 @@ func cacheStore(db dbExec, sha, verdict, engine, threat, detail string) error {
 		threat_name = excluded.threat_name, detail = excluded.detail, cached_at = excluded.cached_at`,
 		sha, verdict, engine, threat, detail, nowISO())
 	return err
+}
+
+// recordScanMeta は scan 済み file の size / mtime を scan_cache に記録する（A-12 skip 判定）。
+// 既存 VT verdict 行は size / mtime のみを更新し、verdict / cached_at（TTL 判定）を変えない。
+// scan_cache は VT verdict 行でも scan meta 行（verdict = ''）でも skip 判定に使える。
+func recordScanMeta(db dbExec, sha string, size, mtime int64) error {
+	_, err := db.Exec(`INSERT INTO scan_cache (sha256, size, mtime, verdict, engine, threat_name, detail, cached_at)
+		VALUES (?, ?, ?, '', '', '', '', ?)
+		ON CONFLICT(sha256) DO UPDATE SET size = excluded.size, mtime = excluded.mtime`,
+		sha, size, mtime, nowISO())
+	return err
+}
+
+// scanSkipStatus は A-12 の skip 判定。scan_cache(sha256,size,mtime) を path 記録（files）
+// 経由で引き、size / mtime が一致すれば unchanged（scan_status は維持）。不一致
+// （size / mtime 差異・列 NULL・record なし・external_removal）は再ハッシュ（安全側）。
+// skip は findings 再 insert も VT gate も走らせない（gate / quota 回数を増やさない）。
+func scanSkipStatus(db dbExec, rel string, size, mtime int64) (string, bool) {
+	var storedSize, storedMtime sql.NullInt64
+	var status string
+	err := db.QueryRow(`SELECT sc.size, sc.mtime, f.scan_status FROM scan_cache sc
+		JOIN files f ON f.sha256 = sc.sha256 WHERE f.path = ?`, rel).
+		Scan(&storedSize, &storedMtime, &status)
+	if err == sql.ErrNoRows {
+		return "", false
+	}
+	if err != nil {
+		return "", false
+	}
+	if !storedSize.Valid || !storedMtime.Valid {
+		return "", false
+	}
+	if storedSize.Int64 != size || storedMtime.Int64 != mtime {
+		return "", false
+	}
+	if status == "external_removal" {
+		return "", false
+	}
+	return status, true
 }
 
 func addFinding(db dbExec, path, sha, rule, detail string) error {
@@ -563,17 +649,30 @@ func processFile(db *sql.DB, cfg Config, state *RateState, root, path string, su
 	return processFileWithYara(db, cfg, state, root, path, summary, fetch, nil)
 }
 
+// hashFunc は processFile のハッシュ計算口。A-12 の合格条件（unchanged の hash 計算回数）を
+// テストで固定するためカウントラッパーへ差し替え可能。既定は Sha256File。
+var hashFunc = Sha256File
+
 func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path string, summary map[string]int, fetch FetchFunc, runYara YaraRunFunc) string {
-	sha, err := Sha256File(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		logScanError(err)
+		return ""
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = path
+	}
+	if status, ok := scanSkipStatus(db, rel, info.Size(), info.ModTime().Unix()); ok {
+		summary["skipped"] = summary["skipped"] + 1
+		return status
+	}
+	sha, err := hashFunc(path)
 	if err != nil {
 		logScanError(err)
 		return ""
 	}
 	ext, magic, findings, status := ScanFile(path, cfg)
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		rel = path
-	}
 	galleryID := galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries"))
 
 	source := "structural"
@@ -669,6 +768,10 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 			logScanError(err)
 			return status
 		}
+	}
+	if err := recordScanMeta(tx, sha, info.Size(), info.ModTime().Unix()); err != nil {
+		logScanError(err)
+		return status
 	}
 
 	if err := recordScanFile(tx, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
@@ -766,7 +869,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	summary := map[string]int{"pass": 0, "hit": 0, "not_evaluated": 0, "scan_error": 0, "cached": 0}
+	summary := map[string]int{"pass": 0, "hit": 0, "not_evaluated": 0, "scan_error": 0, "cached": 0, "skipped": 0}
 	galleryRoot := filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries"))
 
 	switch cmd {

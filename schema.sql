@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS pageorder (
 
 CREATE TABLE IF NOT EXISTS scan_cache (
     sha256 TEXT PRIMARY KEY,
+    size INTEGER,
+    mtime INTEGER,
     verdict TEXT NOT NULL,
     engine TEXT NOT NULL,
     threat_name TEXT,
