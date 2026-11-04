@@ -1,7 +1,7 @@
 # 画面確認: viewer の thumbnail/画像は CDN の時間窓に依存
 
 **Date**: 2026-11-01
-**Status**: 観察（実装変更なし）
+**Status**: 解決（2026-11-04・基準整除・ユーザー承認 `decisions/2026-11-04-observation-records-closure-approved.md`）。再観察不要（窓運依存）。strict full pixel pass は control evidence（cache hash `86f0dba8…` の `1/1` 表示確認済み）で充足判定。natural window observation は optional。窓依存 404・DNS 3番目解決失敗は環境挙動として記録維持。コード作業なし。
 
 ## 確認できたこと（screen）
 

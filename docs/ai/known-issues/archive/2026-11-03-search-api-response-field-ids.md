@@ -1,7 +1,7 @@
 # 検索 API 応答の配列フィールドは `ids`（`results` ではない）
 
 **Date**: 2026-11-03
-**Status**: 観察（実装変更なし・低優先）
+**Status**: 解決（2026-11-04・運用メモとして archive・ユーザー承認 `decisions/2026-11-04-observation-records-closure-approved.md`）。規約確定（スクリプトは `ids` で読む）・code 変更なし・作業なし。
 **Backlog**: assess-20261103-1220
 
 ## 現象
