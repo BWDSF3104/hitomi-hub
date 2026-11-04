@@ -3218,6 +3218,68 @@ func TestViewerAcquisitionCheckReturnsRunStartFolderStatus(t *testing.T) {
 	}
 }
 
+func TestViewerAcquisitionCheckUsesSanitizedTitleFolderMatchingAcquire(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), root)
+
+	title := `what?/file` // 無効文字を含む title。sanitize 名は `what__file`
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: title, Language: "japanese"}, galleryDir(root, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(v.cacheRoot, sampleHash+".png")
+	png := []byte("\x89PNG\r\n\x1a\n")
+	if err := os.WriteFile(cachePath, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sanitized := acquisitionTitleName(title, strconv.Itoa(1))
+	if sanitized != "what__file" {
+		t.Fatalf("fixture sanitize name: got %q", sanitized)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/acquisition/check", `{"gallery_id":1}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("check code: got %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	checkPath, _ := out["path"].(string)
+	if out["status"] != "not_exists" || out["title"] != sanitized || checkPath != filepath.Join("acquisition", sanitized) {
+		t.Fatalf("check must point sanitized folder, not raw title: got %v", out)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":1,"page":1,"hash":"`+sampleHash+`","format":"png","overwrite":true}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("acquire code: got %d body %q", rec.Code, rec.Body.String())
+	}
+	out = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	acquirePath, _ := out["path"].(string)
+	if out["status"] != "copied" || out["title"] != sanitized || filepath.Dir(acquirePath) != checkPath {
+		t.Errorf("acquire must write into the same folder as check: check %q acquire %q", checkPath, acquirePath)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/acquisition/check", `{"gallery_id":1}`))
+	out = map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "confirm" || out["title"] != sanitized || out["path"] != checkPath {
+		t.Errorf("check after copy must confirm the same sanitized folder: got %v", out)
+	}
+}
+
 func TestViewerAcquisitionCopiesCacheFileIntoTitleFolder(t *testing.T) {
 	db := openTestDB(t)
 	root := t.TempDir()

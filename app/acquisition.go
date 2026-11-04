@@ -85,10 +85,9 @@ func (v *viewer) acquisitionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	titleName := acquisitionTitleFromDB(v.db, body.GalleryID)
-	if titleName == "" {
-		titleName = strconv.Itoa(body.GalleryID)
-	}
+	// B-04（decision 2026-11-03）: check は acquire と同じ sanitize 名で folder を指す。
+	// acquire 側命名（acquisitionTitleName）は変更しない。
+	titleName := acquisitionTitleName(acquisitionTitleFromDB(v.db, body.GalleryID), strconv.Itoa(body.GalleryID))
 	titlePath, err := safeAcquisitionPath(v.acquisitionRoot, titleName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
