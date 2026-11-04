@@ -1,8 +1,8 @@
 # Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 進行中（C 再測定未確認・direct TN 404/shard 200・proxy mapping分離不能）
+**Status**: 進行中（C 再測定未確認・code TN URL same・proxy mapping confirmed）
 **Date**: 2026-11-05
-**Next Action**: C direct check classification recorded. Re-measure only when TN path/hash availability or proxy status mapping is clarified; no code change.
+**Next Action**: C remains unconfirmed. Wait for valid TN path 200 and corrected C re-measurement; no code change.
 
 ## 意図 / 背景
 
@@ -53,6 +53,16 @@
   3. TN path may legitimately 404 for this hash/format. Code-derived status mapping remains possible, but direct evidence separates shard/full 200 from TN-only blocker.
 - `known-issues/` entry is not added under the direct-normal (200) branch because direct TN was not 200. Classification: **C continues unconfirmed; direct check based classification, not upstream instability assertion.**
 - Scratch result: `docs/ai/tmp/phase4_direct_upstream_check_results.json`（コミット禁止）。No implementation/code change. Viewer full route order and TN display-source prohibition remain unchanged.
+
+### C code-derived TN URL proxy mapping check（1 direct attempt per URL・1 proxy attempt per hash・2026-11-05 08:32）
+
+- 正典 TN URL 構築は `app/hitomi.go:611-621`（`ThumbnailURLVariant`）で、既定 variant `bigtn`、TN base `webpbigtn`、subdomain `a`/`b` + `tn`、path segment は `last/prev2/hash.format`。`app/viewer.go:748-775` の `thumbProxy` は `ThumbnailURLVariant(hash, format, variant, v.client.GG())` を呼ぶ。`resolveFormat` default webp は `app/viewer.go:301-306`。
+- Primary hash `3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb`: live code TN URL は `https://atn.gold-usergeneratedcontent.net/webpbigtn/b/9e/3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb.webp`。これは前回の direct TN URL と同一。`webpbigtn/b/9e` は code construction と同一で、`b` は TN subdomainではなく hash path の last char、subdomainは `atn`（m=0）。
+- Direct HTTPS 1 attempt to that same code URL: status `404`, bytes `153`, elapsed `465ms`. Proxy endpoint 1 attempt `http://127.0.0.1:8731/api/thumb/3399bc8a13b2200bed23fd5b5a174d06215c3fe9bb15f1277fbb788a49a689eb?format=webp&variant=bigtn`: status `502`, `x-cache=no_tn`, bytes `0`, elapsed `713ms`. Status mismatch proves the proxy does not transparently pass through the upstream status.
+- Status mapping code: `fetchRemoteWithGate` treats any non-2xx as error at `app/hitomi.go:530-544`; `thumbProxy` maps any image/TN fetch error to `writeNoTN` at `app/viewer.go:774`; `writeNoTN` writes BadGateway `502` at `app/viewer.go:889-894`.
+- Live/snapshot gg: `app/ggset.go:8-11` and `app/gg.go:32-34`; `v.client.GG()` uses live cache or snapshot fallback at `app/gg.go:204-211`. For primary hash, live and snapshot both produce the same TN URL because `gg_value = 2974` gives `m = 0` on both. For second hash `03b2319c9617fddb1c110bd9cc9ce1c032c71a147417c162020d3a6717b5a07e`, `gg_value = 3591` gives live `m = 1` (`btn`) and snapshot `m = 0` (`atn`), so proxy actual gg state remains not independently observable from the response. Direct live code URL `https://btn.gold-usergeneratedcontent.net/webpbigtn/e/07/03b2319c9617fddb1c110bd9cc9ce1c032c71a147417c162020d3a6717b5a07e.webp` returned `404`; proxy returned `502`, `x-cache=no_tn`, `0` bytes, `420ms`.
+- Classification updated to `プロキシ由来（mapping・構築バグ候補）`: direct TN `404` is confirmed for the primary hash, proxy `502`/`no_tn` is confirmed as proxy-side mapping of any fetch error, not transparent passthrough. Construction bug candidate is narrowed because the primary code TN URL is identical to the previous direct TN URL; however proxy actual gg state is not observable, so construction remains a narrowed candidate rather than fully excluded.
+- Same-failure unlimited repetition was not performed. This check used one direct attempt per URL and one proxy attempt per hash. C remains `未確認`; project end is not applied. Result JSON: `docs/ai/tmp/phase4_direct_upstream_check_results.json`, `code_url_proxy_check` section.
 
 ## 完了時 Memory Bank 操作
 
