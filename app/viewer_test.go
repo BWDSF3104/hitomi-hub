@@ -745,16 +745,16 @@ func TestViewerFetchFullImageOnceGroupKeyUsesHashFormatAndGG(t *testing.T) {
 		return []byte("data"), nil
 	}
 
-	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "webp", gg); err != nil {
+	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "webp", gg, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(v.imageFetchGroup) != 0 {
 		t.Fatalf("image fetch group must be cleared after leader completes: got %v", v.imageFetchGroup)
 	}
-	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "avif", gg); err != nil {
+	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "avif", gg, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "webp", ggOther); err != nil {
+	if _, err := v.fetchFullImageOnce(context.Background(), sampleHash, "webp", ggOther, false); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 3 {
@@ -880,7 +880,7 @@ func TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	// explicitly after each insert so LRU eviction order is deterministic.
 	base := time.Now()
 	for i, id := range []int{1, 2, 3} {
-		if _, err := v.info(id); err != nil {
+		if _, err := v.info(id, false); err != nil {
 			t.Fatalf("info %d: %s", id, err)
 		}
 		if entry, ok := v.infoCache[id]; ok {
@@ -904,13 +904,13 @@ func TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// LRU: hit updates access order. Next insert must evict 3 (stale access), not 2.
-	if _, err := v.info(2); err != nil {
+	if _, err := v.info(2, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 3 {
 		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
 	}
-	if _, err := v.info(4); err != nil {
+	if _, err := v.info(4, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := v.infoCache[3]; ok {
@@ -923,7 +923,7 @@ func TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	// Phase 3（decision 2026-11-05）: memory eviction から disk 層が残る。memory 上 evict された
 	// key は memory hit でないが、永続層が保持するため network を消費しない（本タスクの効果そのもの）。
 	// memory は bounded のまま。
-	if _, err := v.info(1); err != nil {
+	if _, err := v.info(1, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 4 {
@@ -944,7 +944,7 @@ func TestViewerInfoCacheSizeCapBoundsMemory(t *testing.T) {
 	}
 
 	for _, id := range []int{1, 2, 3} {
-		if _, err := v.info(id); err != nil {
+		if _, err := v.info(id, false); err != nil {
 			t.Fatalf("info %d: %s", id, err)
 		}
 		if v.infoCacheBytes > v.infoCacheMaxBytes {
@@ -1458,7 +1458,7 @@ func TestSearchResultUsesCoverOnlyThumbnail(t *testing.T) {
 	galleryJSON := `var galleryinfo = {"id":"1","files":[{"hash":"` + sampleHash + `","name":"001.png"},` +
 		`{"hash":"58e06942c116cdf2bdd416345856f889b4dcd68d76f361f923c34ab84d432688","name":"002.jpg"}]}`
 	v, _ := newTestViewer(t, galleryJSON)
-	out := v.searchResult(1)
+	out := v.searchResult(1, false)
 	wantFormat := imageFormat(v.cfg)
 	wantThumb := "/api/thumb/" + sampleHash + "?format=" + wantFormat + "&gallery=1&variant=bigtn"
 	if out["thumbnail"] != wantThumb {

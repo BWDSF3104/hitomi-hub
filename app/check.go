@@ -21,7 +21,7 @@ func markQuerySeen(db dbExec, queryID, galleryID int) error {
 
 // savedQueryIDs は保存検索文を hitomi の results.js と同じ routing で 1 回引く。plain term は galleriesindex exact hash、colon term は nozomi。
 func savedQueryIDs(client *Client, query, lang string) ([]int, error) {
-	ids, _, err := client.SearchHTML(query, lang, 1, -1)
+	ids, _, err := client.SearchHTML(query, lang, 1, -1, false)
 	if err != nil {
 		return nil, err
 	}

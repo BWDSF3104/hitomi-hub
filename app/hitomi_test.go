@@ -51,7 +51,7 @@ func TestClientCacheFieldsAreMutexProtected(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = c.ensureIndexVersion("galleries", false)
+			_, _ = c.ensureIndexVersion("galleries", false, false)
 		}()
 	}
 	wg.Wait()
@@ -69,7 +69,7 @@ func TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	// explicitly after each insert so LRU eviction order is deterministic.
 	base := time.Now()
 	for i, version := range []string{"v1", "v2", "v3"} {
-		if _, _, err := c.indexTopNodeCached("galleries", version); err != nil {
+		if _, _, err := c.indexTopNodeCached("galleries", version, false); err != nil {
 			t.Fatalf("indexTopNodeCached %s: %s", version, err)
 		}
 		if entry, ok := c.indexTopCache["galleries|"+version]; ok {
@@ -93,13 +93,13 @@ func TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// LRU: hit updates access order. Next insert must evict v3 (stale access), not v2.
-	if _, _, err := c.indexTopNodeCached("galleries", "v2"); err != nil {
+	if _, _, err := c.indexTopNodeCached("galleries", "v2", false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 3 {
 		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
 	}
-	if _, _, err := c.indexTopNodeCached("galleries", "v4"); err != nil {
+	if _, _, err := c.indexTopNodeCached("galleries", "v4", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := c.indexTopCache["galleries|v3"]; ok {
@@ -110,7 +110,7 @@ func TestIndexTopCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// Evicted key is not a TTL hit anymore: it refetches and memory stays bounded.
-	if _, _, err := c.indexTopNodeCached("galleries", "v1"); err != nil {
+	if _, _, err := c.indexTopNodeCached("galleries", "v1", false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 5 {
@@ -559,7 +559,7 @@ func (c *Client) Search(term, lang string, page int) ([]int, error) {
 	}
 	full := "https://ltn." + hitomiDomain + nozomiPath(area, tag, lang)
 	start := int64((page-1)*galleriesPerPage*4)
-	body, err := c.get(context.Background(), full, [2]int64{start, start + int64(galleriesPerPage*4) - 1})
+	body, err := c.get(context.Background(), full, [2]int64{start, start + int64(galleriesPerPage*4) - 1}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -788,7 +788,7 @@ func TestGalleryParse(t *testing.T) {
 		}
 		return []byte(`var galleryinfo = {"id":"4294614","title":"Heroine Profile","language":"english","type":"doujinshi","tags":[{"tag":"corruption","female":"1","male":""}],"artists":[{"artist":"alfre-tori"}],"groups":null,"scene_indexes":[0,13,15],"files":[{"hash":"abc","name":"01_1.webp","width":1280,"height":1791,"hasavif":1}]}`), nil
 	}
-	info, err := c.Gallery(4294614)
+	info, err := c.Gallery(4294614, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -818,14 +818,14 @@ func TestRateGatePerRequest(t *testing.T) {
 		return []byte{}, nil
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}); err != nil {
+		if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if calls != 3 {
 		t.Errorf("calls: got %d", calls)
 	}
-	if c.last.IsZero() {
+	if c.dataGate.last.IsZero() {
 		t.Error("gate did not record request time")
 	}
 }
@@ -842,14 +842,14 @@ func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
 		calls++
 		return []byte{}, nil
 	}
-	if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}); err != nil {
+	if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
 		t.Fatal(err)
 	}
 	beforeCancel := calls
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	_, err := c.get(ctx, "https://ltn."+hitomiDomain+"/y", [2]int64{0, 3})
+	_, err := c.get(ctx, "https://ltn."+hitomiDomain+"/y", [2]int64{0, 3}, false)
 	elapsed := time.Since(start)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error: got %v", err)
@@ -860,7 +860,7 @@ func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
 	if calls != beforeCancel {
 		t.Errorf("fetch calls after cancellation: got %d (expected no call beyond %d)", calls, beforeCancel)
 	}
-	if c.last.IsZero() {
+	if c.dataGate.last.IsZero() {
 		t.Error("gate did not record request time")
 	}
 }
@@ -884,7 +884,7 @@ func TestRetryBackoffReturnsImmediatelyOnContextCancellation(t *testing.T) {
 	defer srv.Close()
 	c.http = srv.Client()
 	start := time.Now()
-	_, err := c.fetchRemoteWithGate(ctx, srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.last)
+	_, err := c.fetchRemoteWithGate(ctx, srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.dataGate, false)
 	elapsed := time.Since(start)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error: got %v", err)
@@ -906,20 +906,157 @@ func TestImageGateUsesLowerImageIntervalSeparately(t *testing.T) {
 		calls++
 		return []byte{}, nil
 	}
-	if _, err := c.getImage(context.Background(), "https://btn."+hitomiDomain+"/x", [2]int64{0, 3}); err != nil {
+	if _, err := c.getImage(context.Background(), "https://btn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Errorf("image calls: got %d", calls)
 	}
-	if c.imageLast.IsZero() {
+	if c.imageGate.last.IsZero() {
 		t.Error("image gate did not record image request time")
 	}
-	if !c.last.IsZero() {
+	if !c.dataGate.last.IsZero() {
 		t.Error("image gate should not use normal gate last time")
 	}
 	if defaultHitomiConfig().ImageMinIntervalMS != 250 {
 		t.Errorf("image gate default: got %d", defaultHitomiConfig().ImageMinIntervalMS)
+	}
+}
+
+// Phase 4 固定テスト（decision 2026-11-05・2レーン）。gate inject（C-10）で interval を
+// 制御し、metrics kind 分離・A-06 ctx sleep 意味は変更しない。
+
+// ①フォア待機（fgPending>0）中にバックは slot を予約しない（共有 last 連鎖の境界で
+// 再チェックするだけ・未来予約禁止）。
+func TestBackgroundGateDoesNotReserveSlotWhileForegroundPending(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 200
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte{}, nil
+	}
+	// fg #1: idle → 現时刻記録（last=now）。
+	if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
+		t.Fatal(err)
+	}
+	fgDone := make(chan struct{})
+	go func() {
+		// fg #2: last+interval 未来 slot を予約（sleep 中は fgPending=1）。
+		_, _ = c.get(context.Background(), "https://ltn."+hitomiDomain+"/y", [2]int64{0, 3}, false)
+		close(fgDone)
+	}()
+	if c.dataGate.fgPending == 0 {
+		deadline := time.Now().Add(100 * time.Millisecond)
+		for c.dataGate.fgPending == 0 && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	if c.dataGate.fgPending == 0 {
+		t.Fatal("fg pending window not observed")
+	}
+	lastBefore := c.dataGate.last
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("background gate must not reserve while fg pending, must return on cancel: got %v", err)
+	}
+	if !c.dataGate.lastBg.IsZero() {
+		t.Error("background gate reserved while foreground pending (must not reserve)")
+	}
+	if !c.dataGate.last.Equal(lastBefore) {
+		t.Error("background gate advanced shared last chain while fg pending")
+	}
+	if time.Since(start) >= time.Duration(c.testGateIntervalMS)*time.Millisecond {
+		t.Errorf("bg elapsed during fg pending must be immediate on cancel: got %s", time.Since(start))
+	}
+	<-fgDone
+}
+
+// ②フォア不在時、バックは現行 interval で進む（飢餓なし・interval 遵守・未来予約禁止）。
+func TestBackgroundGateAdvancesAtCurrentIntervalWhenNoForeground(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 100
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte{}, nil
+	}
+	if defaultHitomiConfig().BgGraceMS != 300 {
+		t.Errorf("bg grace default: got %d", defaultHitomiConfig().BgGraceMS)
+	}
+	ctx := context.Background()
+	start := time.Now()
+	if err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true); err != nil {
+		t.Fatal(err)
+	}
+	if c.dataGate.lastBg.IsZero() || time.Since(start) > 60*time.Millisecond {
+		t.Errorf("idle bg must reserve now: elapsed %s lastBg %v", time.Since(start), c.dataGate.lastBg)
+	}
+	start2 := time.Now()
+	if err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed2 := time.Since(start2); elapsed2 < 70*time.Millisecond || elapsed2 > 160*time.Millisecond {
+		t.Errorf("bg must advance at current interval only: elapsed %s", elapsed2)
+	}
+	// 飢餓防止（公平枠）: フォア長期待機（3×interval 継続）で interval 条件を満たす
+	// 時点で即予約可。将来予約はしない。
+	c.dataGate.fgPending = 1
+	c.dataGate.bgWaitSince = time.Now().Add(-4 * time.Duration(c.testGateIntervalMS) * time.Millisecond)
+	c.dataGate.last = time.Now().Add(-2 * time.Duration(c.testGateIntervalMS) * time.Millisecond)
+	start3 := time.Now()
+	if err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed3 := time.Since(start3); elapsed3 > 60*time.Millisecond {
+		t.Errorf("starved bg must advance at interval boundary (fairness slot): elapsed %s", elapsed3)
+	}
+	c.dataGate.fgPending = 0
+}
+
+// ③バックの ctx キャンセルは即 return（A-06 意味）。
+func TestBackgroundGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 200
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte{}, nil
+	}
+	ctx := context.Background()
+	if err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true); err != nil {
+		t.Fatal(err)
+	}
+	firstLastBg := c.dataGate.lastBg
+	ctx2, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	err := c.gateLane(ctx2, c.cfg.MinIntervalMS, &c.dataGate, true)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error: got %v", err)
+	}
+	if time.Since(start) >= time.Duration(c.testGateIntervalMS)*time.Millisecond {
+		t.Errorf("bg cancel elapsed: got %s, expected immediate return despite 200ms interval", time.Since(start))
+	}
+	if !c.dataGate.lastBg.Equal(firstLastBg) {
+		t.Error("cancelled bg must not reserve")
+	}
+}
+
+// ④バックは grace（既定 300ms・lastFg+grace<=now）を尊重する。
+func TestBackgroundGateRespectsGraceAfterForegroundRecord(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 100
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte{}, nil
+	}
+	ctx := context.Background()
+	if err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, false); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed < 200*time.Millisecond || elapsed > 450*time.Millisecond {
+		t.Errorf("bg must wait lastFg+grace(300ms): elapsed %s", elapsed)
 	}
 }
 
@@ -1104,7 +1241,7 @@ func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
 	cfg := Config{GalleryDir: "Galleries"} // VT 無効: 外部呼出しは hitomi のみ
 	client := &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: defaultHitomiConfig()}
 	warnGG(loadGG(client))
-	info, err := client.Gallery(4294614)
+	info, err := client.Gallery(4294614, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1244,7 +1381,7 @@ func TestClientRecordsFetchMetricsForMockFetch(t *testing.T) {
 		}
 		return []byte("x"), nil
 	}}
-	_, err := c.get(context.Background(), "https://gold-usergeneratedcontent.net/common/version", [2]int64{-1, -1})
+	_, err := c.get(context.Background(), "https://gold-usergeneratedcontent.net/common/version", [2]int64{-1, -1}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

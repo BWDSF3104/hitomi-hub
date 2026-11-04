@@ -19,6 +19,10 @@ type searchState struct {
 	orderbykey   string
 	orderbydir   string
 	orderApplied bool
+	// Phase 4（decision 2026-11-05）: marker priority=background の呼出は handler から
+	// 明示引数で受け、このフィールドで fetch 経路（SearchNozomiParts/termIDs→IndexIDs）へ
+	// 伝搬する。metrics の marker kind 分離（Phase 2 正典）は非接触。
+	background bool
 }
 
 // normalizeSearchTerm は hitomi 正典の `_` → space（results.js:30、search.js:653）の mirror。
@@ -128,7 +132,7 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 	}
 	c.searchCacheMu.Unlock()
 
-	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+path, [2]int64{-1, -1})
+	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+path, [2]int64{-1, -1}, state.background)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +179,7 @@ func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
 	// A-04: plain term は lang を適用しない（hitomi 正典準拠・意図的）。galleriesindex の
 	// `galleries` は言語キーを持たず key = hash_term(term) のみ。language は `language:` term の
 	// dataset としてのみ結果へ入る。live 確認 2026-11-04・テストで固定。
-	return c.IndexIDs("galleries", term)
+	return c.IndexIDs("galleries", term, state.background)
 }
 
 func intersectIDs(ordered, ids []int) []int {
@@ -268,7 +272,7 @@ func searchPageSlice(ids []int, page, limit int) []int {
 // colon term は nozomi。`language:` は state の language を変え、最初の term fetch へ反映する（C-04）。
 // 前置 term で fetch 済みの同じ area/tag を新 language で再 fetch しない。
 // `search.html?furry` は部分一致ではなく、index に exact key がある term だけ返す。
-func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, error) {
+func (c *Client) SearchHTML(query, lang string, page, limit int, background bool) ([]int, int, error) {
 	terms := []string{}
 	for _, rawTerm := range strings.Fields(query) {
 		terms = append(terms, normalizeSearchTerm(rawTerm))
@@ -277,7 +281,7 @@ func (c *Client) SearchHTML(query, lang string, page, limit int) ([]int, int, er
 		return nil, 0, errors.New("query has no searchable term")
 	}
 
-	state := searchState{area: "", tag: "index", language: orDefault(lang, "all"), orderby: "date", orderbydir: "desc"}
+	state := searchState{area: "", tag: "index", language: orDefault(lang, "all"), orderby: "date", orderbydir: "desc", background: background}
 	var positive, negative []string
 	var orGroups [][]string
 

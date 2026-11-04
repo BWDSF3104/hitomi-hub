@@ -38,6 +38,8 @@ type HitomiConfig struct {
 	UserAgent     string `json:"user_agent"`
 	ImageFormat   string `json:"image_format"`
 	UseLiveGG     bool   `json:"use_live_gg"`
+	// Phase 4（decision 2026-11-05）: background gate の foreground grace。既定 300ms。
+	BgGraceMS int `json:"bg_grace_ms"`
 }
 
 const ggCacheTTL = time.Hour
@@ -137,11 +139,24 @@ type indexDataCacheEntry struct {
 func (e *indexDataCacheEntry) entrySize() int { return len(e.ids) * 8 }
 func (e *indexDataCacheEntry) lastAccessed() time.Time { return e.lastAccess }
 
+// gateLaneState は Phase 4（decision 2026-11-05）の 2 レーンゲート状態。共有 `last` 連鎖は
+// 系統間隔の global 遵守（FIFO）を維持する。foreground は現行 FIFO 将来予約のまま。
+// background は「フォア待機なしかつ last+interval<=now かつ lastFg+grace<=now」で今この
+// 瞬間のみ予約（未来予約禁止）。飢餓防止: bg 待機が 3×interval 継続した場合は公平枠として
+// interval 条件内で予約可（将来予約にはしない）。
+type gateLaneState struct {
+	last        time.Time
+	lastFg      time.Time
+	lastBg      time.Time
+	fgPending   int
+	bgWaitSince time.Time
+}
+
 type Client struct {
 	http           *http.Client
 	cfg            HitomiConfig
-	last           time.Time
-	imageLast      time.Time
+	dataGate       gateLaneState
+	imageGate      gateLaneState
 	mu             sync.Mutex
 	cacheMu        sync.Mutex
 	singleflightMu sync.Mutex
@@ -205,7 +220,7 @@ func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry)
 
 func defaultHitomiConfig() HitomiConfig {
 	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
-		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true}
+		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: 300}
 }
 
 func negativeNoFullKey(hash, format string, gg GG) string {
@@ -308,6 +323,7 @@ func (c *HitomiConfig) UnmarshalJSON(data []byte) error {
 		UserAgent              string `json:"user_agent"`
 		ImageFormat            string `json:"image_format"`
 		UseLiveGG              *bool  `json:"use_live_gg"`
+		BgGraceMS              int    `json:"bg_grace_ms"`
 	}
 	var raw jsonConfig
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -324,11 +340,17 @@ func (c *HitomiConfig) UnmarshalJSON(data []byte) error {
 	if raw.UseLiveGG != nil {
 		c.UseLiveGG = *raw.UseLiveGG
 	}
+	c.BgGraceMS = defaultBgGraceMS
+	if raw.BgGraceMS > 0 {
+		c.BgGraceMS = raw.BgGraceMS
+	}
 	return nil
 }
 
+const defaultBgGraceMS = 300
+
 func (c *Client) gate() {
-	_ = c.gateForInterval(context.Background(), c.cfg.MinIntervalMS, &c.last)
+	_ = c.gateLane(context.Background(), c.cfg.MinIntervalMS, &c.dataGate, false)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -343,40 +365,90 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // C-10: testGateIntervalMS > 0 のときテスト専用 interval を inject する。本番既定
 // （defaultHitomiConfig() MinIntervalMS 1000ms）と gate semantics（interval 記録・
 // sleep・ctx cancel・recordMetric）は維持する。
-func (c *Client) gateForInterval(ctx context.Context, intervalMS int, last *time.Time) error {
+//
+// Phase 4（decision 2026-11-05・2 レーン化）:
+//   - foreground（background=false）: 現行 FIFO 将来予約のまま（`last` を advance、
+//     `lastFg` 記録、`fgPending` 増減、sleep 完了後 fetch）。
+//   - background: 今この瞬間のみ予約（未来予約禁止）。予約条件: `fgPending == 0` かつ
+//     `last + interval <= now` かつ `lastFg + grace <= now`（grace既定 300ms・テスト
+//     override 可）。条件を満たさない間は interval 境界で再チェック（待機）。飢餓防止:
+//     `fgPending` 待機が 3×interval 以上継続し、かつ interval 条件を満たす時点で公平枠と
+//     して予約可。shared `last` 連鎖による global interval 遵守は変更しない。
+// metrics（kind 別意味・`marker.<priority>` 分離）は非接触。
+func (c *Client) gateLane(ctx context.Context, intervalMS int, st *gateLaneState, background bool) error {
 	if c.testGateIntervalMS > 0 {
 		intervalMS = c.testGateIntervalMS
 	}
-	if last == nil || intervalMS <= 0 {
+	if st == nil || intervalMS <= 0 {
 		return nil
 	}
-	c.mu.Lock()
-	now := time.Now()
-	wait := time.Duration(intervalMS) * time.Millisecond
-	if now.Before(last.Add(wait)) {
-		next := last.Add(wait)
-		*last = next
+	interval := time.Duration(intervalMS) * time.Millisecond
+	for {
+		c.mu.Lock()
+		now := time.Now()
+		if !background {
+			if now.Before(st.last.Add(interval)) {
+				next := st.last.Add(interval)
+				st.last = next
+				st.lastFg = next
+				st.fgPending++
+				c.mu.Unlock()
+				err := sleepCtx(ctx, next.Sub(now))
+				c.mu.Lock()
+				st.fgPending--
+				c.mu.Unlock()
+				return err
+			}
+			st.last = now
+			st.lastFg = now
+			c.mu.Unlock()
+			return nil
+		}
+		grace := time.Duration(c.cfg.BgGraceMS) * time.Millisecond
+		intervalOK := !now.Before(st.last.Add(interval))
+		graceOK := grace <= 0 || st.lastFg.IsZero() || !now.Before(st.lastFg.Add(grace))
+		starved := !st.bgWaitSince.IsZero() && now.Sub(st.bgWaitSince) >= 3*interval
+		if intervalOK && graceOK && (st.fgPending == 0 || starved) {
+			st.last = now
+			st.lastBg = now
+			st.bgWaitSince = time.Time{}
+			c.mu.Unlock()
+			return nil
+		}
+		if st.fgPending > 0 && st.bgWaitSince.IsZero() {
+			st.bgWaitSince = now
+		}
+		next := st.last.Add(interval)
+		if st.fgPending > 0 && !starved {
+			if rt := now.Add(interval); rt.Before(next) {
+				next = rt
+			}
+		}
+		if !graceOK {
+			if gt := st.lastFg.Add(grace); gt.Before(next) {
+				next = gt
+			}
+		}
 		c.mu.Unlock()
-		return sleepCtx(ctx, next.Sub(now))
+		if err := sleepCtx(ctx, time.Until(next)); err != nil {
+			return err
+		}
 	}
-	*last = now
-	c.mu.Unlock()
-	return nil
 }
 
-func (c *Client) get(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
-	return c.getWithGate(ctx, rawurl, rng, c.cfg.MinIntervalMS, &c.last)
+func (c *Client) get(ctx context.Context, rawurl string, rng [2]int64, background bool) ([]byte, error) {
+	return c.getWithGate(ctx, rawurl, rng, c.cfg.MinIntervalMS, &c.dataGate, background)
 }
 
-func (c *Client) getImage(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
-	return c.getWithGate(ctx, rawurl, rng, c.cfg.ImageMinIntervalMS, &c.imageLast)
+func (c *Client) getImage(ctx context.Context, rawurl string, rng [2]int64, background bool) ([]byte, error) {
+	return c.getWithGate(ctx, rawurl, rng, c.cfg.ImageMinIntervalMS, &c.imageGate, background)
 }
 
-func (c *Client) getWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, last *time.Time) ([]byte, error) {
+func (c *Client) getWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, st *gateLaneState, background bool) ([]byte, error) {
 	if c.fetch != nil {
 		kind := classifyFetchURL(rawurl)
 		gateStart := time.Now()
-		if err := c.gateForInterval(ctx, intervalMS, last); err != nil {
+		if err := c.gateLane(ctx, intervalMS, st, background); err != nil {
 			c.recordMetric(kind, time.Since(gateStart), 0, 0, 0)
 			return nil, err
 		}
@@ -386,15 +458,15 @@ func (c *Client) getWithGate(ctx context.Context, rawurl string, rng [2]int64, i
 		c.recordMetric(kind, gateWait, time.Since(networkStart), 0, 0)
 		return body, err
 	}
-	return c.fetchRemoteWithGate(ctx, rawurl, rng, intervalMS, last)
+	return c.fetchRemoteWithGate(ctx, rawurl, rng, intervalMS, st, background)
 }
 
-func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, last *time.Time) ([]byte, error) {
+func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]int64, intervalMS int, st *gateLaneState, background bool) ([]byte, error) {
 	kind := classifyFetchURL(rawurl)
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
 		gateStart := time.Now()
-		if err := c.gateForInterval(ctx, intervalMS, last); err != nil {
+		if err := c.gateLane(ctx, intervalMS, st, background); err != nil {
 			c.recordMetric(kind, time.Since(gateStart), 0, 0, 0)
 			return nil, err
 		}
@@ -615,8 +687,8 @@ func names(entries []map[string]string, key string) []string {
 	return out
 }
 
-func (c *Client) Gallery(id int) (*GalleryInfo, error) {
-	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/galleries/"+strconv.Itoa(id)+".js", [2]int64{-1, -1})
+func (c *Client) Gallery(id int, background bool) (*GalleryInfo, error) {
+	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/galleries/"+strconv.Itoa(id)+".js", [2]int64{-1, -1}, background)
 	if err != nil {
 		return nil, err
 	}

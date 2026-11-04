@@ -51,7 +51,7 @@ func TestViewerInfoDiskPersistentHitDoesNotCallRemote(t *testing.T) {
 		return galleryJSONForID(id, "T"+strconv.Itoa(id)), nil
 	}
 
-	info, err := v.info(7)
+	info, err := v.info(7, false)
 	if err != nil {
 		t.Fatalf("info 7: %s", err)
 	}
@@ -65,7 +65,7 @@ func TestViewerInfoDiskPersistentHitDoesNotCallRemote(t *testing.T) {
 	// server 再起動相当: 同じ root（disk 層は残る）で new viewer。memory は空。
 	v2 := newViewer(v.db, defaultConfigForTest(), v.root)
 	v2.client.fetch = v.client.fetch
-	got, err := v2.info(7)
+	got, err := v2.info(7, false)
 	if err != nil {
 		t.Fatalf("info 7 after restart: %s", err)
 	}
@@ -99,7 +99,7 @@ func TestViewerInfoDiskTTLExpiredRefetchesAndUpdatesPersistentFile(t *testing.T)
 	staleAt := time.Now().Add(-31 * 24 * time.Hour)
 	path := writeInfoDiskFileForTest(t, v, 8, staleAt)
 
-	info, err := v.info(8)
+	info, err := v.info(8, false)
 	if err != nil {
 		t.Fatalf("info 8: %s", err)
 	}
@@ -126,7 +126,7 @@ func TestViewerInfoDiskTTLExpiredRefetchesAndUpdatesPersistentFile(t *testing.T)
 	v.infoCacheMu.Lock()
 	v.infoCache = map[int]*infoCacheEntry{}
 	v.infoCacheMu.Unlock()
-	if _, err := v.info(8); err != nil {
+	if _, err := v.info(8, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 1 {
@@ -155,7 +155,7 @@ func TestViewerInfoDiskCorruptedFileRemovedAndRefetched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := v.info(9)
+	info, err := v.info(9, false)
 	if err != nil {
 		t.Fatalf("corrupted persistent file must not return error: %s", err)
 	}
@@ -182,7 +182,7 @@ func TestViewerInfoDiskCorruptedFileRemovedAndRefetched(t *testing.T) {
 	v.infoCacheMu.Lock()
 	v.infoCache = map[int]*infoCacheEntry{}
 	v.infoCacheMu.Unlock()
-	if _, err := v.info(9); err != nil {
+	if _, err := v.info(9, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 1 {
@@ -197,7 +197,7 @@ func TestViewerInfoDiskCorruptedFileRemovedAndRefetched(t *testing.T) {
 	if err := os.WriteFile(v.infoCachePath(10), mismatchData, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := v.info(10); err != nil {
+	if _, err := v.info(10, false); err != nil {
 		t.Fatalf("id-mismatch file must not return error: %s", err)
 	}
 	if fetches != 2 {
@@ -229,7 +229,7 @@ func TestViewerInfoDiskEvictsOldestByFetchedAtWhenOverEntryCap(t *testing.T) {
 	writeInfoDiskFileForTest(t, v, 2, base.Add(10*time.Second))
 	writeInfoDiskFileForTest(t, v, 3, base.Add(20*time.Second))
 
-	if _, err := v.info(4); err != nil {
+	if _, err := v.info(4, false); err != nil {
 		t.Fatalf("info 4: %s", err)
 	}
 	if fetches != 1 {
@@ -254,7 +254,7 @@ func TestViewerInfoDiskEvictsOldestByFetchedAtWhenOverEntryCap(t *testing.T) {
 	v.infoCacheMu.Lock()
 	v.infoCache = map[int]*infoCacheEntry{}
 	v.infoCacheMu.Unlock()
-	if _, err := v.info(1); err != nil {
+	if _, err := v.info(1, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 2 {
@@ -276,13 +276,13 @@ func TestViewerInfoDiskStaleEntryUsedOnlyWhenRemoteFails(t *testing.T) {
 	}
 
 	// 永続なし + remote 失敗 → エラー（stale 表示なし）。
-	if _, err := v.info(11); err == nil {
+	if _, err := v.info(11, false); err == nil {
 		t.Fatal("remote failure without persistent entry must return error")
 	}
 
 	// 期限切れ永続 + remote 失敗 → stale 暫定表示・counter で判別。
 	writeInfoDiskFileForTest(t, v, 12, time.Now().Add(-31*24*time.Hour))
-	info, err := v.info(12)
+	info, err := v.info(12, false)
 	if err != nil {
 		t.Fatalf("stale entry must serve tentatively on remote failure: %s", err)
 	}

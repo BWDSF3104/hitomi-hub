@@ -1,8 +1,8 @@
-# Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・未開始）
+# Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 未開始（実装開始指示待ち）
+**Status**: 進行中（手順1測定実施中・実装は実施基準確認後）
 **Date**: 2026-11-05
-**Next Action**: 実装未開始。Phase 2 実装後の再判定で実施可（並行度1固定なら実施不要＝最安、並行度2なら必要）。実施時は2レーン（猶予300ms・飢餓防止）＋マーカー明示引数。実装前に canonical rebuild・正典 server 再起動（known-issues KI-20261105-01）
+**Next Action**: 正典 canonical build 作り直し＋正典 server 再起動（KI-20261105-01）→ 実UI scheduler（Phase 2 実装済み・並行度2・marker priority=background）を使った手順1測定（各シナリオ≥3反復・median）→ 基準超なら手順2（2レーン）実装
 
 ## 意図 / 背景
 
@@ -15,11 +15,17 @@
 
 ## 調査結果 / 変更内容
 
-（記入）
+- 実施判定（基準超・反復3・median）: A data lane median +2725ms（baseline A2 median 265ms）、B data lane median +2830ms（baseline B median 180ms）。C wall median +36ms（1 枠 250ms 未満）だが gate 成分推定が 3/3 で 1 枠超（baseline C median 679ms）。判定は A/B の median 超過で実施決定。詳細: `docs/ai/decisions/2026-11-05-phase4-two-lane-gate-implementation.md`（作業前チェックの decision 3ファイル読了済み明記）。
+- 実装（承認済み 2 レーン設計どおり）: `gateLaneState{last,lastFg,lastBg,fgPending,bgWaitSince}`、`Client.dataGate`/`Client.imageGate`、`gateLane(ctx, intervalMS, st, background)`（フォア=現行 FIFO 将来予約維持／バック=現时刻のみ予約、fgPending 中は予約禁止、飢餓防止 3×interval 公平枠は interval 境界でのみ、grace `BgGraceMS` 既定 300ms・config `bg_grace_ms`）。marker 伝達: handler → 明示 `background bool` 引数（`get`/`getImage`/`getWithGate`、`SearchHTML(..., background)`、`searchState.background`、`IndexIDs(..., background)`、`Gallery(id, background)`、viewer `info`/`searchResult`/`fetchFullImageOnce`）。`recordMarkerRequest`・metrics kind 分離は非接触。interval 既定 1000/250ms・リトライ方針・test inject（C-10）・A-06 ctx sleep 変更なし。
+- 変更ファイル: `app/hitomi.go`, `app/searchhtml.go`, `app/searchindex.go`, `app/viewer.go`, `app/main.go`, `app/check.go`, `app/gg.go`、テスト call sites（`hitomi_test.go`, `searchhtml_test.go`, `searchindex_test.go`, `galleryinfocache_test.go`, `viewer_test.go`）＋固定テスト4件追加。
+- 追加固定テスト: `TestBackgroundGateDoesNotReserveSlotWhileForegroundPending`／`TestBackgroundGateAdvancesAtCurrentIntervalWhenNoForeground`（飢餓防止公平枠含む）／`TestBackgroundGateReturnsImmediatelyOnContextCancellation`／`TestBackgroundGateRespectsGraceAfterForegroundRecord`。
 
 ## Verification
 
-（記入）
+- `go vet .`（app）pass。`go test -count=1 -timeout 300s .`（app）pass 28.0s。ガードテスト個別 pass: `TestStorageURLUsesFormatNotNameExt`／`TestCanonicalGGRuleComposition`／`TestThumbnailURLMatchesVerifiedTNPath`／`TestRateGatePerRequest`／`TestImageGateUsesLowerImageIntervalSeparately`＋追加4件（`-run` 個別 0.766s 全て PASS）。pytest（Python 側）53 passed 15.34s。
+- canonical build（正典コマンド）＋正典 server 再起動（新 pid 19756・`bgp_1a85d84e1001hitptEHa2wc3zY`）。CLI download 実 gallery 1070891（limit 2）: attempted=2 == written=2・skipped=0。
+- フル画像実機: `/api/image/9d729d8f...?format=webp` 200・`x-cache=cache`・bytes 75278（`no_full` なし・TN 25564B と非同一）。UI fresh tab display pass: reader naturalWidth 2116×2880・objectURL blob・tn_is_display_source=false（`docs/ai/tmp/drive/confirmation-B-displaycheck-newbuild.json`・スクショ）。UI marker 伝達: bg prefetch 51件 `priority=background`・fg 26件 marker なし（`confirmation-D-ui-markers-newbuild.json`）。
+- 再測定（canonical build・正典 server）: A load window delta median −5ms（1 枠以内）✓（`docs/ai/tmp/phase4_remeasure_results.json`・baseline 35ms/load 30ms・負荷は cached・edge 応答のため弱証拠）。B/C 再測定は上流 hitomi.la の持続的 502（2026-11-05 06:07 以降、有効サンプル B 1件 1180ms のみ）で gate 起因と分離不能 → **未確認**（判定保留相当・ネットワーク揺らぎ）。Google Drive `I:\マイドライブ\kilo\2026-11-05-phase4-gate-priority-implementation` へ確認テキスト（10項目）＋スクショ7点保存。
 
 ## 完了時 Memory Bank 操作
 

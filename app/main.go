@@ -610,7 +610,7 @@ func downloadFilesParallel(client *Client, target string, entries []FileEntry, f
 					continue
 				}
 			}
-			body, err := client.getImage(context.Background(), StorageURL(entry.Hash, format, client.GG()), [2]int64{-1, -1})
+			body, err := client.getImage(context.Background(), StorageURL(entry.Hash, format, client.GG()), [2]int64{-1, -1}, false)
 			if err != nil {
 				results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: err.Error()}
 				continue
@@ -908,7 +908,7 @@ func main() {
 		var err error
 		if f.title != "" {
 			mode = "index"
-			ids, err := client.SearchTitle(f.title)
+			ids, err := client.SearchTitle(f.title, false)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "search: "+err.Error())
 				os.Exit(1)
@@ -916,7 +916,7 @@ func main() {
 			total = len(ids)
 			shown = searchPageSlice(ids, f.page, f.limit)
 		} else {
-			shown, total, err = client.SearchHTML(f.term, f.lang, f.page, f.limit)
+			shown, total, err = client.SearchHTML(f.term, f.lang, f.page, f.limit, false)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "search: "+err.Error())
 				os.Exit(1)
@@ -950,7 +950,7 @@ func main() {
 		}
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
-		info, err := client.Gallery(id)
+		info, err := client.Gallery(id, false)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
@@ -967,7 +967,7 @@ func main() {
 		}
 		client := &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
-		info, err := client.Gallery(id)
+		info, err := client.Gallery(id, false)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)

@@ -200,7 +200,7 @@ func TestSearchHTMLPlainTermUsesIndexExactTerm(t *testing.T) {
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("FURRY", "all", 1, 2)
+	ids, total, err := c.SearchHTML("FURRY", "all", 1, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestSearchHTMLPlainTermIgnoresLangPerCanonicalHitomi(t *testing.T) {
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("furry", "english", 1, 25)
+	ids, total, err := c.SearchHTML("furry", "english", 1, 25, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi(t *test
 
 	// `_` を含む 1 term は space 形 key で降下する。underscore 形 key は live index に不在（実測）なので、
 	// 正典とちがえる実装なら total 0 になる。
-	ids, total, err := c.SearchHTML("big_breasts", "all", 1, 0)
+	ids, total, err := c.SearchHTML("big_breasts", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi(t *test
 
 	// results.js:17 の whitespace split は `_` 置換と別工程。`big breasts` は 2 term の lookup（共通部分）
 	// で、`big_breasts`（1 term）と同じ phrase でも集合が違う（live 実測: 473712 vs 1）。
-	ids2, total2, err := c.SearchHTML("big breasts", "all", 1, 0)
+	ids2, total2, err := c.SearchHTML("big breasts", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestSearchHTMLColonTagTermUsesCanonicalSpaceFormURL(t *testing.T) {
 		return nil, nil
 	}}
 
-	ids, total, err := c.SearchHTML("female:big_breasts", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:big_breasts", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestSearchHTMLColonTermUsesNozomiState(t *testing.T) {
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri language:english", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri language:english", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestSearchHTMLLanguageOnlyUsesNozomiIndex(t *testing.T) {
 		}
 		return nil, nil
 	}}
-	ids, total, err := c.SearchHTML("language:japanese", "all", 1, 0)
+	ids, total, err := c.SearchHTML("language:japanese", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestSearchHTMLLanguageTermIntersectionRegression(t *testing.T) {
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri language:english female:lolita", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri language:english female:lolita", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestSearchHTMLNegativeTermExcludes(t *testing.T) {
 			return nil, nil
 		}
 	}}
-	ids, total, err := c.SearchHTML("female:yuri -female:futanari", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri -female:futanari", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func TestSearchHTMLNegativeTermExcludesWithLanguageRegression(t *testing.T) {
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri -female:futanari language:english", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri -female:futanari language:english", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestSearchHTMLNegativeLanguageTermExcludesItsOwnLanguageDataset(t *testing.
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri -language:english", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri -language:english", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +526,7 @@ func TestSearchHTMLOrGroupLanguageTermContributesOwnLanguageDataset(t *testing.T
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri or language:english", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri or language:english", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestSearchHTMLPreservesOrOnlyUnionWithoutDuplicateGroup(t *testing.T) {
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("a or b", "all", 1, 0)
+	ids, total, err := c.SearchHTML("a or b", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +616,7 @@ func TestSearchHTMLPopularOrderFetchesOrderDatasetPerCanonicalHitomi(t *testing.
 		return nil, nil
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri orderby:popular", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri orderby:popular", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestSearchHTMLPlainTermOrderStartsFromOrderDatasetPerCanonicalHitomi(t *tes
 		}
 	}}
 
-	ids, total, err := c.SearchHTML("furry orderby:popular", "all", 1, 0)
+	ids, total, err := c.SearchHTML("furry orderby:popular", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +686,7 @@ func TestSearchHTMLPopularOrderAscReversesOrderDatasetOncePerCanonicalHitomi(t *
 		return nil, nil
 	}}
 
-	ids, total, err := c.SearchHTML("female:yuri orderby:popular orderbydirection:asc", "all", 1, 0)
+	ids, total, err := c.SearchHTML("female:yuri orderby:popular orderbydirection:asc", "all", 1, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

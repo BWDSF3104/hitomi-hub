@@ -160,7 +160,7 @@ func (c *Client) EnsureGG(ctx context.Context, force bool) string {
 	c.cacheMu.Unlock()
 	c.singleflightMu.Unlock()
 
-	body, err := c.get(ctx, key, [2]int64{-1, -1})
+	body, err := c.get(ctx, key, [2]int64{-1, -1}, false)
 
 	c.singleflightMu.Lock()
 	c.cacheMu.Lock()

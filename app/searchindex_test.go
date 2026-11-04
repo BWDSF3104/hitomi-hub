@@ -119,7 +119,7 @@ func TestSearchTitleIntersectsTokensInFirstTokenOrder(t *testing.T) {
 			return neeData, nil
 		}
 	}}
-	got, err := c.SearchTitle("KEMO NEE")
+	got, err := c.SearchTitle("KEMO NEE", false)
 	if err != nil {
 		t.Fatalf("SearchTitle: %s", err)
 	}
@@ -160,7 +160,7 @@ func TestSearchTitleDescendsToLeafNode(t *testing.T) {
 			return childData, nil
 		}
 	}}
-	got, err := c.SearchTitle("KEMO")
+	got, err := c.SearchTitle("KEMO", false)
 	if err != nil {
 		t.Fatalf("SearchTitle: %s", err)
 	}
@@ -182,17 +182,17 @@ func TestIndexVersionCacheUsesTTL(t *testing.T) {
 		calls++
 		return []byte("1793467632"), nil
 	}}
-	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+	if _, err := c.ensureIndexVersion("galleries", false, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+	if _, err := c.ensureIndexVersion("galleries", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Errorf("TTL cache should not refetch within TTL: calls %d", calls)
 	}
 	c.versionAt["galleries"] = time.Now().Add(-2 * time.Hour)
-	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+	if _, err := c.ensureIndexVersion("galleries", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -210,19 +210,19 @@ func TestIndexVersionForceRefetchOnlyOnceOn404(t *testing.T) {
 		}
 		return nil, errors.New("status 404 for " + rawurl)
 	}
-	if _, err := c.ensureIndexVersion("galleries", false); err != nil {
+	if _, err := c.ensureIndexVersion("galleries", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if versionCalls != 1 {
 		t.Fatalf("initial version fetch should happen once, got %d", versionCalls)
 	}
-	if _, err := c.indexData("galleries", "1793467632", 1, 1); err == nil {
+	if _, err := c.indexData("galleries", "1793467632", 1, 1, false); err == nil {
 		t.Fatal("expected old version 404")
 	}
 	if versionCalls != 2 {
 		t.Fatalf("404 should force one version refetch, version calls %d", versionCalls)
 	}
-	if _, err := c.indexData("galleries", "1793467632", 1, 1); err == nil {
+	if _, err := c.indexData("galleries", "1793467632", 1, 1, false); err == nil {
 		t.Fatal("expected old version 404 again")
 	}
 	if versionCalls != 2 {
@@ -245,7 +245,7 @@ func TestIndexIDsUsesTopNodeCache(t *testing.T) {
 		}
 	}}
 
-	ids, err := c.IndexIDs("galleries", "miss")
+	ids, err := c.IndexIDs("galleries", "miss", false)
 	if err != nil {
 		t.Fatalf("IndexIDs: %s", err)
 	}
@@ -256,7 +256,7 @@ func TestIndexIDsUsesTopNodeCache(t *testing.T) {
 		t.Fatalf("first IndexIDs should fetch version and top node once, fetches %d", fetches)
 	}
 
-	ids, err = c.IndexIDs("galleries", "miss")
+	ids, err = c.IndexIDs("galleries", "miss", false)
 	if err != nil {
 		t.Fatalf("IndexIDs cache: %s", err)
 	}
@@ -295,7 +295,7 @@ func TestIndexIDsCachesInternalNodeAndDataForSameTerm(t *testing.T) {
 		}
 	}}
 
-	ids, err := c.IndexIDs("galleries", "kemo")
+	ids, err := c.IndexIDs("galleries", "kemo", false)
 	if err != nil {
 		t.Fatalf("IndexIDs: %s", err)
 	}
@@ -306,7 +306,7 @@ func TestIndexIDsCachesInternalNodeAndDataForSameTerm(t *testing.T) {
 		t.Fatalf("first descent fetches %d data fetches %d", fetches, dataFetches)
 	}
 
-	ids, err = c.IndexIDs("galleries", "kemo")
+	ids, err = c.IndexIDs("galleries", "kemo", false)
 	if err != nil {
 		t.Fatalf("IndexIDs cache: %s", err)
 	}
@@ -330,7 +330,7 @@ func TestIndexDataCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	// explicitly after each insert so LRU eviction order is deterministic.
 	base := time.Now()
 	for i, offset := range []int64{100, 200, 300} {
-		if _, err := c.indexDataIDsCached("galleries", "v1", offset, 8); err != nil {
+		if _, err := c.indexDataIDsCached("galleries", "v1", offset, 8, false); err != nil {
 			t.Fatalf("indexDataIDsCached %d: %s", offset, err)
 		}
 		if entry, ok := c.indexDataCache[fmt.Sprintf("galleries|v1|%d|8", offset)]; ok {
@@ -354,13 +354,13 @@ func TestIndexDataCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// LRU: hit updates access order. Next insert must evict 300 (stale access), not 200.
-	if _, err := c.indexDataIDsCached("galleries", "v1", 200, 8); err != nil {
+	if _, err := c.indexDataIDsCached("galleries", "v1", 200, 8, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 3 {
 		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
 	}
-	if _, err := c.indexDataIDsCached("galleries", "v1", 400, 8); err != nil {
+	if _, err := c.indexDataIDsCached("galleries", "v1", 400, 8, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := c.indexDataCache["galleries|v1|300|8"]; ok {
@@ -371,7 +371,7 @@ func TestIndexDataCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// Evicted key is not a TTL hit anymore: it refetches and memory stays bounded.
-	if _, err := c.indexDataIDsCached("galleries", "v1", 100, 8); err != nil {
+	if _, err := c.indexDataIDsCached("galleries", "v1", 100, 8, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 5 {
@@ -389,7 +389,7 @@ func TestIndexDataCacheSizeCapBoundsMemory(t *testing.T) {
 	}
 
 	for _, offset := range []int64{100, 200, 300} {
-		if _, err := c.indexDataIDsCached("galleries", "v1", offset, 8); err != nil {
+		if _, err := c.indexDataIDsCached("galleries", "v1", offset, 8, false); err != nil {
 			t.Fatalf("indexDataIDsCached %d: %s", offset, err)
 		}
 		if c.indexDataCacheBytes > c.indexDataCacheMaxBytes {
@@ -419,7 +419,7 @@ func TestIndexNodeCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	// explicitly after each insert so LRU eviction order is deterministic.
 	base := time.Now()
 	for i, addr := range []uint64{100, 200, 300} {
-		if _, err := c.indexNodeCached("galleries", "v1", addr); err != nil {
+		if _, err := c.indexNodeCached("galleries", "v1", addr, false); err != nil {
 			t.Fatalf("indexNodeCached %d: %s", addr, err)
 		}
 		if entry, ok := c.indexNodeCache[fmt.Sprintf("galleries|v1|%d", addr)]; ok {
@@ -437,13 +437,13 @@ func TestIndexNodeCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// LRU: hit updates access order. Next insert must evict 300 (stale access), not 200.
-	if _, err := c.indexNodeCached("galleries", "v1", 200); err != nil {
+	if _, err := c.indexNodeCached("galleries", "v1", 200, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 3 {
 		t.Fatalf("TTL hit must not refetch: fetches %d", fetches)
 	}
-	if _, err := c.indexNodeCached("galleries", "v1", 400); err != nil {
+	if _, err := c.indexNodeCached("galleries", "v1", 400, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := c.indexNodeCache["galleries|v1|300"]; ok {
@@ -454,7 +454,7 @@ func TestIndexNodeCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// Evicted key is not a TTL hit anymore: it refetches and memory stays bounded.
-	if _, err := c.indexNodeCached("galleries", "v1", 100); err != nil {
+	if _, err := c.indexNodeCached("galleries", "v1", 100, false); err != nil {
 		t.Fatal(err)
 	}
 	if fetches != 5 {
@@ -472,7 +472,7 @@ func TestIndexNodeCacheSizeCapBoundsMemory(t *testing.T) {
 	}
 
 	for _, addr := range []uint64{100, 200, 300} {
-		if _, err := c.indexNodeCached("galleries", "v1", addr); err != nil {
+		if _, err := c.indexNodeCached("galleries", "v1", addr, false); err != nil {
 			t.Fatalf("indexNodeCached %d: %s", addr, err)
 		}
 		if c.indexNodeCacheBytes > c.indexNodeCacheMaxBytes {

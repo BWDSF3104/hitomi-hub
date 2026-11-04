@@ -152,11 +152,11 @@ func indexBaseURL(field string) string {
 	return "https://ltn." + hitomiDomain + "/" + indexDir(field)
 }
 
-func (c *Client) indexVersion(field string) (string, error) {
-	return c.ensureIndexVersion(field, false)
+func (c *Client) indexVersion(field string, background bool) (string, error) {
+	return c.ensureIndexVersion(field, false, background)
 }
 
-func (c *Client) ensureIndexVersion(field string, force bool) (string, error) {
+func (c *Client) ensureIndexVersion(field string, force bool, background bool) (string, error) {
 	c.cacheMu.Lock()
 	if c.versions == nil {
 		c.versions = map[string]string{}
@@ -180,7 +180,7 @@ func (c *Client) ensureIndexVersion(field string, force bool) (string, error) {
 		return version, nil
 	}
 
-	body, err := c.get(context.Background(), indexBaseURL(field)+"/version", [2]int64{-1, -1})
+	body, err := c.get(context.Background(), indexBaseURL(field)+"/version", [2]int64{-1, -1}, background)
 	if err != nil {
 		return "", err
 	}
@@ -208,32 +208,32 @@ func (c *Client) ensureIndexVersion(field string, force bool) (string, error) {
 	return version, nil
 }
 
-func (c *Client) indexGetRefetchWithFlag(field, version, url string, rng [2]int64, forceRefetch bool) ([]byte, string, bool, error) {
-	body, err := c.get(context.Background(), url, rng)
+func (c *Client) indexGetRefetchWithFlag(field, version, url string, rng [2]int64, forceRefetch bool, background bool) ([]byte, string, bool, error) {
+	body, err := c.get(context.Background(), url, rng, background)
 	if err == nil {
 		return body, version, false, nil
 	}
 	if !forceRefetch || !strings.Contains(err.Error(), "status 404") {
 		return nil, version, false, err
 	}
-	newVersion, versionErr := c.ensureIndexVersion(field, true)
+	newVersion, versionErr := c.ensureIndexVersion(field, true, background)
 	if versionErr != nil {
 		return nil, version, true, err
 	}
 	if newVersion != version {
 		retryURL := strings.Replace(url, "."+version+".", "."+newVersion+".", 1)
-		body, err := c.get(context.Background(), retryURL, rng)
+		body, err := c.get(context.Background(), retryURL, rng, background)
 		return body, newVersion, true, err
 	}
 	return nil, version, true, err
 }
 
-func (c *Client) indexGetRefetch(field, version, url string, rng [2]int64, forceRefetch bool) ([]byte, error) {
-	body, _, _, err := c.indexGetRefetchWithFlag(field, version, url, rng, forceRefetch)
+func (c *Client) indexGetRefetch(field, version, url string, rng [2]int64, forceRefetch bool, background bool) ([]byte, error) {
+	body, _, _, err := c.indexGetRefetchWithFlag(field, version, url, rng, forceRefetch, background)
 	return body, err
 }
 
-func (c *Client) indexTopNodeCached(field, version string) (*bnode, string, error) {
+func (c *Client) indexTopNodeCached(field, version string, background bool) (*bnode, string, error) {
 	key := field + "|" + version
 
 	c.indexTopCacheMu.Lock()
@@ -250,6 +250,7 @@ func (c *Client) indexTopNodeCached(field, version string) (*bnode, string, erro
 		indexBaseURL(field)+"/"+field+"."+version+".index",
 		[2]int64{0, int64(maxNodeSize) - 1},
 		true,
+		background,
 	)
 	if err != nil {
 		return nil, version, err
@@ -274,7 +275,7 @@ func copyIDs(ids []int) []int {
 	return append([]int(nil), ids...)
 }
 
-func (c *Client) indexNodeCached(field, version string, addr uint64) (*bnode, error) {
+func (c *Client) indexNodeCached(field, version string, addr uint64, background bool) (*bnode, error) {
 	key := fmt.Sprintf("%s|%s|%d", field, version, addr)
 
 	c.indexCacheMu.Lock()
@@ -285,7 +286,7 @@ func (c *Client) indexNodeCached(field, version string, addr uint64) (*bnode, er
 	}
 	c.indexCacheMu.Unlock()
 
-	body, err := c.indexGetRefetch(field, version, indexBaseURL(field)+"/"+field+"."+version+".index", [2]int64{int64(addr), int64(addr) + maxNodeSize - 1}, true)
+	body, err := c.indexGetRefetch(field, version, indexBaseURL(field)+"/"+field+"."+version+".index", [2]int64{int64(addr), int64(addr) + maxNodeSize - 1}, true, background)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +305,7 @@ func (c *Client) indexNodeCached(field, version string, addr uint64) (*bnode, er
 	return node, nil
 }
 
-func (c *Client) indexDataIDsCached(field, version string, offset, length int64) ([]int, error) {
+func (c *Client) indexDataIDsCached(field, version string, offset, length int64, background bool) ([]int, error) {
 	if length <= 0 || length > 100000000 {
 		return nil, fmt.Errorf("data length %d out of range", length)
 	}
@@ -318,7 +319,7 @@ func (c *Client) indexDataIDsCached(field, version string, offset, length int64)
 	}
 	c.indexCacheMu.Unlock()
 
-	body, err := c.indexGetRefetch(field, version, indexBaseURL(field)+"/"+field+"."+version+".data", [2]int64{offset, offset + length - 1}, true)
+	body, err := c.indexGetRefetch(field, version, indexBaseURL(field)+"/"+field+"."+version+".data", [2]int64{offset, offset + length - 1}, true, background)
 	if err != nil {
 		return nil, err
 	}
@@ -337,25 +338,25 @@ func (c *Client) indexDataIDsCached(field, version string, offset, length int64)
 	return copyIDs(ids), nil
 }
 
-func (c *Client) indexNode(field, version string, addr uint64) (*bnode, error) {
-	return c.indexNodeCached(field, version, addr)
+func (c *Client) indexNode(field, version string, addr uint64, background bool) (*bnode, error) {
+	return c.indexNodeCached(field, version, addr, background)
 }
 
-func (c *Client) indexData(field, version string, offset, length int64) ([]byte, error) {
+func (c *Client) indexData(field, version string, offset, length int64, background bool) ([]byte, error) {
 	if length <= 0 || length > 100000000 {
 		return nil, fmt.Errorf("data length %d out of range", length)
 	}
 	url := indexBaseURL(field) + "/" + field + "." + version + ".data"
-	return c.indexGetRefetch(field, version, url, [2]int64{offset, offset + length - 1}, true)
+	return c.indexGetRefetch(field, version, url, [2]int64{offset, offset + length - 1}, true, background)
 }
 
 // IndexIDs は galleriesindex の 1 token（word）→ gallery IDs。hitomi の B-tree 降下と同じ
-func (c *Client) IndexIDs(field, term string) ([]int, error) {
-	version, err := c.indexVersion(field)
+func (c *Client) IndexIDs(field, term string, background bool) ([]int, error) {
+	version, err := c.indexVersion(field, background)
 	if err != nil {
 		return nil, err
 	}
-	node, actualVersion, err := c.indexTopNodeCached(field, version)
+	node, actualVersion, err := c.indexTopNodeCached(field, version, background)
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +365,7 @@ func (c *Client) IndexIDs(field, term string) ([]int, error) {
 	addr := uint64(0)
 	for hop := 0; hop < 64; hop++ {
 		if hop > 0 {
-			node, err = c.indexNode(field, version, addr)
+			node, err = c.indexNode(field, version, addr, background)
 			if err != nil {
 				return nil, err
 			}
@@ -377,7 +378,7 @@ func (c *Client) IndexIDs(field, term string) ([]int, error) {
 			if where >= len(node.datas) {
 				return nil, errors.New("data slot missing for key")
 			}
-			return c.indexDataIDsCached(field, version, node.datas[where][0], node.datas[where][1])
+			return c.indexDataIDsCached(field, version, node.datas[where][0], node.datas[where][1], background)
 		}
 		if isLeaf(node) {
 			return nil, nil
@@ -403,14 +404,14 @@ func indexTokens(phrase string) []string {
 }
 
 // SearchTitle は token ごとの倒引を共通部分にする（hitomi 本体は単一 word の key しか検索しない）
-func (c *Client) SearchTitle(phrase string) ([]int, error) {
+func (c *Client) SearchTitle(phrase string, background bool) ([]int, error) {
 	tokens := indexTokens(phrase)
 	if len(tokens) == 0 {
 		return nil, errors.New("phrase has no searchable token")
 	}
 	var ordered []int
 	for i, token := range tokens {
-		ids, err := c.IndexIDs("galleries", token)
+		ids, err := c.IndexIDs("galleries", token, background)
 		if err != nil {
 			return nil, err
 		}

@@ -528,7 +528,9 @@ func (v *viewer) lists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
-	v.client.recordMarkerRequest(r.URL.Query().Get("priority"))
+	priority := r.URL.Query().Get("priority")
+	v.client.recordMarkerRequest(priority)
+	background := priority == "background"
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		q = r.URL.Query().Get("query")
@@ -551,7 +553,7 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	searchStart := time.Now()
-	ids, total, err := v.client.SearchHTML(q, orDefault(r.URL.Query().Get("lang"), "all"), page, limit)
+	ids, total, err := v.client.SearchHTML(q, orDefault(r.URL.Query().Get("lang"), "all"), page, limit, background)
 	if err != nil {
 		http.Error(w, "search: "+err.Error(), http.StatusBadGateway)
 		return
@@ -597,7 +599,9 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
-	v.client.recordMarkerRequest(r.URL.Query().Get("priority"))
+	priority := r.URL.Query().Get("priority")
+	v.client.recordMarkerRequest(priority)
+	background := priority == "background"
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
@@ -613,11 +617,11 @@ func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
 	v.infoCacheMu.Unlock()
 	w.Header().Set("x-cache", cacheState)
 	_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
-	jsonOut(w, v.searchResult(id))
+	jsonOut(w, v.searchResult(id, background))
 }
 
-func (v *viewer) searchResult(id int) map[string]any {
-	info, err := v.info(id)
+func (v *viewer) searchResult(id int, background bool) map[string]any {
+	info, err := v.info(id, background)
 	if err != nil {
 		return map[string]any{"id": id, "error": err.Error(), "tags": []string{}}
 	}
@@ -649,12 +653,13 @@ func (v *viewer) searchResult(id int) map[string]any {
 }
 
 func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
+	background := r.URL.Query().Get("priority") == "background"
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
 		return
 	}
-	info, err := v.info(id)
+	info, err := v.info(id, background)
 	if err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusBadGateway)
 		return
@@ -702,6 +707,7 @@ func (v *viewer) entryLocalFormats(id int, hash, baseFormat, eFormat string) []s
 }
 
 func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
+	background := r.URL.Query().Get("priority") == "background"
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
@@ -712,7 +718,7 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "page must be >= 1", http.StatusBadRequest)
 		return
 	}
-	info, err := v.info(id)
+	info, err := v.info(id, background)
 	if err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusBadGateway)
 		return
@@ -740,7 +746,9 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
-	v.client.recordMarkerRequest(r.URL.Query().Get("priority"))
+	priority := r.URL.Query().Get("priority")
+	v.client.recordMarkerRequest(priority)
+	background := priority == "background"
 	hash := r.PathValue("hash")
 	if !validHash(hash) {
 		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)
@@ -754,7 +762,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := v.client.getImage(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1})
+	body, err := v.client.getImage(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1}, background)
 	if err == nil {
 		writeImage(w, format, body, "tn")
 		if thumbCacheErr == nil && len(body) > 0 {
@@ -766,7 +774,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	writeNoTN(w, format)
 }
 
-func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg GG) ([]byte, error) {
+func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg GG, background bool) ([]byte, error) {
 	key := imageFetchKey(hash, format, gg)
 
 	v.imageFetchMu.Lock()
@@ -790,7 +798,7 @@ func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg
 	v.imageFetchGroup[key] = call
 	v.imageFetchMu.Unlock()
 
-	body, err := v.client.getImage(context.WithoutCancel(ctx), StorageURL(hash, format, gg), [2]int64{-1, -1})
+	body, err := v.client.getImage(context.WithoutCancel(ctx), StorageURL(hash, format, gg), [2]int64{-1, -1}, background)
 	call.body = body
 	call.err = err
 
@@ -805,6 +813,7 @@ func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg
 }
 
 func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
+	background := r.URL.Query().Get("priority") == "background"
 	hash := r.PathValue("hash")
 	if !validHash(hash) {
 		http.Error(w, "hash must be 64 lowercase hex chars", http.StatusBadRequest)
@@ -830,7 +839,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := v.fetchFullImageOnce(r.Context(), hash, format, gg)
+	body, err := v.fetchFullImageOnce(r.Context(), hash, format, gg, background)
 	if err == nil {
 		v.client.clearNegativeNoFull(hash, format, gg)
 		writeImage(w, format, body, "miss")
@@ -845,7 +854,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		gg = v.client.GG()
 
 		if source == "live" && !sameGG(initialGG, gg) {
-			body, err = v.fetchFullImageOnce(r.Context(), hash, format, gg)
+			body, err = v.fetchFullImageOnce(r.Context(), hash, format, gg, background)
 			if err == nil {
 				v.client.clearNegativeNoFull(hash, format, gg)
 				writeImage(w, format, body, "miss")
@@ -991,7 +1000,7 @@ func (v *viewer) query(w http.ResponseWriter, r *http.Request) {
 // remote 失敗時のみ期限切れ永続 entry を stale 暫定表示に使う（counter+log で判別可）。
 // 壊れた永続ファイルはミス扱い・除去して remote 再取得。Phase 2 の先読み成果もこの helper
 // 経由で自動で永続化される（Phase 2 側追加作業不要）。
-func (v *viewer) info(id int) (*GalleryInfo, error) {
+func (v *viewer) info(id int, background bool) (*GalleryInfo, error) {
 	v.infoCacheMu.Lock()
 	entry, ok := v.infoCache[id]
 	if ok {
@@ -1012,7 +1021,7 @@ func (v *viewer) info(id int) (*GalleryInfo, error) {
 		return &persisted.GalleryInfo, nil
 	}
 
-	info, err := v.client.Gallery(id)
+	info, err := v.client.Gallery(id, background)
 	if err != nil {
 		if persisted != nil {
 			v.recordInfoDiskStaleHit(id, persisted.FetchedAt)
