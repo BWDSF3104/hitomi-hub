@@ -1,7 +1,7 @@
 # C-05 の上限実装は承認範囲 4 cache のみ（残 cache は unbounded のまま）
 
 **Date**: 2026-11-04
-**Status**: Open（判断待ち・修復は本項目スコープ外）
+**Status**: Open（維持・観察）。判断反映（ユーザー承認 2026-11-04・`decisions/2026-11-04-recommendations-approved-execution.md`）: 記録のみ維持。項目化は memory 使用の実測根拠が出た時点で、テストで固定できる bounded case として扱う。
 **Backlog**: assess-20261103-1220
 
 ## 現象
