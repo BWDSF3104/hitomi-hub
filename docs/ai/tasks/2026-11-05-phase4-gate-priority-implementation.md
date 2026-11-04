@@ -1,8 +1,8 @@
 # Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 完了
+**Status**: 進行中（C 再測定未確認・A/B は再測定の証拠で閉）
 **Date**: 2026-11-05
-**Next Action**: task_manager end で close（B/C 再測定は上流安定後任意・未確認として記録済み）
+**Next Action**: 上流安定後 C 再試行（cold TN load・1 retry・gate 準守）。A cold load run 強化は任意（必要最小限）。B 閉済み
 
 ## 意図 / 背景
 
@@ -26,6 +26,13 @@
 - canonical build（正典コマンド）＋正典 server 再起動（新 pid 19756・`bgp_1a85d84e1001hitptEHa2wc3zY`）。CLI download 実 gallery 1070891（limit 2）: attempted=2 == written=2・skipped=0。
 - フル画像実機: `/api/image/9d729d8f...?format=webp` 200・`x-cache=cache`・bytes 75278（`no_full` なし・TN 25564B と非同一）。UI fresh tab display pass: reader naturalWidth 2116×2880・objectURL blob・tn_is_display_source=false（`docs/ai/tmp/drive/confirmation-B-displaycheck-newbuild.json`・スクショ）。UI marker 伝達: bg prefetch 51件 `priority=background`・fg 26件 marker なし（`confirmation-D-ui-markers-newbuild.json`）。
 - 再測定（canonical build・正典 server）: A load window delta median −5ms（1 枠以内）✓（`docs/ai/tmp/phase4_remeasure_results.json`・baseline 35ms/load 30ms・負荷は cached・edge 応答のため弱証拠）。B/C 再測定は上流 hitomi.la の持続的 502（2026-11-05 06:07 以降、有効サンプル B 1件 1180ms のみ）で gate 起因と分離不能 → **未確認**（判定保留相当・ネットワーク揺らぎ）。Google Drive `I:\マイドライブ\kilo\2026-11-05-phase4-gate-priority-implementation` へ確認テキスト（10項目）＋スクショ7点保存。
+
+### 再測定 round2/3（cache 除外条件・1 retry・正典 gate 準守・2026-11-05 06:28–06:31）
+
+- 条件: cold sample（cache 未登録 language/id/hash）。gate_wait 増分は metrics kind delta で計測（A=応答 metrics の index/nozomi・B=gallery・C=image、carrier=policy polished cache hit）。結果ファイル: `docs/ai/tmp/phase4_remeasure_round2_results.json`・`docs/ai/tmp/phase4_remeasure_round3_results.json`（Drive フォルダへコピー済み）。
+- A cold（反復3): baseline median 999ms（gate_wait median 749ms・有効3: vietnamese 237ms・korean 999ms・japanese 1187ms）→ load cold valid 1 sample catalan 1064ms・gate_wait 930ms（≤1 枠 ✓）。round3 load cold run valid 0（3 samples 502: bulgarian/latvian/macedonian。load hits: ukrainian 200/37ms・belarusian 502/3839ms）→ A は cold gate_wait 増分 749→930ms（≤1 枠）で再測定の証拠として成立（反復3の全有効 load サンプルは上流不安定で未達・weak note 維持）。
+- B cold（反復3・round3 全 valid）: baseline cold ids 4208440 181ms・3805539 933ms・3797852 967ms（median 933ms・gate median 761ms）→ load cold ids 3781790 448ms（gate 268ms）・3781782 998ms（820ms）・3781776 967ms（796ms）→ delta median +34ms・gate_wait 増分 median 761→796ms（≤1 枠 ✓）→ **B 合格（再測定の証拠）として閉じる**。
+- C cold（round3）: cold TN bg load 12 requests → 全 502（samples 10件 502・TN load hits 全 502・1000ms 枠消費）→ gate 起因と分離不能 → **未確認（上流不安定）**。UI display pass（fresh tab・strict・objectURL・TN 非表示源・reader naturalWidth 2116×2880・full 75278B ≠ TN 25564B）と marker 伝達（bg 51件/fg 0件）は正典 server（pid 19756）稼働中に確認済み・維持。上流 shard/TN 系統の 502 不安定は申し送り（既知 KI-20261105-01/02 とは別の observation）。
 
 ## 完了時 Memory Bank 操作
 
