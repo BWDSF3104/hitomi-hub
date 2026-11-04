@@ -1,8 +1,8 @@
-# Phase 1 実装 — 検索カードの可視優先順序付け（未開始）
+# Phase 1 実装 — 検索カードの可視優先順序付け（完了）
 
-**Status**: 未開始（実装開始指示待ち）
+**Status**: 完了
 **Date**: 2026-11-05
-**Next Action**: 実装未開始・明示的な実装開始指示待ち。開始後は検討結果（推奨=IO標準+takeNext優先選択・実行中昇格）と正典合格条件に従い、テスト→canonical build→実機確認→報告
+**Next Action**: 本項目分のみ commit/push 後、正典 task_manager.py end
 
 ## 意図 / 背景
 
@@ -27,7 +27,52 @@
 
 ## Verification
 
-未実施（実装未開始）。評価時の証跡（assess 記録): `go vet ./...` pass、`go test -count=1 -timeout 300s .` ok 23.967s（ガードテスト StorageURL/GG/TN 個別 PASS、TN・imageProxy・NoFull 系 45 件全 PASS）、pytest 51 passed（canonical build freshness 含む）。実装後の合格条件はリモートタスク原文（テスト追加・canonical build 再作成・正典 server 実機確認・冷えた状態・報告）に従い、この節に結果を記録する。
+- 項目ID: `2026-11-05-hitomi-hub-search-phase1-visible-priority` / 実行固有ID: `assess-20261105-0006`。
+- 変更ファイル: `app/search.html`, `tests/search_visible_priority_harness.mjs`, `tests/test_search_visible_priority.py`, 本タスク記録, `docs/ai/current-task.tsv`。
+
+### 実装済み内容
+
+- `app/search.html` の `loadSearchCards()` に `IntersectionObserver`, `visibleIds`, `pending`, `placeholderElement`, `distanceToVisibleArea`, `takeNextSearchCard`, `observer.disconnect()` を追加。worker pop を `queue.shift()` から `takeNextSearchCard()` の優先選択へ変更。
+- 維持確認: `SEARCH_CARD_CONCURRENCY = 4`, data gate `1000ms`, image gate `250ms`, `searchGeneration` guard, `restoreSearchState()` 経由の同一 `loadSearchCards()` 経路, TN-only cover, `x-cache` 判定弱体化なし。
+
+### 合格条件
+
+1. node harness: `node tests/search_visible_priority_harness.mjs` → `search visible priority harness: 20 checks passed`。
+   - 表示領域内カードが可視外カードより先に処理される: PASS。
+   - 実行中昇格: card that enters display area during processing is promoted ahead of remaining queue / promotion adds no extra request: PASS。
+   - `SEARCH_CARD_CONCURRENCY = 4`, generation guard, per-card perf timing, bounded workers, restore path, observer root results scroll container, no polling loop: PASS。
+2. pytest wrapper: `python -m pytest tests/ -v` → `52 passed in 12.01s`, including `tests/test_search_visible_priority.py::test_search_visible_priority_order_and_promotion PASSED`。
+3. `app` verification: `go vet . ; go test -count=1 -timeout 300s .` → `ok hitomi-hub/app 18.355s`。`viewer_test.go` の `loadSearchCards` 文字列アサートは現行構造で pass、再アンカー不要と確認。
+4. guard tests individually: `go test -count=1 -timeout 300s -run 'TestStorageURLUsesFormatNotNameExt|TestCanonicalGGRuleComposition|TestThumbnailURLMatchesVerifiedTNPath' .` → `ok hitomi-hub/app 0.168s`。TN / imageProxy / NoFull / Cache 系は full `go test` で全 pass。
+5. canonical build freshness: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` pass; `python -m pytest tests/test_canonical_build_freshness.py -v` → `2 passed`.
+
+### Canonical server / cold UI real confirmation
+
+- Canonical server command: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh --port 8731`。
+- Stale server PID `31304` を停止し、正典 server PID `24340` を正典 exe で再起動。Served page contains `takeNextSearchCard` and `IntersectionObserver` を確認。
+- Google Drive 保存方針: `docs/ai/decisions/2026-11-02-google-drive-confirmation-storage-procedure.md` の日付フォルダ規定と `docs/ai/decisions/2026-11-02-google-drive-task-specific-screenshot-folder.md` のタスク別フォルダ規定が矛盾していたため、後者のタスク別フォルダ優先を採用。保存先: `I:\マイドライブ\kilo\2026-11-05-phase1-visible-priority-implementation\`。
+
+Primary cold screen evidence:
+
+- URL: `http://127.0.0.1:8731/search?newtab=1#/q/furry/page/9`
+- fresh isolated tab, `localStorage` cleared before navigation.
+- cold evidence: first `/api/search-card` response header for card `4285339` was `x-cache: miss`.
+- screen capture: `phase1-visible-priority-page9-midrun-viewport-20261105.png` saved to Google Drive task folder.
+- midrun status snapshot: `カード読み込み 12/25: 4284485`。
+- server `ids` 配列順（DOM order, 25 cards）:
+  `4285339,4285322,4285317,4285279,4285229,4285225,4285194,4285165,4285151,4285140,4285113,4285086,4284988,4284976,4284880,4284701,4284639,4284485,4284213,4284091,4283615,4283548,4283465,4283355,4283063`
+- request order after scroll:
+  `4285339,4285322,4285317,4285279,4285229,4285225,4285194,4285165,4284091,4283615,4283548,4283465,4283355,4283063,4284213,4284485,4284639,4284701,4284880,4284976,4284988,4285086,4285113,4285140,4285151`
+- visual state: display-area bottom cards `4285086,4284988,4284976,4284880,4284701,4284639,4284485,4284213,4284091,4283615,4283548,4283465,4283355,4283063` were processed/displayed while ids-order-earlier pending cards `4285151,4285140,4285113` remained loading. This confirms scroll promotion and display-area priority.
+
+Additional live confirmation:
+
+- URL: `http://127.0.0.1:8731/search?newtab=1#/q/furry/page/8`
+- request order after scroll:
+  `4288223,4288184,4288153,4288143,4288125,4287912,4287896,4287895,4285765,4285709,4285694,4285618,4285579,4285398,4285819,4285894,4286266`
+- display-area bottom cards `4285765,4285709,4285694,4285618,4285579,4285398` were requested before ids-order-earlier pending cards `4285819,4285894,4286266`.
+- screen capture: `phase1-visible-priority-page8-midrun-20261105.png` saved to Google Drive task folder.
+- confirmation txt: `phase1-visible-priority-confirmation.txt` saved to Google Drive task folder.
 
 ## 完了時 Memory Bank 操作
 

@@ -289,11 +289,58 @@ async function setSearchPage(delta) {
   document.getElementById("page").value = String(target);
   await runSearch();
 }
+function placeholderElement(results, id) {
+  return results.querySelector("[data-search-id='" + id + "']");
+}
+
+function distanceToVisibleArea(id, visibleIds, results, visibleRoot) {
+  if (visibleIds.has(id)) return 0;
+  const el = placeholderElement(results, id);
+  if (!el) return Number.MAX_SAFE_INTEGER;
+  const elRect = el.getBoundingClientRect();
+  const rootRect = visibleRoot.getBoundingClientRect();
+  if (elRect.bottom <= rootRect.top) return rootRect.top - elRect.bottom;
+  if (elRect.top >= rootRect.bottom) return elRect.top - rootRect.bottom;
+  return 0;
+}
+
+function takeNextSearchCard(pending, visibleIds, results, visibleRoot) {
+  for (const id of pending) {
+    if (visibleIds.has(id)) return id;
+  }
+  let best = null;
+  let bestDistance = Infinity;
+  for (const id of pending) {
+    const distance = distanceToVisibleArea(id, visibleIds, results, visibleRoot);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = id;
+    }
+  }
+  return best === null ? pending[0] : best;
+}
+
 async function loadSearchCards(ids, searchGen = searchGeneration) {
   const status = document.getElementById("search-status");
   const results = document.getElementById("results");
-  const queue = ids.slice();
+  const pending = ids.slice();
+  const visibleIds = new Set();
+  const visibleRoot = results.parentElement || document.documentElement;
   let processed = 0;
+
+  const observer = new IntersectionObserver((entries) => {
+    if (searchGen !== searchGeneration) return;
+    for (const entry of entries) {
+      const id = Number(entry.target.dataset.searchId);
+      if (!pending.includes(id)) continue;
+      if (entry.isIntersecting) visibleIds.add(id);
+      else visibleIds.delete(id);
+    }
+  }, { root: visibleRoot });
+  for (const id of pending) {
+    const el = placeholderElement(results, id);
+    if (el) observer.observe(el);
+  }
 
   async function processCard(id) {
     if (searchGen !== searchGeneration) return;
@@ -322,8 +369,10 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
   }
 
   async function worker() {
-    while (queue.length && searchGen === searchGeneration) {
-      await processCard(queue.shift());
+    while (pending.length && searchGen === searchGeneration) {
+      const id = takeNextSearchCard(pending, visibleIds, results, visibleRoot);
+      pending.splice(pending.indexOf(id), 1);
+      await processCard(id);
     }
   }
 
@@ -331,6 +380,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
   const workerCount = Math.min(SEARCH_CARD_CONCURRENCY, ids.length);
   for (let i = 0; i < workerCount; i++) workers.push(worker());
   await Promise.all(workers);
+  observer.disconnect();
 }
 
 function debounceLists() {
