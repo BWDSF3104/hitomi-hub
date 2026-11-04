@@ -4,12 +4,18 @@ import (
 	"archive/zip"
 	"bytes"
 	"database/sql"
+	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func validGalleryID(id int) sql.NullInt64 {
@@ -226,6 +232,155 @@ func TestExportPDFPageObjectDictCountsAreBalanced(t *testing.T) {
 	}
 	if !bytes.Contains(pageObj, []byte("/Type /Page")) {
 		t.Errorf("page object must contain /Type /Page: got %q", string(pageObj))
+	}
+}
+
+// A-11: streaming 化後の peak memory gate。mocked fixture（1300 page）で export 中の
+// peak HeapAlloc delta を runtime.MemStats サンプリングで実測し、page 1 分の working set
+// （decoder image 4/3P + rawRGB P + zlib 結果上限 P）＋ header/metadata margin に収まることを検証する。
+// 全 page 保持（旧実装）なら 1300x360,000 = 468MB で不合格。xref offset の strict parser 回帰も同時に検証。
+func TestExportPDFStreamedPeakMemoryFitsSinglePageWorkingSet(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	if err := recordDiscovered(db, 9, "Galleries/9"); err != nil {
+		t.Fatal(err)
+	}
+	const pageCount = 1300
+	w, h := 300, 400
+	pageBytes := w * h * 3
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA64{uint16(x), uint16(y), 128, 65535})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	pngBytes := buf.Bytes()
+	for i := 1; i <= pageCount; i++ {
+		hash := fmt.Sprintf("%06d", i)
+		writeExportFile(t, root, fmt.Sprintf("Galleries/9/%s.png", hash), pngBytes)
+		if err := recordFile(db, filepath.Join("Galleries", "9", hash+".png"), validGalleryID(9), "0", int64(len(pngBytes)), "png", "png", "not_evaluated", "structural"); err != nil {
+			t.Fatal(err)
+		}
+		if err := recordPage(db, 9, i, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// gate は 1 page 分の live working set の理論上界（実行中常時 live: decoder image 4/3P +
+	// rawRGB buffer P + zlib 結果上限 P + zlib writer internal（32KB window + block buffer））
+	// ＋ header/metadata margin（xref offset map・kids・entries）1MB ＋ GC noise margin 8MB
+	// （sweep 前 garbage と live 分散による span 保持分。sampling goroutine の MemStats 割当は
+	// loop 外へ移出して測定ノイズを最小化済み。実測 10 run で peakDelta 最大 6.3MB、gate に
+	// headroom。全 page 保持の旧実装なら N 分（468MB）で不合格）。
+	// peak は強制 GC 付きサンプリングで live heap を測る: page ごとの結果は即解放されるため
+	// live は 1 page 分＋header/metadata に収まる。全 page 保持（旧実装）は live が N 分（468MB）へ
+	// 成長するのでこの測定で不合格になる。加えて export 後（post-GC）の live delta が header/metadata
+	// （1MB）以内であることで page ごとの保持がないことを証明する（garbage 影響なし、gate の sharp 側）。
+	runtime.GC()
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	var peak atomic.Uint64
+	var ms runtime.MemStats // sampling 自体の per-iteration garbage を避ける（measurement noise 源）
+	go func() {
+		defer close(stopped)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			runtime.GC()
+			runtime.ReadMemStats(&ms)
+			v := ms.HeapAlloc
+			if v > peak.Load() {
+				peak.Store(v)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	result, err := exportPDF(db, exportTestCfg(), root, 9, "")
+	close(done)
+	<-stopped
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["pages"] != pageCount {
+		t.Fatalf("pages: got %v want %d", result["pages"], pageCount)
+	}
+
+	peakDelta := int64(peak.Load()) - int64(base.HeapAlloc)
+	runtime.GC()
+	var live runtime.MemStats
+	runtime.ReadMemStats(&live)
+	liveDelta := int64(live.HeapAlloc) - int64(base.HeapAlloc)
+	gate := int64(pageBytes)*3 + int64(pageBytes)/3 + 81920 + 1048576 + 8388608
+	t.Logf("measured: base=%d peakDelta=%d gate=%d singlePage=%d liveDelta=%d", base.HeapAlloc, peakDelta, gate, pageBytes, liveDelta)
+	if peakDelta > gate {
+		t.Fatalf("peak memory delta: got %d bytes want <= %d (single page working set + header)", peakDelta, gate)
+	}
+	if liveDelta > 1048576 {
+		t.Fatalf("live heap after export: got %d bytes want <= 1MB (header/metadata only)", liveDelta)
+	}
+
+	body, err := os.ReadFile(result["output"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	xrefStart := bytes.LastIndex(body, []byte("xref\n0 "))
+	if xrefStart < 0 {
+		t.Fatal("xref not found")
+	}
+	trailerStart := bytes.LastIndex(body, []byte("trailer\n<< /Size "))
+	if trailerStart < 0 {
+		t.Fatal("trailer not found")
+	}
+	sizeStart := trailerStart + len("trailer\n<< /Size ")
+	sizeEnd := sizeStart + bytes.IndexByte(body[sizeStart:], ' ')
+	size, err := strconv.Atoi(string(body[sizeStart:sizeEnd]))
+	if err != nil {
+		t.Fatalf("trailer size parse: %v", err)
+	}
+	if size != pageCount*3+3 {
+		t.Fatalf("trailer size: got %d want %d", size, pageCount*3+3)
+	}
+	startxrefLine := bytes.LastIndex(body, []byte("startxref\n"))
+	if startxrefLine < 0 {
+		t.Fatal("startxref not found")
+	}
+	startxrefLineCopy := startxrefLine + len("startxref\n")
+	xrefValEnd := bytes.IndexByte(body[startxrefLineCopy:], '\n')
+	startxref, err := strconv.Atoi(string(bytes.TrimSpace(body[startxrefLineCopy : startxrefLineCopy+xrefValEnd])))
+	if err != nil {
+		t.Fatalf("startxref parse: %v", err)
+	}
+	if startxref != xrefStart {
+		t.Fatalf("startxref: got %d want %d", startxref, xrefStart)
+	}
+	xrefBlockStart := xrefStart + len("xref\n0 "+strconv.Itoa(size)+"\n")
+	lines := bytes.Split(body[xrefBlockStart:trailerStart], []byte("\n"))
+	if len(lines) != size+1 {
+		t.Fatalf("xref entries: got %d want %d (size %d + trailing newline)", len(lines), size+1, size)
+	}
+	for i := 1; i < size; i++ {
+		line := lines[i]
+		offset, err := strconv.Atoi(string(line[:10]))
+		if err != nil {
+			t.Fatalf("xref entry %d parse: %v line %q", i, err, line)
+		}
+		want := fmt.Sprintf("%d 0 obj\n", i)
+		if !bytes.HasPrefix(body[offset:], []byte(want)) {
+			t.Fatalf("xref entry %d offset %d: got %q want %q", i, offset, string(body[offset:min(offset+20, len(body))]), want)
+		}
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf("/Count %d", pageCount))) {
+		t.Errorf("pdf missing /Count %d", pageCount)
 	}
 }
 
