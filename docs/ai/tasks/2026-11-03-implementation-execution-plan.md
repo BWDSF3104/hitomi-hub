@@ -196,7 +196,8 @@
 
 - 推奨承認: `docs/ai/decisions/2026-11-04-recommendations-approved-execution.md`（①B-06残件Go ②B-07残件①Python ③B-10残件 ④flaky LRU tie テスト側決定化。C-05 残件は記録のみ維持・manual retry・gg polarity は解決 archive・旧タスク2件 close）。委譲前 HEAD `434d4ca`（記録 commit push 済み）・tree clean。
 - ① B-06残件 合格・close commit `7369066`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除 ✓。判定分岐を empty results 基準（`len(results)==0 && positives==0`）へ、テスト固定 2件（`TestVTEmptyResultsWithStatsTotalIsNotEvaluated`・`TestProcessFileVTEmptyResultsDoesNotStorePass`）。回帰維持（hit/404 negative cache・TTL・gate）。go test 1回目既知 flaky FAIL→単独 PASS（区別確認）・suite 18.1s、pytest 41 passed、canonical exe 再 build 済み。任意 live 1回呼出し→404（200 形状基線固定は未実施・未確認）。子判断持ち帰りに対する親判断（追加作業なし）: scan meta 行（verdict=''）により「pass verdict 行なし」で固定する解釈を是とする（Python COUNT 0 相当との区別はテストコメント記録済み）。
-- 次の委譲: ② B-07残件①（Python YARA error 表現 parity）→ ③ B-10残件 → ④ flaky LRU tie。
+- ② B-07残件① 合格・close commit `35ece41`（push済み）。機械確認: コミット存在 ✓／ツリー clean ✓／個別記録 Status 完了・tsv 参照行削除 ✓。Python `process_file` YARA error 分岐を `not_evaluated` 維持＋`scan_source=structural+yara_error`（Go 正典表現）へ。テスト 6件（改名1＋追加5）。mock 実測: error→`not_evaluated`・findings 0・export skip 集合非所属（Go 同一挙動）。回帰維持（hit/404 negative cache・bad_zip→`scan_error`・YARA 呼出 0）。pytest 46 passed 7.69s（baseline 41 無損）。1回目 FAIL は fixture `../evil.exe` の executable_entry 二重 hit → Go 同一 fixture `../evil.txt` へ修正後全通過（B-08 segment 判定との整合確認）。判断持ち帰りなし。
+- 次の委譲: ③ B-10残件 → ④ flaky LRU tie。
 
 ## Verification
 
