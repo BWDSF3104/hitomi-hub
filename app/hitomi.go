@@ -45,6 +45,10 @@ const indexVersionTTL = time.Hour
 const searchCacheTTL = time.Hour
 const topCacheTTL = time.Hour
 
+// Phase 3（decision 2026-11-05）: gallery 情報永続キャッシュの TTL。gallery のメタ情報は
+// 基本的に不変という前提。TTL 切れは remote 再取得、remote 失敗時のみ stale 暫定表示。
+const galleryInfoCacheTTL = 30 * 24 * time.Hour
+
 // C-05/A-14: cache は entry 数上限（LRU）と size cap を持つ。hit 時に access order を
 // 更新し、insert 後に上限超過分を最も古い access から eviction する。既定は conservative。
 const (

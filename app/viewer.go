@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,6 +36,19 @@ type viewer struct {
 	infoCacheBytes  int
 	infoCacheMaxEntries int
 	infoCacheMaxBytes   int
+
+	// Phase 3（decision 2026-11-05）: gallery 情報の永続キャッシュ層（memory → disk → remote）。
+	// 画像バイト経路（imageProxy・TN・full cache）とは分離。置き場は完成フォルダ内
+	// cache/galleryinfo/<id>.json。
+	infoCacheRoot   string
+	infoDiskTTL     time.Duration
+	infoDiskMaxEntries int
+	infoDiskMaxBytes   int
+	infoDiskMu      sync.Mutex
+	infoDiskCount   int
+	infoDiskBytes   int64
+	infoDiskSynced  bool
+	infoDiskStaleHits int
 
 	imageFetchMu          sync.Mutex
 	imageFetchGroup       map[string]*imageFetchCall
@@ -71,12 +85,18 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		acquisitionRoot: filepath.Join(root, orDefault(cfg.AcquisitionDir, "acquisition")),
 		client:          &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
 		infoCache:       map[int]*infoCacheEntry{},
+		infoCacheRoot:   filepath.Join(root, orDefault(cfg.CacheDir, "cache"), "galleryinfo"),
+		infoDiskTTL:     galleryInfoCacheTTL,
 	}
 }
 
 const (
 	defaultInfoCacheMaxEntries = 256
 	defaultInfoCacheMaxBytes   = 4 << 20
+	// Phase 3 disk 層の上限（decision 2026-11-05）。C-05/A-14 の bounded 流儀（cap 超過は
+	// eviction）と同じ考え方。disk 層は access order を持たず、evict は取得時刻古い順。
+	defaultInfoDiskMaxEntries = 5000
+	defaultInfoDiskMaxBytes   = 256 << 20
 )
 
 type infoCacheEntry struct {
@@ -962,6 +982,12 @@ func (v *viewer) query(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"name": body.Name, "query": body.Query})
 }
 
+// info は 3 層参照（Phase 3・decision 2026-11-05）: memory `infoCache` → 永続 disk 層
+// （cache/galleryinfo）→ remote `Client.Gallery`。disk hit は memory へ載せ、network（ゲート）を
+// 消費しない。remote 成功は memory と永続の両方へ書く。TTL（既定 30 日）切れは remote 再取得、
+// remote 失敗時のみ期限切れ永続 entry を stale 暫定表示に使う（counter+log で判別可）。
+// 壊れた永続ファイルはミス扱い・除去して remote 再取得。Phase 2 の先読み成果もこの helper
+// 経由で自動で永続化される（Phase 2 側追加作業不要）。
 func (v *viewer) info(id int) (*GalleryInfo, error) {
 	v.infoCacheMu.Lock()
 	entry, ok := v.infoCache[id]
@@ -971,9 +997,28 @@ func (v *viewer) info(id int) (*GalleryInfo, error) {
 		return entry.info, nil
 	}
 	v.infoCacheMu.Unlock()
+
+	persisted := v.readInfoDisk(id)
+	if persisted != nil && time.Since(persisted.FetchedAt) < v.infoDiskTTL {
+		v.infoCacheMu.Lock()
+		if v.infoCache == nil {
+			v.infoCache = map[int]*infoCacheEntry{}
+		}
+		v.putInfoCacheLocked(id, &infoCacheEntry{info: &persisted.GalleryInfo, lastAccess: time.Now()})
+		v.infoCacheMu.Unlock()
+		return &persisted.GalleryInfo, nil
+	}
+
 	info, err := v.client.Gallery(id)
 	if err != nil {
+		if persisted != nil {
+			v.recordInfoDiskStaleHit(id, persisted.FetchedAt)
+			return &persisted.GalleryInfo, nil
+		}
 		return nil, err
+	}
+	if err := v.writeInfoDisk(id, info); err != nil {
+		log.Printf("galleryinfo persist failed for %d: %s", id, err)
 	}
 	v.infoCacheMu.Lock()
 	if v.infoCache == nil {

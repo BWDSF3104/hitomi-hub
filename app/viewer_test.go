@@ -920,12 +920,14 @@ func TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 		t.Error("recently accessed entry must survive LRU eviction")
 	}
 
-	// Evicted key is not a cache hit anymore: it refetches and memory stays bounded.
+	// Phase 3（decision 2026-11-05）: memory eviction から disk 層が残る。memory 上 evict された
+	// key は memory hit でないが、永続層が保持するため network を消費しない（本タスクの効果そのもの）。
+	// memory は bounded のまま。
 	if _, err := v.info(1); err != nil {
 		t.Fatal(err)
 	}
-	if fetches != 5 {
-		t.Errorf("evicted key must refetch: fetches %d", fetches)
+	if fetches != 4 {
+		t.Errorf("memory-evicted key must serve from persistent layer without network: fetches %d", fetches)
 	}
 	if len(v.infoCache) > 2 || v.infoCacheBytes > v.infoCacheMaxBytes {
 		t.Errorf("memory must stay below cap after refetch insert: len %d bytes %d", len(v.infoCache), v.infoCacheBytes)
