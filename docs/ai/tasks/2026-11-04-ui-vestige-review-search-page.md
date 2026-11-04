@@ -173,7 +173,7 @@ Google Drive 確認結果: `I:\マイドライブ\kilo\2026-11-04`
   3. build command 正典記載を decision へ統一: `docs/ai/decisions/2026-11-02-canonical-latest-build-confirmation-rule.md` へ `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` 追記・テストは同 decision 照合。`docs/ai/usage-memo.md` は照合対象外
   - 失敗メッセージは対象ファイル名明示。byte 照合・`test_canonical_executable_embeds_current_pages` は無変更。AGENTS.md 無変更（write-protected）。design determination: `docs/ai/decisions/2026-11-04-freshness-rule-test-re-anchor-to-pointer.md`（方法追随・supersede ではない）
 - 検証: `python -m pytest tests/ -v` = 51 passed（10.94s・re-anchor 後の該当 test PASSED 含む、`test_canonical_executable_embeds_current_pages` PASSED）。`git diff` で AGENTS.md 変更なし、`*.db`・`tools/*.exe`・scratch/ の混入なし。UI 表示変更なし（documentation-presence 照合）のため画面確認不要・実施せず。
-- コミット: `acbf262`（記録補足単独）／commit 2（test+decision 追加・本記録追記）。push まで実施。
+- コミット: `acbf262`（記録補足単独）／`6d76279`（test re-anchor + decision 追加・本記録追記）。push 済み（`e1e0cb6..6d76279`）。
 
 ## 完了時 Memory Bank 操作
 
