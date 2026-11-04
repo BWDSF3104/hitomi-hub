@@ -6,8 +6,8 @@
 <style>
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }
   h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
+  nav { font-size: .9rem; margin-bottom: .6rem; }
   .cols { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
-  .side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }
   .main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }
   section { margin-bottom: 1rem; }
   h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
@@ -18,23 +18,10 @@
   li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
   a { color: #8ab4f8; text-decoration: none; }
   .meta { font-size: .9rem; color: #9aa0a6; }
-  .note { font-size: .85rem; color: #f0a441; }
+  .error { font-size: .85rem; color: #f0a441; }
   .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
-  .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; height: var(--search-card-height); overflow: hidden; }
-  .card .text { display: flex; flex-direction: column; min-height: 0; max-height: var(--search-card-height); overflow: hidden; }
-  .cover, .search-card-cover, .strip img { object-fit: cover; background: #1d2126; }
-  .cover, .search-card-cover { width: 130px; height: 130px; }
-  .card a { font-weight: 600; }
-  .tags, .strip { margin-top: .35rem; }
-  .tags {
-    font-size: .9rem;
-    line-height: 1.25;
-    max-height: calc(var(--search-card-height) - 2rem);
-    overflow: hidden;
-    overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-line-clamp: 9;
-  }
+  .strip img { object-fit: cover; background: #1d2126; }
+  .strip { margin-top: .35rem; }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
   .strip img { width: 90px; height: 90px; }
   .strip .strip-loading {
@@ -82,7 +69,7 @@
     background: #1d2126;
     object-fit: contain;
   }
-  html.fullscreen h1, body.fullscreen h1, html.fullscreen .side, body.fullscreen .side, body.pseudo-fullscreen .side, html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta, html.fullscreen section h2, body.fullscreen section h2, body.pseudo-fullscreen section h2 { display: none; }
+  html.fullscreen h1, body.fullscreen h1, html.fullscreen nav.page-nav, body.fullscreen nav.page-nav, body.pseudo-fullscreen nav.page-nav, html.fullscreen #reader-controls, body.fullscreen #reader-controls, body.pseudo-fullscreen #reader-controls, html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta, html.fullscreen section h2, body.fullscreen section h2, body.pseudo-fullscreen section h2 { display: none; }
   html.fullscreen .reader, body.fullscreen .reader, body.pseudo-fullscreen .reader {
     --fullscreen-page-padding: 12px;
     --fullscreen-page-height: calc(100vh - var(--fullscreen-page-padding) * 2);
@@ -101,11 +88,12 @@
 </head>
 <body>
 <h1>hitomi hub viewer（閲覧ページ）</h1>
+<nav class="page-nav"><a href="/search">検索</a></nav>
 <div class="cols">
   <div class="main">
     <section>
       <h2>閲覧</h2>
-      <div id="gallery" class="meta"><a href="/search">検索ページ</a> から gallery を選ぶ</div>
+      <div id="gallery" class="meta">gallery meta（検索ページから gallery を選ぶ）</div>
       <div id="reader-controls" class="meta">
         <select id="view-mode">
           <option value="double">見開き（通常）</option>
@@ -128,7 +116,6 @@
       </div>
       <div id="acquisition-results" class="meta"></div>
       <div id="reader-position" class="meta"></div>
-      <div id="note" class="note"></div>
       <div id="prefetch-status" class="status"></div>
       <div id="retry-controls" class="meta"><button id="retry-failed" type="button" disabled>retry failed</button></div>
       <div id="reader" class="reader double"></div>
@@ -155,7 +142,6 @@
 const api = (p) => fetch(p, { cache: "no-store" }).then(async (r) => {
   const data = await r.json().catch(() => ({}));
   data._x_cache = r.headers.get("x-cache") || null;
-  data._x_search_timing = r.headers.get("x-search-timing") || null;
   if (!r.ok) throw new Error(data.error || (r.status + " " + p));
   return data;
 });
@@ -172,6 +158,7 @@ let viewMode = "double";
 let lastViewMode = "double";
 let fullscreenState = "off";
 let currentPairEnd = null;
+let displaySource = "";
 let stripGroup = null;
 let stripRenderedGallery = null;
 let stripRenderedGroup = null;
@@ -634,9 +621,11 @@ function parseReaderHash(hash) {
   return null;
 }
 
-function setPrefetchStatus(text) {
+function setPrefetchStatus(text, isError = false) {
   const el = document.getElementById("prefetch-status");
-  if (el) el.textContent = text;
+  if (!el) return;
+  el.classList.toggle("error", isError);
+  el.textContent = text;
 }
 
 function renderPosition() {
@@ -666,7 +655,7 @@ function renderViewState() {
   }
   const pair = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
   const pageText = pair ? current.page + "-" + pair : String(current.page);
-  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・last layout: " + lastViewMode + "・spread " + spreadDirection + "・page " + pageText + " / " + (current.count || "-") + "・fullscreen " + fullscreenState;
+  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・last layout: " + lastViewMode + "・spread " + spreadDirection + "・page " + pageText + " / " + (current.count || "-") + "・source " + (displaySource || "-") + "・fullscreen " + fullscreenState;
 }
 
 function loadSpreadDirection() {
@@ -711,8 +700,6 @@ function renderGalleryLoading(id, page, second) {
     "</div>";
   const pagenum = document.getElementById("pagenum");
   if (pagenum) pagenum.value = pageLabel;
-  const note = document.getElementById("note");
-  if (note) note.textContent = "reader content loading";
   setPrefetchStatus("gallery read load: " + id);
   renderLoadingPosition(id, pageLabel, pairLabel);
   renderViewState();
@@ -863,7 +850,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       storeFullCache(entry, "no_full", null, galleryId);
       updatePrefetchCounts("no_full", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-        document.getElementById("note").textContent = "no full image: " + targetPage;
+        setPrefetchStatus("no full image: " + targetPage, true);
       }
       return;
     }
@@ -871,7 +858,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       storeFullCache(entry, "error", null, galleryId);
       updatePrefetchCounts("error", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-        document.getElementById("note").textContent = "image load failed: " + targetPage;
+        setPrefetchStatus("image load failed: " + targetPage, true);
       }
       return;
     }
@@ -879,7 +866,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       storeFullCache(entry, "tn", null, galleryId);
       updatePrefetchCounts("tn", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-        document.getElementById("note").textContent = "tn display fallback disabled: " + targetPage;
+        setPrefetchStatus("tn display fallback disabled: " + targetPage, true);
       }
       return;
     }
@@ -903,7 +890,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     storeFullCache(entry, "error", null, galleryId);
     updatePrefetchCounts("error", entry, galleryId, allowRecount);
     if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-      document.getElementById("note").textContent = "image load failed: " + targetPage;
+      setPrefetchStatus("image load failed: " + targetPage, true);
     }
   }
 }
@@ -1083,7 +1070,11 @@ function runBackgroundRead(showGen, openGen) {
       highlightStrip();
     }).catch((err) => {
       if (showGen === showGeneration && openGen === openGeneration) {
-        document.getElementById("note").textContent = err.message;
+        const status = document.getElementById("prefetch-status");
+        if (status) {
+          status.classList.toggle("error", true);
+          status.textContent = "read post error: " + err.message;
+        }
       }
     });
   }, readListsDebounceMs);
@@ -1094,7 +1085,7 @@ async function showPage() {
   refreshStrip();
   const entry = current.files[current.page - 1];
   if (!entry) {
-    document.getElementById("note").textContent = "page out of range";
+    setPrefetchStatus("page out of range", true);
     return;
   }
   const data = { page: current.page, src: entrySource(entry, current.id), local: !!entry.local, format: formatForEntry(entry) };
@@ -1103,7 +1094,7 @@ async function showPage() {
   const displayed = readerItems().filter((item) => item.entry);
   renderReader();
   ensureBackgroundPrefetch(displayed);
-  document.getElementById("note").textContent = data.local ? "local" : "cdn/TN（未ダウンロード）";
+  displaySource = data.local ? "local" : "cdn/TN（未ダウンロード）";
   document.getElementById("pagenum").value = current.page;
   renderPosition();
   renderViewState();

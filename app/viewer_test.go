@@ -1526,14 +1526,23 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 		if !strings.Contains(s, `const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";`) || !strings.Contains(s, `function targetAttr() {`) || !strings.Contains(s, `target='_blank'`) {
 			t.Errorf("ui should support a query-param new-tab policy while preserving same-tab hash routes: got %q", s)
 		}
-		if !strings.Contains(s, `function newTabHref(hash) {`) || !strings.Contains(s, `window.location.pathname + window.location.search + hash`) {
-			t.Errorf("new-tab mode must build an absolute URL for same-document fragment links because target is ignored on fragment-only navigation: got %q", s)
-		}
+	}
+	if !strings.Contains(viewer, `function newTabHref(hash) {`) || !strings.Contains(viewer, `window.location.pathname + window.location.search + hash`) {
+		t.Errorf("viewer new-tab mode must build an absolute URL for same-document fragment links because target is ignored on fragment-only navigation: got %q", viewer)
+	}
+	if strings.Contains(search, `function newTabHref(hash) {`) {
+		t.Errorf("search links are already absolute cross-page anchors, so the unused fragment-only newTabHref helper must be removed from the search page: got %q", search)
 	}
 
 	renderBody := sliceBetween(t, search, "function renderSearchCard(r) {", "async function loadSearchCardCover(r, searchGen = searchGeneration) {")
 	if !strings.Contains(renderBody, `targetAttr()`) {
 		t.Errorf("search card links should use the new-tab query policy: got %q", renderBody)
+	}
+	if !strings.Contains(search, `function viewerLink(id, page) {`) || !strings.Contains(search, `"/#/g/" + id`) {
+		t.Errorf("search card transition must build a plain absolute cross-page viewer link without the second-argument hash form: got %q", search)
+	}
+	if !strings.Contains(renderBody, `viewerLink(r.id)`) {
+		t.Errorf("renderSearchCard should link through the plain viewer anchor: got %q", renderBody)
 	}
 	listBody := sliceBetween(t, search, "async function showLists(searchGen) {", "async function runSearch() {")
 	if !strings.Contains(listBody, `targetAttr()`) {
@@ -1545,14 +1554,11 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 	}
 
 	viewerHandlerBody := sliceBetween(t, viewer, "async function handleCardClick(e) {", "document.getElementById(\"thumbs\")")
-	searchHandlerBody := sliceBetween(t, search, "async function handleCardClick(e) {", "document.getElementById(\"results\")")
-	for _, handlerBody := range []string{viewerHandlerBody, searchHandlerBody} {
-		guard := `if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;`
-		guardAt := strings.Index(handlerBody, guard)
-		preventAt := strings.Index(handlerBody, `e.preventDefault();`)
-		if guardAt < 0 || preventAt < 0 || guardAt > preventAt {
-			t.Errorf("card click handler must keep the modifier-key native passthrough before preventDefault: got %q", handlerBody)
-		}
+	guard := `if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;`
+	guardAt := strings.Index(viewerHandlerBody, guard)
+	preventAt := strings.Index(viewerHandlerBody, `e.preventDefault();`)
+	if guardAt < 0 || preventAt < 0 || guardAt > preventAt {
+		t.Errorf("viewer card click handler must keep the modifier-key native passthrough before preventDefault: got %q", viewerHandlerBody)
 	}
 
 	viewerOpenAt := strings.Index(viewerHandlerBody, `window.open(newTabHref(route(id, page)), "_blank");`)
@@ -1564,17 +1570,11 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 		t.Errorf("viewer new-tab branch must depend on newTabMode: got %q", viewerHandlerBody)
 	}
 
-	searchOpenAt := strings.Index(searchHandlerBody, `window.open(route(id, page), "_blank");`)
-	searchNavigateAt := strings.Index(searchHandlerBody, `window.location.href = route(id, page);`)
-	if searchOpenAt < 0 || searchNavigateAt < 0 || searchOpenAt > searchNavigateAt {
-		t.Errorf("search card click handler must open cross-page new-tab route before same-tab navigation to viewer: got %q", searchHandlerBody)
+	if strings.Contains(search, `handleCardClick`) || strings.Contains(search, `data-id='`) || strings.Contains(search, `data-page='`) {
+		t.Errorf("search page must not keep the same-document click shim handler or its data attributes because plain anchors already move modifier keys and new-tab policy natively: got %q", search)
 	}
-	if !strings.Contains(searchHandlerBody, `if (newTabMode) {`) {
-		t.Errorf("search new-tab branch must depend on newTabMode: got %q", searchHandlerBody)
-	}
-
-	if !strings.Contains(search, `document.getElementById("results").addEventListener("click", handleCardClick);`) || !strings.Contains(viewer, `document.getElementById("thumbs").addEventListener("click", handleCardClick);`) {
-		t.Errorf("card click handlers must be wired to #results on search and #thumbs on viewer: got %q / %q", search, viewer)
+	if !strings.Contains(viewer, `document.getElementById("thumbs").addEventListener("click", handleCardClick);`) {
+		t.Errorf("card click handler must remain wired to #thumbs on viewer: got %q", viewer)
 	}
 	if !strings.Contains(viewer, `window.addEventListener("hashchange"`) || !strings.Contains(search, `window.addEventListener("hashchange"`) {
 		t.Errorf("same-tab hashchange routing must remain available when new-tab mode is not requested: got %q", viewer)
@@ -1591,6 +1591,82 @@ s := uiText(t, "viewer.html", "search.html")
 	}
 	if !strings.Contains(s, `.side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }`) || !strings.Contains(s, `.main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }`) {
 		t.Errorf(".side and .main should fill the viewport height and scroll independently: got %q", s)
+	}
+}
+
+func TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs(t *testing.T) {
+search := uiText(t, "search.html")
+	sideBody := sliceBetween(t, search, `<div class="side">`, `<div class="main">`)
+	mainBody := sliceBetween(t, search, `<div class="main">`, "\n</div>\n<script>")
+	if strings.Contains(sideBody, `id="results"`) {
+		t.Errorf("results should move under .main instead of staying in the .side column: got %q", sideBody)
+	}
+	if !strings.Contains(mainBody, `<ul id="results"></ul>`) {
+		t.Errorf("results should sit directly under .main: got %q", mainBody)
+	}
+	for _, want := range []string{`form id="search"`, `form id="saved-search"`, `id="queries"`, `id="favorites"`, `id="unread"`} {
+		if !strings.Contains(sideBody, want) {
+			t.Errorf("side column should keep only the form, saved search, and lists: got %q", sideBody)
+		}
+	}
+	if strings.Contains(search, `id="note"`) || strings.Contains(search, `class="note"`) || strings.Contains(search, `id="gallery"`) {
+		t.Errorf("search page should not keep the reader-derived note row or gallery hint: got %q", search)
+	}
+	if strings.Contains(search, `.cover {`) || !strings.Contains(search, `.search-card-cover {`) {
+		t.Errorf("search should drop the unused .cover rule and keep the search-card cover rule: got %q", search)
+	}
+	if !strings.Contains(search, `.error { font-size: .85rem; color: #f0a441; }`) || !strings.Contains(search, `status.classList.toggle("error", isError)`) {
+		t.Errorf("search error should render on the status row through the .error color rule: got %q", search)
+	}
+	runBody := sliceBetween(t, search, "async function runSearch() {", "document.getElementById(\"search\")")
+	if !strings.Contains(runBody, `setStatus(status, "検索エラー: " + err.message, true);`) {
+		t.Errorf("runSearch should show the search error on the status row: got %q", runBody)
+	}
+	if !strings.Contains(search, `<nav class="page-nav"><a href="/">`) {
+		t.Errorf("search header should keep a permanent nav row to the viewer page: got %q", search)
+	}
+}
+
+func TestEmbeddedUISearchCardsShowReadAndFavoriteBadgesFromListsMaps(t *testing.T) {
+search := uiText(t, "search.html")
+	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) {
+		t.Errorf("search should build client-side maps from the lists response: got %q", search)
+	}
+	renderBody := sliceBetween(t, search, "function renderSearchCard(r) {", "function searchCardCoverSource(card) {")
+	if !strings.Contains(renderBody, `badgeRow(r.id)`) {
+		t.Errorf("search card should render the read/favorite badge row: got %q", renderBody)
+	}
+	listsBody := sliceBetween(t, search, "async function showLists(searchGen) {", "async function runSearch() {")
+	if !strings.Contains(listsBody, `readStateByGallery.set(`) || !strings.Contains(listsBody, `favoriteByGallery.set(`) || !strings.Contains(listsBody, `renderReadBadges();`) {
+		t.Errorf("showLists should build the badge maps from /api/lists and refresh card badges: got %q", listsBody)
+	}
+	if strings.Count(listsBody, `api("/api/lists")`) != 1 {
+		t.Errorf("badge maps must not add a second lists fetch per window: got %q", listsBody)
+	}
+	if !strings.Contains(search, `id="lists-refresh"`) || !strings.Contains(search, `document.getElementById("lists-refresh").addEventListener("click", () => { showLists(); });`) {
+		t.Errorf("ui should expose a manual lists refresh button that re-runs showLists(): got %q", search)
+	}
+	if strings.Contains(search, `BroadcastChannel`) {
+		t.Errorf("manual display refresh must not add a page-to-page sync mechanism: got %q", search)
+	}
+}
+
+func TestEmbeddedUIViewerKeepsPermanentNavAndDropsSearchCardCSS(t *testing.T) {
+viewer := uiText(t, "viewer.html")
+	if !strings.Contains(viewer, `<nav class="page-nav"><a href="/search">検索</a></nav>`) {
+		t.Errorf("viewer header should keep a permanent nav row to the search page: got %q", viewer)
+	}
+	cacheBody := sliceBetween(t, viewer, "function showGalleryMetaFromCache(id) {", "function updateThumbCache(key, objectUrl) {")
+	if !strings.Contains(cacheBody, `document.getElementById("gallery").innerHTML`) || strings.Contains(cacheBody, `page-nav`) {
+		t.Errorf("gallery meta write must target #gallery only and must not touch the nav row: got %q", cacheBody)
+	}
+	for _, unused := range []string{`.card {`, `.card .text {`, `.card a {`, `--search-card-height`, `.side { width: 30rem`, `class="side"`, `body.pseudo-fullscreen .side`} {
+		if strings.Contains(viewer, unused) {
+			t.Errorf("viewer should not keep search-card chrome: got %q", unused)
+		}
+	}
+	if strings.Contains(viewer, `_x_search_timing`) {
+		t.Errorf("viewer api helper should not write the search-only timing field: got %q", viewer)
 	}
 }
 
@@ -1924,8 +2000,11 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	if !strings.Contains(viewer, `const galleryCache = new Map();`) {
 		t.Errorf("viewer should cache opened gallery data for immediate navigation: got %q", viewer)
 	}
-	if !strings.Contains(search, `const searchCardCache = new Map();`) || !strings.Contains(search, `function renderSearchCard(r) {`) || !strings.Contains(search, `searchCardCache.set(r.id, r);`) {
-		t.Errorf("search should cache search card metadata for immediate display: got %q", search)
+	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) || !strings.Contains(search, `function renderSearchCard(r) {`) {
+		t.Errorf("search should keep client-side read and favorite maps for card badges instead of the write-only card cache: got %q", search)
+	}
+	if strings.Contains(search, `searchCardCache`) {
+		t.Errorf("write-only searchCardCache must be removed from the search page: got %q", search)
 	}
 	if strings.Contains(viewer, `searchCardCache`) {
 		t.Errorf("viewer open path must not depend on search-page card cache: got %q", viewer)
@@ -2002,8 +2081,8 @@ func TestEmbeddedUIShowsImmediateReaderLoadingForUncachedGallery(t *testing.T) {
 	if strings.Contains(viewer, `function galleryDataFromCard(card) {`) || strings.Contains(viewer, `searchCardCache`) {
 		t.Errorf("viewer should not use search-page card cache for immediate gallery open: got %q", viewer)
 	}
-	if !strings.Contains(search, `searchCardCache`) || !strings.Contains(search, `function searchCardCoverSource(card) {`) || !strings.Contains(search, `card.thumbnail`) {
-		t.Errorf("search page should keep search card cache metadata and TN cover helper for its own card display: got %q", search)
+	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `function searchCardCoverSource(card) {`) || !strings.Contains(search, `card.thumbnail`) {
+		t.Errorf("search page should keep its own TN cover helper and the client-side read map for card display: got %q", search)
 	}
 
 	openBody := sliceBetween(t, viewer, "async function openGallery(id, page, second) {", "function renderStrip() {")
@@ -2564,11 +2643,11 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `if (isActualFullscreen()) {`) || !strings.Contains(s, `else if (fullscreenState === "fallback") {`) {
 		t.Errorf("fullscreenchange should keep actual fullscreen as the source of truth and preserve explicit fallback: got %q", s)
 	}
-	if !strings.Contains(s, `html.fullscreen h1, body.fullscreen h1`) || !strings.Contains(s, `html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta`) || !strings.Contains(s, `html.fullscreen .side, body.fullscreen .side`) {
-		t.Errorf("actual browser fullscreen should hide non-essential chrome and control rows: got %q", s)
+	if !strings.Contains(s, `html.fullscreen h1, body.fullscreen h1`) || !strings.Contains(s, `html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta`) || !strings.Contains(s, `html.fullscreen nav.page-nav, body.fullscreen nav.page-nav, body.pseudo-fullscreen nav.page-nav`) || !strings.Contains(s, `html.fullscreen #reader-controls, body.fullscreen #reader-controls, body.pseudo-fullscreen #reader-controls`) {
+		t.Errorf("actual browser fullscreen should hide non-essential chrome and control rows, including the cross-page nav row: got %q", s)
 	}
-	if !strings.Contains(s, `html.fullscreen .reader, body.fullscreen .reader, body.pseudo-fullscreen .reader`) || !strings.Contains(s, `box-sizing: border-box; position: fixed; inset: 0; z-index: 10; margin: 0; width: 100%; height: 100%;`) || !strings.Contains(s, `body.pseudo-fullscreen .side`) {
-		t.Errorf("ui should expose explicit browser fullscreen CSS and pseudo fullscreen fallback for reader display: got %q", s)
+	if !strings.Contains(s, `html.fullscreen .reader, body.fullscreen .reader, body.pseudo-fullscreen .reader`) || !strings.Contains(s, `box-sizing: border-box; position: fixed; inset: 0; z-index: 10; margin: 0; width: 100%; height: 100%;`) {
+		t.Errorf("ui should expose explicit browser fullscreen CSS for reader display: got %q", s)
 	}
 	if !strings.Contains(s, `setFullscreenFromGesture();`) || !strings.Contains(s, `fullscreenerror`) {
 		t.Errorf("ui should expose gesture-bound fullscreen toggle and fullscreenerror handling: got %q", s)

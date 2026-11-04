@@ -6,6 +6,7 @@
 <style>
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }
   h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
+  nav { font-size: .9rem; margin-bottom: .6rem; }
   .cols { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
   .side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }
   .main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }
@@ -18,12 +19,14 @@
   li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
   a { color: #8ab4f8; text-decoration: none; }
   .meta { font-size: .9rem; color: #9aa0a6; }
-  .note { font-size: .85rem; color: #f0a441; }
   .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
+  .error { font-size: .85rem; color: #f0a441; }
   .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; height: var(--search-card-height); overflow: hidden; }
   .card .text { display: flex; flex-direction: column; min-height: 0; max-height: var(--search-card-height); overflow: hidden; }
-  .cover, .search-card-cover { object-fit: cover; background: #1d2126; }
-  .cover, .search-card-cover { width: 130px; height: 130px; }
+  .card .badge { font-size: .8rem; color: #8ab4f8; }
+  .card .badge:empty { display: none; }
+  .search-card-cover { object-fit: cover; background: #1d2126; }
+  .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
   .tags {
     font-size: .9rem;
@@ -38,6 +41,7 @@
 </head>
 <body>
 <h1>hitomi hub search（検索ページ）</h1>
+<nav class="page-nav"><a href="/">閲覧</a></nav>
 <div class="cols">
   <div class="side">
     <section>
@@ -54,7 +58,6 @@
       <div id="perf-status" class="meta"></div>
       <div id="search-status" class="status"></div>
       <div id="count" class="meta"></div>
-      <ul id="results"></ul>
     </section>
     <section>
       <h2>保存検索</h2>
@@ -67,16 +70,13 @@
     </section>
     <section>
       <h2>お気に入り / 未読</h2>
+      <div><button id="lists-refresh" type="button">一覧更新</button></div>
       <ul id="favorites"></ul>
       <ul id="unread"></ul>
     </section>
   </div>
   <div class="main">
-    <section>
-      <h2>閲覧</h2>
-      <div id="gallery" class="meta">カードをクリックすると <a href="/">viewer</a>（閲覧ページ）で開きます</div>
-      <div id="note" class="note"></div>
-    </section>
+    <ul id="results"></ul>
   </div>
 </div>
 <script>
@@ -102,10 +102,11 @@ const readListsDebounceMs = 250;
 let listsDebounceTimer = null;
 let listsWaiters = [];
 let listsFetchPending = null;
+const readStateByGallery = new Map();
+const favoriteByGallery = new Map();
 let searchGeneration = 0;
 let currentSearchTotal = 0;
 let perfStatus = { searchMs: 0, serverTiming: "", cardsLoaded: 0, cardTotalMs: 0, cacheDistribution: {} };
-const searchCardCache = new Map();
 const titleGroups = new Map();
 
 function escapeHTML(s) {
@@ -116,13 +117,15 @@ function escapeHTML(s) {
 function targetAttr() {
   return newTabMode ? " target='_blank'" : "";
 }
-function newTabHref(hash) {
-  return newTabMode ? window.location.pathname + window.location.search + hash : hash;
+// cross-page viewer link: search page lives at /search, viewer page at /. The link must be absolute to "/" so a fragment-only navigation cannot stay on the search page.
+function viewerLink(id, page) {
+  const base = "/#/g/" + id;
+  return page && page > 1 ? base + "/page/" + page : base;
 }
-// cross-page viewer link: search page lives at /search, viewer page at /. The route must be absolute to "/" so a fragment-only navigation cannot stay on the search page.
-function route(id, page, second) {
-  const hash = second ? "#/g/" + id + "/page/" + page + "-" + second : "#/g/" + id + "/page/" + page;
-  return "/" + hash;
+function setStatus(status, message, isError = false) {
+  if (!status) return;
+  status.classList.toggle("error", isError);
+  status.textContent = message;
 }
 
 function thumbURL(hash, format, gallery, variant) {
@@ -165,18 +168,29 @@ function sameTitleJapaneseAnchor(r) {
   const key = normalizeTitleKey(r);
   const group = titleGroups.get(key);
   if (!key || !group || r.language === "japanese" || group.language !== "japanese" || Number(group.bestId) === Number(r.id)) return "";
-  return "<div class='meta'>同名の日本語版: <a href='" + route(group.bestId, 1) + "'" + targetAttr() + ">#" + group.bestId + "</a></div>";
+  return "<div class='meta'>同名の日本語版: <a href='" + viewerLink(group.bestId) + "'" + targetAttr() + ">#" + group.bestId + "</a></div>";
+}
+
+function badgeText(id) {
+  const parts = [];
+  if (favoriteByGallery.has(id)) parts.push("お気に入り");
+  const state = readStateByGallery.get(id);
+  if (state) parts.push(state.fully_read ? "既読" : "p" + (state.last_page || 1));
+  return parts.join("・");
+}
+
+function badgeRow(id) {
+  return "<div class='badge'>" + escapeHTML(badgeText(id)) + "</div>";
 }
 
 function renderSearchCard(r) {
-  searchCardCache.set(r.id, r);
   setSearchTitleGroup(r);
   const tags = (r.tags || []).join(", ");
   const tagsTitle = tags ? " title='" + escapeHTML(tags) + "'" : "";
   const anchor = sameTitleJapaneseAnchor(r);
   const thumbnail = searchCardCoverSource(r);
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
-  return "<li class='card' data-search-id='" + r.id + "' data-id='" + r.id + "' data-page='1'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + route(r.id, 1) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a><div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
+  return "<li class='card' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
 }
 
 function searchCardCoverSource(card) {
@@ -212,6 +226,9 @@ function loadSearchState() {
     return null;
   }
 }
+function placeholderCard(id) {
+  return "<li class='card' data-search-id='" + id + "'><div class='text'><a href='" + viewerLink(id) + "'" + targetAttr() + ">#" + id + "</a>" + badgeRow(id) + "<span class='meta'>loading</span></div></li>";
+}
 function restoreSearchState() {
   const state = loadSearchState();
   if (!state || !state.query) return;
@@ -228,8 +245,8 @@ function restoreSearchState() {
   currentSearchTotal = Number(state.total || 0);
   renderSearchPageStatus();
   if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
-  status.textContent = "検索結果復元: " + state.query;
-  results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+  setStatus(status, "検索結果復元: " + state.query);
+  results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
   loadSearchCards(ids, searchGeneration);
 }
 function searchTotalPages(total) {
@@ -280,7 +297,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
 
   async function processCard(id) {
     if (searchGen !== searchGeneration) return;
-    status.textContent = "カード読み込み " + processed + "/" + ids.length + ": " + id;
+    setStatus(status, "カード読み込み " + processed + "/" + ids.length + ": " + id);
     const li = results.querySelector("[data-search-id='" + id + "']");
     const cardStart = performance.now();
     try {
@@ -329,6 +346,16 @@ function debounceLists() {
   });
 }
 
+function renderReadBadges() {
+  const results = document.getElementById("results");
+  if (!results) return;
+  for (const li of results.querySelectorAll("li[data-search-id]")) {
+    const badge = li.querySelector(".badge");
+    if (!badge) continue;
+    badge.textContent = badgeText(Number(li.dataset.searchId));
+  }
+}
+
 async function showLists(searchGen) {
   if (searchGen !== undefined && searchGen !== searchGeneration) return;
   await debounceLists();
@@ -340,12 +367,24 @@ async function showLists(searchGen) {
   }
   const lists = await pending;
   if (searchGen !== undefined && searchGen !== searchGeneration) return;
+  readStateByGallery.clear();
+  favoriteByGallery.clear();
+  for (const row of lists.favorites) {
+    const id = Number(row.gallery_id);
+    favoriteByGallery.set(id, 1);
+    readStateByGallery.set(id, { last_page: row.last_page || 1, fully_read: row.fully_read ? 1 : 0 });
+  }
+  for (const row of lists.unread) {
+    const id = Number(row.gallery_id);
+    readStateByGallery.set(id, { last_page: row.last_page || 1, fully_read: 0 });
+  }
   document.getElementById("queries").innerHTML = lists.queries.map((q) =>
     "<li><a href='#/q/" + encodeURIComponent(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
-    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
+    "<li><a href='" + viewerLink(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("unread").innerHTML = lists.unread.map((row) =>
-    "<li><a href='" + route(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
+    "<li><a href='" + viewerLink(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + "</span></li>").join("") || "<li>なし</li>";
+  renderReadBadges();
 }
 
 async function runSearch() {
@@ -358,7 +397,7 @@ async function runSearch() {
   const submit = document.getElementById("search-submit");
   const originalText = submit.dataset.original || submit.textContent;
   submit.dataset.original = originalText;
-  status.textContent = "検索実行中: " + query;
+  setStatus(status, "検索実行中: " + query);
   submit.disabled = true;
   submit.textContent = "実行中…";
   results.innerHTML = "<li class='meta'>検索実行中…</li>";
@@ -374,38 +413,23 @@ async function runSearch() {
     currentSearchTotal = Number(data.total || 0);
     renderSearchPageStatus();
     document.getElementById("count").textContent = data.total + " 件・page " + data.page;
-    status.textContent = "検索完了・カード読み込み " + ids.length + "件";
-    results.innerHTML = ids.map((id) => "<li class='card' data-search-id='" + id + "' data-id='" + id + "' data-page='1'><div class='text'><a href='" + route(id, 1) + "'" + targetAttr() + ">#" + id + "</a><span class='meta'>loading</span></div></li>").join("") || "<li>0 件</li>";
+    setStatus(status, "検索完了・カード読み込み " + ids.length + "件");
+    results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
     saveSearchState({ query, lang, page, ids, total: data.total });
     history.replaceState(null, "", searchRoute(query, page));
     await loadSearchCards(ids, searchGen);
     if (searchGen !== searchGeneration) return;
     await showLists(searchGen);
-    status.textContent = "検索完了・カード表示済み " + ids.length + "件";
+    setStatus(status, "検索完了・カード表示済み " + ids.length + "件");
   } catch (err) {
     if (searchGen !== searchGeneration) return;
-    status.textContent = "検索エラー: " + err.message;
-    document.getElementById("note").textContent = err.message;
+    setStatus(status, "検索エラー: " + err.message, true);
   } finally {
     if (searchGen === searchGeneration) {
       submit.disabled = false;
       submit.textContent = originalText;
     }
   }
-}
-
-async function handleCardClick(e) {
-  const t = e.target.closest("[data-id][data-page]");
-  if (!t) return;
-  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  const id = Number(t.dataset.id);
-  const page = Number(t.dataset.page);
-  if (newTabMode) {
-    window.open(route(id, page), "_blank");
-    return;
-  }
-  window.location.href = route(id, page);
 }
 
 document.getElementById("search").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
@@ -417,9 +441,9 @@ document.getElementById("saved-search").addEventListener("submit", async (e) => 
   const text = document.getElementById("qtext").value.trim();
   if (!name || !text) return;
   try { await post("/api/query", { name, query: text }); await showLists(); }
-  catch (err) { document.getElementById("note").textContent = err.message; }
+  catch (err) { setStatus(document.getElementById("search-status"), "保存検索エラー: " + err.message, true); }
 });
-document.getElementById("results").addEventListener("click", handleCardClick);
+document.getElementById("lists-refresh").addEventListener("click", () => { showLists(); });
 
 window.addEventListener("hashchange", async () => {
   const search = parseSearchHash(window.location.hash);
