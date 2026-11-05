@@ -66,6 +66,17 @@
 - 判定: 合格点（本最終確認で確認できた点）は direct/UI IDs・total 一致、target disk JSON content match、card `x-cache: miss`。未確認点（未検証）は target-specific `metrics delta=0` を card response に metrics がなく直接観察不能＝未検証。
 - Google Drive evidence: `final-phase3-kemonomimi-20261105.png`、`final-phase3-confirmation-20261105.txt`。スクショは Playwright 画面スクリーンショット代替（許可済み、記録済み）。
 
+### P3 残件閉じ — server-direct metrics 実測（2026-11-05 subagent・assess-20261105-0024）
+
+- 実装変更なし・Status/Next Action 変更なし・記録追記のみ。正典 server（正典 exe・正典 dataDir・root `p3_canonical_fresh`・port 8731）を正典 exe で再起動（memory cold）。永続 disk hit 保持（`cache/galleryinfo/4304794.json` 削除なし・clean measurement 中に書き込みなし）。
+- server-direct metrics 経路: `/api/search` 応答の `metrics` フィールド（process 累積カウンター、`recordMetric` は network 呼出し基準 → disk/cache hit は計上されない）。card 応答に metrics がない問題は server-direct 読みで解決。
+- deviation（原因分析済み・1回のみ）: fresh tab 初回 load が storage 復元で storage clear 前に自動検索。その measurement window で kind `gallery` delta=1・`image` delta=1。cause 分析: non-target card `4305405`（kemonomimi p1 index1）が disk cache 不在 → 設計どおり remote 再取得 + その cover TN（hash `ec9be9e0…`）remote fetch 1件（新 file 書き込み実測で特定）。対象 `4304794` は disk hit・remote 取得なし（書き込み 0）。同じ失敗の無制限反復はせず、clean measurement を1回実施。
+- clean measurement（合格）: baseline（server-direct metrics 読み）で `gallery`・`image` エントリなし（calls=0。baseline 読み自身の live search fetch は index/gg/data 側）。fresh tab（storage clear 済み・tab fresh）で実 UI `#query=kemonomimi`・`#page=1`・`#search-submit` click → card 表示 25件（target `4304794` 含む。perf 行 `cards 50 820ms cache cache=29 miss=21`）。
+- card `x-cache`（memory cold）: 全25 card の first request が `miss`（evidence: first card `4305405`・`4305186`・`4304988`・`4304985` の response header `x-cache: miss` + perf 集計 miss=21（runSearch 後の first-request 21件）+ target `4304794` first request header `x-cache: miss`）。TN background load は `tn-cache` hit（sample response header `x-cache: tn-cache`・TN file last-modified が baseline 前 = network なし）。
+- card 表示完了後 server-direct metrics 再読: `gallery` delta = 0・`image` delta = 0（エントリなし＝calls 0 維持。baseline→再読の disk 書き込み 0）。合格条件: target-specific remote gallery fetch 0（永続 cache hit）✓。
+- 判定: server-direct metrics 経路で target-specific delta 実測、閉じた（delta gallery=0・image=0・target remote gallery fetch 0）。前セクションの「未検証」は本実測で解消。
+- スクリーンショット: Drive タスクフォルダ `p3-server-direct-metrics-20261105.png`（Playwright 代替・repo 内保存禁止に従い repo コピーは `kilo-safe-remove` で除去）。確認 txt 追記: `final-phase3-confirmation-20261105.txt`（Drive）。scratch（`docs/ai/tmp/p3_*`）はコミットしない。正典 viewer ルール（フル画像経路順序・TN 表示源禁止・永続先）非接触（full image 経路呼出しなし・card cover は TN display source としての TN 経路のみ）。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
