@@ -124,6 +124,26 @@ Scope note: skill の tap-target（≥44pt iOS / ≥48dp Android）と safe-area
 8. `←` / `→` による検索ページのページ送りを追加するか（任意・範囲外）。
 9. 範囲外として記録した U10（`#query`/`#lang`/`#page` の accessible name 欠如）を本項目で扱うか、KI-record のまま別項目にするか。
 
+### 承認（ユーザー 2026-11-05 14:08・「推奨で承認する」）
+
+実行固有ID: 未発番（本項目は 2026-11-05 検討 task 直結。正典上の実行固有IDは使用しない）。承認内容は案B refined（上記「再検討後の推奨」）＋ U1・U2 の CSS 追加。実装開始指示は command `implement-items`（2026-11-05 14:08）で受領。
+
+承認範囲（`app/search.html` の検索 form の DOM 構造と CSS のみ）:
+
+- 3 行構成: search 行（`#query` `flex: 1 1 160px; min-width: 0` + `#lang` + `#search-submit`）/ pager 行（`<span class="pager">` = `前` `#page` `次` + `#search-page-status` を同じ行の右）/ filters 行（4 checkboxes）
+- pager は form 内の単独 flex item（`flex-shrink: 0`）で、`前`/`次` の隣接を構造で保証。`前`/`次` は `min-width: 40px`
+- DOM 順＝視覚読み順（tab order = visual order）。pager 内の順は `前 → #page → 次`（U4）。`#page` は `form#search` 内に残す
+- 制御規則: 制御行 gap `8px`（`.5rem`）、`input, button { box-sizing: border-box; min-height: 31px; }`、`:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }`（U2）、`button:disabled { opacity: .5; cursor: not-allowed; }`（U1）。状態変化は opacity/color のみ（transform 不使用・bounds を動かさない）
+
+承認範囲外（この項目では変更しない）:
+
+- U3 の境界色（`#6b7280` 等）は**変更しない**。現状の border-less 見た目を維持し、focus ring で補完する（推奨に記載した選択のうち「境界を変えない」側を選択。変更するには別途承認）
+- `←` / `→` による検索ページのページ送り（判断保留8）→ 未承認・実施しない
+- U10（accessible name 欠如）→ `docs/ai/known-issues/KI-20261105-08-search-form-controls-missing-accessible-names.md` のまま（別項目）
+- viewer 側・TN/full cache・route・prefetch ロジック・server 変更なし。`data-search-id`・card height contract・`.side`/`.main` 規則は維持
+
+合格条件・検証方法は個別タスク記録の記載（テスト影響・画面確認）に従う。正典 criteria の `form#search`「単一行・wrap なし」項目は、本項目の行契約（search 行・pager 行・filters 行・各行必要幅 ≤ `.side` 可用幅 `465px`）へ re-anchor する（新しい decision entry で記録。criteria 本体は書き換えない）。
+
 ## Verification
 
 - 正典読了（作業前チェック）は上記ファイル名で記録済み。
