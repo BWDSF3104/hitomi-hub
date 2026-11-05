@@ -107,6 +107,18 @@ default 案として追加確認済みの挙動（個別承認不要ならこの
   - 操作後: `2-jump-after.png`（click 後 page 2・hit card `card has-status highlight`・top 93px・badge「表示済み」。click 直後の status は「jump: page 2・rank 25・#2299308・表示済み」→ runSearch 完了で「検索完了」へ更新（既存 shared status 挙動））
 - フォルダ内: `2-jump-before.png` / `2-jump-after.png`（新規対）＋既存 `2026-11-05-jump-first-status-page-1-nomatch.png` / `-2-jump-highlight.png`（単発・対導入前の記録として保持） / `-3-random-disabled.png`
 
+### 先取り範囲外での動作確認と時間（ユーザー指示 2026-11-05 09:07）
+
+- idle prefetch の範囲は次の 1 page のみ（`search.html` runPrefetch）。範囲外 hit で確認: query `female:yuri language:polish`（total 59）。テスト準備（scratch runtime DB・既存正典 write path）: `#2299308` を reset、rank 50（page 3 先頭）の `#296403` を viewed=1 → hit は page 3（prefetch 済み page 2 の範囲外）
+- 動作: page 1 表示・page 2 prefetch 完了（background search + 25 cards）後に click → status 行「jump: page 3・rank 50・#296403・表示済み」→ page 3 へ移動・hit card `card highlight`（top 93px）✓。判定は `read_state`（DB）のみで成功（viewed 判定に galleryinfo fetch 不要）
+- 時間（client 実測・performance.now）:
+  - status API 単発 fetch: **3ms**（dataset cache hit・DB 1 query）
+  - click → status 行表示: **66ms**
+  - click → page 3 全 card（9件）表示完了: **22.7s**（server cache hit でも data call gate 約1s/request）
+  - 参考: 初回 page 3 進入（card 未 cache）の full display は **48.7s**
+- 留意（既知問題化）: page 3 の旧形式 gallery は live galleryinfo が数値フィールド（id・tags 値）で Go parse 失敗 → card error・badge 表示不可（hit card 本文は error 表示）。`docs/ai/known-issues/KI-20261105-06-old-format-galleryinfo-numeric-parse-fail.md`。移動・highlight・status 行の合格条件には影響なし
+- スクリーンショット（タスクフォルダ・Playwright browser 画面・window 1920x1040/inner 1920x953）: `4-out-of-range-before.png`（操作前・page 1） / `4-out-of-range-after.png`（操作後・page 3・highlight・status 行 jump 表示）
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
