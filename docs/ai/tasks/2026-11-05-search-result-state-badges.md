@@ -2,7 +2,7 @@
 
 **Status**: 進行中（案検討・計画のみ。実装未開始）
 **Date**: 2026-11-05
-**Next Action**: 判断保留4点のユーザー承認 → 実装開始指示待ち（実装未開始）
+**Next Action**: 判断点2確定（既読 auto 判定を許容）。1・3・4の推奨への承認 → 実装開始指示待ち
 
 ## 意図 / 背景
 
@@ -98,6 +98,26 @@ C1 の残る定義点（要承認）: 最終 page に「到達」だけで良い
 2. 既読の auto 判定（最終 page 到達のみ）を許容するか、手動「読み完了」のみとするか
 3. 保存済みの合格条件: 全 entry 保存完了のみ（部分保存の表示は meta に残す）
 4. reset の cascade 規則（viewed リセットは fully_read も消す）と reset 配置（検索 card inline か viewer nav か）
+
+### 回答（2026-11-05 03:26）
+
+- **2 は確定**: 既読の auto 判定（最終 page 到達）を許容。手動「読み完了」button は override として維持。
+- 1・3・4 は本計画の推奨を提示（承認待ち）。
+
+#### 1 の推奨
+
+初回描画到達時点。`openGallery()` で gallery data を解決し initial page を描画したときに `viewed=1`（`viewed_at` は初回のみ）を記録し、fetch 失敗開封は viewed にしない。
+理由: route 入力基準だと URL を開いただけ・galleryinfo 失敗まで「表示済み」になる。正典 read_state semantics（ページ到達で更新・`docs/ai/usage-memo.md:49`）と揃う。書き込み口は `POST /api/viewed`、display path を await しない（fast-nonblocking・generation guard 維持）。
+
+#### 3 の推奨
+
+badge「保存済み」は全 entry 保存完了のみ。部分保存は badge に出さず meta 側の `local N/M`（現行 `local N` を分子/分母へ拡張）で示す。
+理由: ユーザー定義「保存を完了したもの」に忠実。部分保存を完了として badge 表示すると誤判定になる。card height contract（130px）内で badge 行を増やさない形を維持できる。
+
+#### 4 の推奨
+
+- cascade: `fully_read` は `viewed` を含意するため、`reset-viewed` → `viewed=0`・`fully_read=0`・`last_page=0`（状態を最初へ）。`reset-read` → `fully_read=0` のみ（`viewed`・`last_page` 保持）。
+- 配置: 検索 card の badge 行 inline（同一行・`data-reset="viewed|read"`）。viewer nav には追加しない（一覧の所有ページは検索ページ、`docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md` 決定1）。リセット後の表示反映は既存の手動 refresh（`#lists-refresh`）で許容。
 
 ## Verification
 
