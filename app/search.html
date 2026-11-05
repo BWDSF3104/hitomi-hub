@@ -113,7 +113,8 @@ const post = (p, body) => fetch(p, { method: "POST", headers: { "content-type": 
 const newTabMode = new URLSearchParams(window.location.search).get("newtab") === "1";
 const SEARCH_STORAGE_KEY = "hitomi_hub_last_search";
 const TITLE_GROUPS_STORAGE_KEY = "hitomi_hub_title_groups";
-const SEARCH_CARD_CONCURRENCY = 4;
+const SEARCH_CARD_CONCURRENCY = 8;
+const FIRST_VISIBLE_EAGER_COVER_COUNT = 8;
 const readListsDebounceMs = 250;
 let listsDebounceTimer = null;
 let listsWaiters = [];
@@ -229,13 +230,14 @@ function badgeRow(id) {
   return "<div class='badge'>" + badgeInner(id) + "</div>";
 }
 
-function renderSearchCard(r) {
+function renderSearchCard(r, opts = {}) {
   setSearchTitleGroup(r);
   const tags = (r.tags || []).join(", ");
   const tagsTitle = tags ? " title='" + escapeHTML(tags) + "'" : "";
   const anchor = sameTitleJapaneseAnchor(r);
   const thumbnail = searchCardCoverSource(r);
-  const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
+  const loadingAttr = opts.highPriority ? "loading='eager' fetchpriority='high'" : "loading='lazy'";
+  const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' " + loadingAttr + " src='' alt='cover'>";
   const localCount = (r.files || []).filter((f) => f.local).length;
   return "<li class='card" + cardStatusClass(r.id) + "' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + localCount + "/" + (r.count ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
 }
@@ -245,10 +247,11 @@ function searchCardCoverSource(card) {
 }
 
 // pure TN cover: the search page does not own the objectURL cache, so the cover source is only the server TN URL. No full objectURL preference, no current priority wait.
-async function loadSearchCardCover(r, searchGen = searchGeneration) {
+async function loadSearchCardCover(r, searchGen = searchGeneration, highPriority = false) {
   if (searchGen !== searchGeneration) return;
   const img = document.getElementById("results").querySelector("img[data-search-id=\"" + r.id + "\"]");
   if (!img) return;
+  if (highPriority) img.fetchPriority = "high";
   const src = searchCardCoverSource(r);
   if (src) img.src = src;
 }
@@ -384,6 +387,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
   const visibleIds = new Set();
   const visibleRoot = results.parentElement || document.documentElement;
   let processed = 0;
+  let eagerCoverCount = 0;
 
   const observer = new IntersectionObserver((entries) => {
     if (searchGen !== searchGeneration) return;
@@ -413,8 +417,11 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
       renderPerfStatus();
       completeCardState(card);
       if (li) {
-        li.outerHTML = renderSearchCard(card);
-        await loadSearchCardCover(card, searchGen);
+        const isCurrentlyVisible = visibleIds.has(id) || distanceToVisibleArea(id, visibleIds, results, visibleRoot) === 0;
+        const highPriority = eagerCoverCount < FIRST_VISIBLE_EAGER_COVER_COUNT && isCurrentlyVisible;
+        if (highPriority) eagerCoverCount++;
+        li.outerHTML = renderSearchCard(card, { highPriority });
+        await loadSearchCardCover(card, searchGen, highPriority);
       }
     } catch (err) {
       if (searchGen !== searchGeneration) return;
@@ -569,7 +576,7 @@ async function runSearch() {
 }
 
 const PREFETCH_IDLE_MS = 800;
-const PREFETCH_CONCURRENCY = 2;
+const PREFETCH_CONCURRENCY = 4;
 const PREFETCH_COOLDOWN_MS = 300000;
 
 let prefetchCooldownUntil = 0;

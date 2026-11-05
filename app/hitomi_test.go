@@ -858,12 +858,12 @@ func TestRateGatePerRequest(t *testing.T) {
 }
 
 // A-06: gate 中の ctx キャンセルで呼出が直ちに return すること。
-// 本番 gate interval は re-anchor 済み（250 ms・decision 2026-11-05）。mocked fetch
+// 本番 gate interval は re-anchor 済み（100 ms・decision 2026-11-05-search-speedup-recommended-approved.md）。mocked fetch
 // （cancel 後は呼ばれない）で確認する。
 func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}
-	if c.cfg.MinIntervalMS != 250 {
-		t.Fatalf("production gate interval must remain 250ms (decision 2026-11-05): got %d", c.cfg.MinIntervalMS)
+	if c.cfg.MinIntervalMS != 100 {
+		t.Fatalf("production gate interval must remain 100ms (decision 2026-11-05-search-speedup-recommended-approved.md): got %d", c.cfg.MinIntervalMS)
 	}
 	calls := 0
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -882,9 +882,9 @@ func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error: got %v", err)
 	}
-	if elapsed >= 250*time.Millisecond {
-		t.Errorf("gate elapsed: got %s, expected immediate return despite 250ms interval", elapsed)
-	}
+  if elapsed >= 100*time.Millisecond {
+    t.Errorf("gate elapsed: got %s, expected immediate return despite 100ms interval", elapsed)
+  }
 	if calls != beforeCancel {
 		t.Errorf("fetch calls after cancellation: got %d (expected no call beyond %d)", calls, beforeCancel)
 	}
@@ -1403,8 +1403,8 @@ func TestReadStateFavoriteAndQuery(t *testing.T) {
 }
 
 // 項目2（assess-20261105-1015・block 検出・Retry-After 尊重・クールダウン）。
-// Go テストは mock/httptest を使う（外部 API 呼出しなし）。既存テストリテラル（`:865`・`:948` の
-// 1000/250 アサート）と metrics kind 分離・FIFO・共有 last 連鎖・A-06 意味は変更しない。
+// Go テストは mock/httptest を使う（外部 API 呼出しなし）。既存テストリテラルは data `100`、image `125`、
+// politeness退避 `1000` を固定し、metrics kind 分離・FIFO・共有 last 連鎖・A-06 意味は変更しない。
 
 func TestBlockSignal403CFMitigatedRetriedWithRetryAfterRespected(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}

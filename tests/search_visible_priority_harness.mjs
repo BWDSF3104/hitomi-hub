@@ -7,7 +7,11 @@ const { failures, passed, check } = createChecker();
 const helperBlock = bodyIn(searchHtml, "function placeholderElement(results, id) {", "async function loadSearchCards(ids, searchGen = searchGeneration) {");
 const loadBlock = bodyIn(searchHtml, "async function loadSearchCards(ids, searchGen = searchGeneration) {", "\nfunction debounceLists() {");
 
-check(searchHtml.includes("const SEARCH_CARD_CONCURRENCY = 4;"), "worker concurrency constant stays 4");
+check(searchHtml.includes("const SEARCH_CARD_CONCURRENCY = 8;"), "worker concurrency constant is 8");
+check(searchHtml.includes("const FIRST_VISIBLE_EAGER_COVER_COUNT = 8;"), "first visible cover eager count is 8");
+check(searchHtml.includes("opts.highPriority ? \"loading='eager' fetchpriority='high'\" : \"loading='lazy'\""), "renderSearchCard high priority opts emit eager fetchpriority for visible covers");
+check(loadBlock.includes("const isCurrentlyVisible = visibleIds.has(id) || distanceToVisibleArea(id, visibleIds, results, visibleRoot) === 0;") && loadBlock.includes("const highPriority = eagerCoverCount < FIRST_VISIBLE_EAGER_COVER_COUNT && isCurrentlyVisible;"), "loadSearchCards uses first visible display-area cards for high priority covers");
+check(loadBlock.includes("renderSearchCard(card, { highPriority })") && loadBlock.includes("loadSearchCardCover(card, searchGen, highPriority)"), "loadSearchCards passes highPriority to renderSearchCard and loadSearchCardCover");
 check(helperBlock.includes("if (visibleIds.has(id)) return id;"), "takeNextSearchCard picks the current display-area card first");
 check(helperBlock.includes("function distanceToVisibleArea(id, visibleIds, results, visibleRoot) {"), "candidates near the display area come before the rest of the queue");
 check(loadBlock.includes("new IntersectionObserver(") && loadBlock.includes("observer.observe(el)"), "visibility comes from IntersectionObserver on the placeholder li");

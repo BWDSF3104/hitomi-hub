@@ -12,8 +12,8 @@ const coverBlock = bodyIn(searchHtml, "function searchCardCoverSource(card) {", 
 const loadBlock = bodyIn(searchHtml, "async function loadSearchCards(ids, searchGen = searchGeneration) {", "\nfunction debounceLists() {");
 
 check(
-  schedulerBlock.includes("const PREFETCH_IDLE_MS = 800;") && schedulerBlock.includes("const PREFETCH_CONCURRENCY = 2;") && schedulerBlock.includes("const PREFETCH_COOLDOWN_MS = 300000;"),
-  "scheduler keeps the fixed constants idle 800ms, concurrency 2, cooldown 5 minutes"
+  schedulerBlock.includes("const PREFETCH_IDLE_MS = 800;") && schedulerBlock.includes("const PREFETCH_CONCURRENCY = 4;") && schedulerBlock.includes("const PREFETCH_COOLDOWN_MS = 300000;"),
+  "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes"
 );
 check(schedulerBlock.includes("\"priority=background\""), "prefetch requests carry the background marker as a query param");
 check(schedulerBlock.includes("api(prefetchMarkerUrl("), "prefetch requests go through the existing api() helper with the marker");
@@ -30,8 +30,8 @@ check(!schedulerBlock.includes("setStatus(") && !schedulerBlock.includes("render
 check(!schedulerBlock.includes("/api/image/"), "prefetch targets meta and TN covers only, never full images");
 check(!schedulerBlock.includes("localStorage"), "cooldown is memory-only, never persisted");
 check(schedulerBlock.includes("gen !== searchGeneration"), "prefetch is bound to the existing searchGeneration concept");
-check(schedulerBlock.includes("Math.min(PREFETCH_CONCURRENCY, pending.length)") && schedulerBlock.includes("await Promise.all(workers)"), "prefetch runs bounded workers at concurrency 2");
-check(searchHtml.includes("const SEARCH_CARD_CONCURRENCY = 4;") && loadBlock.includes("takeNextSearchCard"), "Phase 1 visible priority and foreground concurrency 4 are not changed");
+check(schedulerBlock.includes("Math.min(PREFETCH_CONCURRENCY, pending.length)") && schedulerBlock.includes("await Promise.all(workers)"), "prefetch runs bounded workers at concurrency 4");
+check(searchHtml.includes("const SEARCH_CARD_CONCURRENCY = 8;") && loadBlock.includes("takeNextSearchCard"), "Phase 1 visible priority and foreground concurrency 8 are applied");
 check(schedulerBlock.includes("prefetchInterrupted(gen)") && schedulerBlock.includes("if (onCard) onCard(card);"), "the interrupt condition is checked per completed request");
 
 const stubs = `
@@ -87,7 +87,7 @@ async function runAll() {
   // scenario a: current page completed plus 800ms idle starts the next-page prefetch
   resetScenario(1);
   currentSearchTotal = 50;
-  scenarioIds = [201, 202, 203];
+  scenarioIds = [201, 202, 203, 204];
   searchCardsCompleted = true;
   armPrefetchIdle();
   check(timers.length === 1, "idle wait uses the 800ms timer constant, not an immediate start");
@@ -98,13 +98,13 @@ async function runAll() {
   check(searchReq.includes("priority=background"), "the id list request carries the marker");
   const cardReqs = requests.filter((p) => p.split("?")[0].startsWith("/api/search-card/"));
   const coverReqs = requests.filter((p) => p.split("?")[0].startsWith("/api/thumb/"));
-  check(cardReqs.length === 3 && coverReqs.length === 3, "one meta request per next-page id and one TN cover request per card");
+  check(cardReqs.length === 4 && coverReqs.length === 4, "one meta request per next-page id and one TN cover request per card");
   const firstCover = Math.min(...coverReqs.map((p) => requests.indexOf(p)));
   const lastCard = Math.max(...cardReqs.map((p) => requests.indexOf(p)));
   check(lastCard < firstCover, "covers are warmed after the meta phase");
   check(coverReqs.every((p) => p.includes("priority=background")), "TN cover warm uses the current cover URL format with the marker");
   check(requests.every((p) => p.includes("priority=background")), "every prefetch request carries the background marker");
-  check(maxActive === 2 && maxActive <= 2, "prefetch runs exactly two workers in parallel");
+  check(maxActive === 4 && maxActive <= 4, "prefetch runs exactly four workers in parallel");
 
   // scenario b1: a new search generation stops the prefetch from issuing the next request
   resetScenario(5);

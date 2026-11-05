@@ -17,7 +17,7 @@ def test_search_prefetch_scheduler_fixed_behaviours():
 
     required = [
         # fixed constants and marker
-        "scheduler keeps the fixed constants idle 800ms, concurrency 2, cooldown 5 minutes",
+        "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes",
         "prefetch requests carry the background marker as a query param",
         "prefetch requests go through the existing api() helper with the marker",
         "api stays no-store and exposes the response status for the 429/5xx stop rule",
@@ -29,7 +29,7 @@ def test_search_prefetch_scheduler_fixed_behaviours():
         "one meta request per next-page id and one TN cover request per card",
         "covers are warmed after the meta phase",
         "TN cover warm uses the current cover URL format with the marker",
-        "prefetch runs exactly two workers in parallel",
+        "prefetch runs exactly four workers in parallel",
         # (b) interrupt conditions stop the next request
         "query input interrupts the prefetch",
         "opening a gallery from a card interrupts the prefetch",
@@ -55,8 +55,8 @@ def test_search_prefetch_scheduler_fixed_behaviours():
         "prefetch targets meta and TN covers only, never full images",
         "cooldown is memory-only, never persisted",
         "prefetch is bound to the existing searchGeneration concept",
-        "prefetch runs bounded workers at concurrency 2",
-        "Phase 1 visible priority and foreground concurrency 4 are not changed",
+        "prefetch runs bounded workers at concurrency 4",
+        "Phase 1 visible priority and foreground concurrency 8 are applied",
         "the interrupt condition is checked per completed request",
         "next button hover or focus starts the prefetch immediately",
     ]

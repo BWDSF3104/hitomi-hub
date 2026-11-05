@@ -29,7 +29,7 @@ const negativeNoFullCacheTTL = 5 * time.Minute
 //     5 minute cooldown in memory」assert）と同一値
 //   - `politenessDefaultIntervalMS = 1000`（正典 politeness 退避先。decision
 //     `2026-11-05-rate-values-and-concurrency-change-approved.md` のクールダウン退避値。
-//     data lane 既定（250）より大きく、退避意味を実測テストで assert）
+//     data lane 既定（100）より大きく、退避意味を実測テストで assert）
 // `Retry-After`（429・block）の上限も同一 convention（penalty window 5 分）で clamp する。
 const blockCooldownDuration = negativeNoFullCacheTTL
 const politenessDefaultIntervalMS = 1000
@@ -235,7 +235,7 @@ func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry)
 }
 
 func defaultHitomiConfig() HitomiConfig {
-	return HitomiConfig{MinIntervalMS: 250, ImageMinIntervalMS: 125, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
+	return HitomiConfig{MinIntervalMS: 100, ImageMinIntervalMS: 125, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: defaultBgGraceMS}
 }
 

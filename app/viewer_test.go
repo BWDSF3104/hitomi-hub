@@ -1617,7 +1617,7 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 		t.Errorf("search links are already absolute cross-page anchors, so the unused fragment-only newTabHref helper must be removed from the search page: got %q", search)
 	}
 
-	renderBody := sliceBetween(t, search, "function renderSearchCard(r) {", "async function loadSearchCardCover(r, searchGen = searchGeneration) {")
+	renderBody := sliceBetween(t, search, "function renderSearchCard(r, opts = {}) {", "async function loadSearchCardCover(r, searchGen = searchGeneration, highPriority = false) {")
 	if !strings.Contains(renderBody, `targetAttr()`) {
 		t.Errorf("search card links should use the new-tab query policy: got %q", renderBody)
 	}
@@ -1715,7 +1715,7 @@ search := uiText(t, "search.html")
 	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) || !strings.Contains(search, `const savedByGallery = new Map();`) {
 		t.Errorf("search should build client-side maps from the lists response and the card response state: got %q", search)
 	}
-	renderBody := sliceBetween(t, search, "function renderSearchCard(r) {", "function searchCardCoverSource(card) {")
+	renderBody := sliceBetween(t, search, "function renderSearchCard(r, opts = {}) {", "function searchCardCoverSource(card) {")
 	if !strings.Contains(renderBody, `badgeRow(r.id)`) {
 		t.Errorf("search card should render the read/favorite badge row: got %q", renderBody)
 	}
@@ -2151,7 +2151,7 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	if !strings.Contains(viewer, `const galleryCache = new Map();`) {
 		t.Errorf("viewer should cache opened gallery data for immediate navigation: got %q", viewer)
 	}
-	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) || !strings.Contains(search, `function renderSearchCard(r) {`) {
+	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) || !strings.Contains(search, `function renderSearchCard(r, opts = {}) {`) {
 		t.Errorf("search should keep client-side read and favorite maps for card badges instead of the write-only card cache: got %q", search)
 	}
 	if strings.Contains(search, `searchCardCache`) {
@@ -2570,14 +2570,14 @@ func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
 	if !strings.Contains(search, "<img class='search-card-cover'") || !strings.Contains(search, "data-search-id") || !strings.Contains(search, "loading='lazy'") || !strings.Contains(search, "src=''") {
 		t.Errorf("search card should render a lazy TN-only cover placeholder: got %q", search)
 	}
-	if !strings.Contains(search, `function renderSearchCard(r) {`) || !strings.Contains(search, `function searchCardCoverSource(card) {`) || !strings.Contains(search, `async function loadSearchCardCover(r, searchGen = searchGeneration) {`) {
+	if !strings.Contains(search, `function renderSearchCard(r, opts = {}) {`) || !strings.Contains(search, `function searchCardCoverSource(card) {`) || !strings.Contains(search, `async function loadSearchCardCover(r, searchGen = searchGeneration, highPriority = false) {`) {
 		t.Errorf("search card should build the cover through search-owned TN helpers: got %q", search)
 	}
 	if strings.Contains(search, `currentPriorityDone`) || strings.Contains(search, `URL.createObjectURL`) || strings.Contains(search, `fetchCachedBlob`) {
 		t.Errorf("search card must not use full objectURL or current priority waiting: got %q", search)
 	}
 
-	renderStart := strings.Index(search, "function renderSearchCard(r) {")
+	renderStart := strings.Index(search, "function renderSearchCard(r, opts = {}) {")
 	if renderStart < 0 {
 		t.Fatalf("renderSearchCard function not found")
 	}
@@ -2586,8 +2586,8 @@ func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
 		t.Errorf("renderSearchCard should use TN cover source, escaped tags, and same-title anchor: got %q", renderBody)
 	}
 
-	loadHelper := sliceBetween(t, search, "async function loadSearchCardCover(r, searchGen = searchGeneration) {", "function parseSearchHash(hash) {")
-	if !strings.Contains(loadHelper, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadHelper, `const src = searchCardCoverSource(r);`) || !strings.Contains(loadHelper, `img.src = src;`) {
+	loadHelper := sliceBetween(t, search, "async function loadSearchCardCover(r, searchGen = searchGeneration, highPriority = false) {", "function parseSearchHash(hash) {")
+	if !strings.Contains(loadHelper, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadHelper, `const src = searchCardCoverSource(r);`) || !strings.Contains(loadHelper, `img.src = src;`) || !strings.Contains(loadHelper, `if (highPriority) img.fetchPriority = "high";`) {
 		t.Errorf("loadSearchCardCover should set TN cover only, with search generation guard: got %q", loadHelper)
 	}
 
@@ -2596,16 +2596,16 @@ func TestEmbeddedUISearchCardUsesCoverOnlyThumbnail(t *testing.T) {
 		t.Fatalf("loadSearchCards function not found")
 	}
 	loadCardBody := search[loadCardStart:strings.Index(search, "async function runSearch() {")]
-	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
-		t.Errorf("loadSearchCards should load TN covers through the search generation guard: got %q", loadCardBody)
+	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen, highPriority);`) || !strings.Contains(loadCardBody, `const isCurrentlyVisible = visibleIds.has(id) || distanceToVisibleArea(id, visibleIds, results, visibleRoot) === 0;`) || !strings.Contains(loadCardBody, `const highPriority = eagerCoverCount < FIRST_VISIBLE_EAGER_COVER_COUNT && isCurrentlyVisible;`) {
+		t.Errorf("loadSearchCards should load TN covers through the search generation guard with first-visible eager priority: got %q", loadCardBody)
 	}
 }
 
 func TestEmbeddedUISearchCardLoadsCardsWithBoundedParallelWorkers(t *testing.T) {
 	search := uiText(t, "search.html")
 
-	if !strings.Contains(search, `const SEARCH_CARD_CONCURRENCY = 4;`) {
-		t.Errorf("search page should bound search card workers to 4: got %q", search)
+	if !strings.Contains(search, `const SEARCH_CARD_CONCURRENCY = 8;`) {
+		t.Errorf("search page should bound search card workers to 8: got %q", search)
 	}
 
 	loadCardStart := strings.Index(search, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
@@ -2622,15 +2622,15 @@ func TestEmbeddedUISearchCardLoadsCardsWithBoundedParallelWorkers(t *testing.T) 
 	if !strings.Contains(loadCardBody, `const cardStart = performance.now();`) || !strings.Contains(loadCardBody, `recordPerfCache(card._x_cache);`) {
 		t.Errorf("parallel card workers must keep per-card API timing and cache distribution: got %q", loadCardBody)
 	}
-	loadHelper := sliceBetween(t, search, "async function loadSearchCardCover(r, searchGen = searchGeneration) {", "function parseSearchHash(hash) {")
+	loadHelper := sliceBetween(t, search, "async function loadSearchCardCover(r, searchGen = searchGeneration, highPriority = false) {", "function parseSearchHash(hash) {")
 	if !strings.Contains(loadHelper, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadHelper, `const src = searchCardCoverSource(r);`) {
 		t.Errorf("cover load must remain search-generation guarded and TN-only while card fetch workers are bounded: got %q", loadHelper)
 	}
 	if strings.Contains(loadHelper, `await currentPriorityDone;`) || strings.Contains(loadCardBody, `await currentPriorityDone;`) {
 		t.Errorf("search cover workers must not wait for viewer current priority: got %q", loadHelper)
 	}
-	if !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen);`) {
-		t.Errorf("loadSearchCards should call the TN cover helper: got %q", loadCardBody)
+	if !strings.Contains(loadCardBody, `FIRST_VISIBLE_EAGER_COVER_COUNT`) || !strings.Contains(loadCardBody, `const isCurrentlyVisible = visibleIds.has(id) || distanceToVisibleArea(id, visibleIds, results, visibleRoot) === 0;`) || !strings.Contains(loadCardBody, `await loadSearchCardCover(card, searchGen, highPriority);`) {
+		t.Errorf("loadSearchCards should call the TN cover helper with first-visible eager priority: got %q", loadCardBody)
 	}
 }
 
@@ -2649,7 +2649,7 @@ s := uiText(t, "search.html")
 		t.Errorf("search tags area should use line-clamp: got %q", s)
 	}
 
-	renderStart := strings.Index(s, "function renderSearchCard(r) {")
+	renderStart := strings.Index(s, "function renderSearchCard(r, opts = {}) {")
 	if renderStart < 0 {
 		t.Fatalf("renderSearchCard function not found")
 	}
@@ -3274,7 +3274,7 @@ s := uiText(t, "search.html")
 		t.Errorf("same-title group cache should persist in localStorage separately from SEARCH_STORAGE_KEY: got %q", s)
 	}
 
-	renderStart := strings.Index(s, "function renderSearchCard(r) {")
+	renderStart := strings.Index(s, "function renderSearchCard(r, opts = {}) {")
 	if renderStart < 0 {
 		t.Fatalf("renderSearchCard function not found")
 	}
