@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-05-search-result-state-badges.md	進行中（案検討・計画のみ。実装未開始）	設計判断4点確定（decision 記録済み）→ 実装開始指示待ち（実装未開始）
+docs/ai/tasks/2026-11-05-search-result-state-badges-implementation.md	進行中	子へフォアグラウンド委譲（schema 迁移・library・viewer.go・viewer.html・search.html・CLI）。正典 build 実機画面確認まで
