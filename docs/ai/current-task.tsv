@@ -1,2 +1,3 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-05-saved-status-definition.md	進行中	完成後ファイル削除の扱い確認（時点記録 vs state 再計算）。実装開始指示未受領
+docs/ai/tasks/2026-11-06-assess-20261105-1712-tn-image-lane-lowering-a.md	進行中（検討完了・値の判断保留）	値の承認（推奨 60 ms。63.75 ms で prefetch 経路が UI 上限に当たるため 50 ms は効果頭打ち）。承認後の実装: defaultHitomiConfig 1 値 + config.example.json + decision entry + docs sample。健康な上流窓で bounded 持続実測（block 未発生・gate_wait 60 ms・TN 15〜16 rps）
