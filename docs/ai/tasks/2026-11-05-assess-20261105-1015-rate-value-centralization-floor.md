@@ -1,6 +1,6 @@
 # レート値の集約状況確認と短縮可能域の実測（floor 探索）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-05
 **Next Action**: 項目1〜3 合格済み（0d5dbdf・7ee82bf・3b460c0）。項目4（docs ポインタ化）合格・単独コミット push 済み（commit hash は項目4結果で父確認手順どおり記録・子報告の hash を参照）。タスク全体 Status は進行中（親が全項目完了後に正典 end）。段階3 carry-over（hitomi_test.go:1538）は項目3仕分け済み・項目4に波及なし
 
@@ -56,6 +56,7 @@
 - 段階3 carry-over の仕分け（親）: `app/hitomi_test.go:1538` の assert（`politenessDefaultIntervalMS == defaultHitomiConfig().MinIntervalMS`）は新的 data 既定 250 と両立不能。正典 decision `2026-11-05-rate-values-and-concurrency-change-approved.md` は politeness（1000 ms）を block 時の退避先として維持する旨＝段階1の推奨案（正典根拠あり）。よって子の最小 re-anchor（politeness = 1000 のまま・data 既定より大きいことを実証）を**親が採用**し、項目3の承認範囲内の処置として閉じる（残件ではない）。項目2のクールダウンテストは変更なしで合格継続（1000 > 250・1000 > 125）。
 - 項目4（docs ポインタ化・p3-10 re-anchor）委譲前状態: HEAD `e394595`、`git status` clean（2026-11-05 11:12 UTC）。
 - 項目4 委譲前状態（子・実測 2026-11-05 11:14 UTC）: HEAD `b9d0067`、`git status` clean（`git rev-parse HEAD`・`git status --porcelain` 実測）。
+- 項目4 機械的確認（親・2026-11-05 11:20 UTC）: `git log` に項目4コミット `dba084d` 存在（push 済み・docs 9 files）。`git status` clean（委譲前 `b9d0067` から悪化なし）。個別タスク記録の項目4結果（合格・整合確認実測）は子の報告と一致。→ 項目4 合格。全項目（1〜4）合格。
 
 ### 項目4 実装確定（子・実装前・2026-11-05 11:15 UTC・docs のみ）
 
@@ -188,7 +189,7 @@
   4. `docs/ai/decisions/2026-11-01-hitomi-client-endpoints.md`・`docs/ai/decisions/2026-11-01-image-rate-and-prefetch-concurrency.md`: 該当行に supersede pointer 各1行追加（歴史的事実維持・現値は decision/正典単一出力元参照の旨のみ）
   5. `p3-12`（image gate 250 ms）・`p3-13`（data gate 1000ms）・`p3-17`（data gate 1000ms）: gate 数値を正典参照へ。項目意味・優先順位不変
 - 採用した判断（段階1）: usage-memo の config sample は JSON 内ではポインタ化できないため、新的正典値へ更新し「写し・正典定義を持たない」旨を明示（二重定義回避の形）。JSON sample 内の「既定 4」（233 行）は承認範囲の整合確認で現値 8 と矛盾するため正典参照へ（項目意味不変）
-- 正典どうしの矛盾: 解決不能な矛盾なし（decision `2026-11-05-...` が現値の正典方針・docs のポインタ化はその反映。p3-10 の旧「cannot be lowered」は 2026-11-05 実測で is正済み）
+- 正典どうしの矛盾: 解決不能な矛盾なし（decision `2026-11-05-...` が現値の正典方針・docs のポインタ化はその反映。p3-10 の旧「cannot be lowered」は 2026-11-05 実測で是正済み）
 - 段階3 持ち帰り: なし
 - 単独コミット（項目4分のみ・docs 9 ファイル（タスク記録含む）): commit hash 父確認手順どおり記録（子報告参照）
 
