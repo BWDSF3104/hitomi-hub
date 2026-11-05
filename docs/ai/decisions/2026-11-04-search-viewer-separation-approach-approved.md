@@ -27,3 +27,10 @@
 - `app/viewer_test.go`: `uiPage.ReadFile("ui.html")` 37 assertion を viewer / search へ振り分け（15〜20 件 re-anchor、7〜9 件 rewrite）。
 - `tests/strip_rebuild_dom_harness.mjs`: viewer.html へ。`openGallery` 終端 anchor は `showLists` を参照しなくなったため、`renderStrip` 終端へ変更。
 - `tests/read_lists_debounce_harness.mjs`: `showLists` block 抽出 → search.html へ。
+
+## 状態の更新（2026-11-04 追記）
+
+- 本ファイルの「未実施・個別承認が必要」節のうち、AGENTS.md の Canonical Latest Build / UI Confirmation Test Rule 条については、後続の decision `docs/ai/decisions/2026-11-04-agents-md-rule-pointer-ization.md`（ユーザー承認 2026-11-04 09:32）により「直接記載を廃止しポインタ化」として実施済みであり、当該節の「未実施」という記述は本追記により supersede される。条の文章を2本照合の文面へ書き換える当初案は採用されなかった。
+- テストの照合対象の2ファイル化は、項目A1の実装（commit `727d9fb`）で実施済み・合格（`python -m pytest tests/ -v` 51 passed。同 decision の記録による）。
+- 同節の「実装開始指示は未受領・ソースコード無変更」は本ファイル作成時点の状態であり、現在の状態はタスク管理側の記録と git 履歴を正とする。
+- 本ファイルのルール内容（照合対象2ファイル・失敗メッセージへの両ファイル名明記・画面確認基準）自体は有効のままで、変わらない。
