@@ -3173,6 +3173,32 @@ s := uiText(t, "viewer.html", "search.html")
 	}
 }
 
+func TestEmbeddedUISearchFormControlsHaveAccessibleNames(t *testing.T) {
+	s := uiText(t, "search.html")
+
+	wanted := map[string]string{
+		"query": "検索 term",
+		"lang":  "言語",
+		"page":  "ページ",
+		"qname": "名前",
+		"qtext": "term",
+	}
+	for id, label := range wanted {
+		lineStart := strings.Index(s, `<input id="`+id+`"`)
+		if lineStart < 0 {
+			t.Fatalf("input#%s not found", id)
+		}
+		lineEnd := strings.Index(s[lineStart:], ">")
+		if lineEnd < 0 {
+			t.Fatalf("input#%s close bracket not found", id)
+		}
+		inputTag := s[lineStart : lineStart+lineEnd+1]
+		if !strings.Contains(inputTag, `aria-label="`+label+`"`) {
+			t.Errorf("input#%s must have accessible name aria-label=%q: got %q", id, label, inputTag)
+		}
+	}
+}
+
 func TestEmbeddedUIFavoriteToggleSyncsReadStateCaches(t *testing.T) {
 	viewer := uiText(t, "viewer.html")
 

@@ -100,8 +100,8 @@
       <h2>検索（hitomi search.html と同じ term routing）</h2>
       <form id="search">
         <div class="search-row">
-          <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
-          <input id="lang" value="all" size="8">
+          <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english" aria-label="検索 term">
+          <input id="lang" value="all" size="8" aria-label="言語">
           <button id="search-submit" type="submit">検索</button>
         </div>
         <span class="pager">
@@ -124,8 +124,8 @@
     <section>
       <h2>保存検索</h2>
       <form id="saved-search">
-        <input id="qname" placeholder="名前" size="10">
-        <input id="qtext" placeholder="female:yuri language:english" size="22">
+        <input id="qname" placeholder="名前" size="10" aria-label="名前">
+        <input id="qtext" placeholder="female:yuri language:english" size="22" aria-label="term">
         <button>保存</button>
       </form>
       <ul id="queries"></ul>
