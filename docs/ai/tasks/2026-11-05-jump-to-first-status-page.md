@@ -97,7 +97,15 @@ default 案として追加確認済みの挙動（個別承認不要ならこの
   2. jump 移動 + highlight: 準備として rank 25（page 2 先頭）の gallery `2299308` を既存 `POST /api/viewed`（正典 write path・runtime scratch DB）で表示済み化 → click → status 行「jump: page 2・rank 25・#2299308・表示済み」、page input 2、hash `#/q/female%3Ayuri%20language%3Apolish/page/2`（既存 hashchange → runSearch 経路）、hit card `li[data-search-id='2299308']` class `card has-status highlight` + scrollIntoView（top 93px・viewport 内）、badge「表示済み」は既存 card 応答 maps。スクリーンショット `2026-11-05-jump-first-status-page-2-jump-highlight.png`
   3. prefetch 済み page の重複 fetch なし（cache hit）: jump 後の dataset #85 `x-search-timing: search=0`（cache hit・remote refetch なし）、card #86-116 は prefetch 済み ids の再 request が `x-cache: cache`（perf 表示 `cache cache=28 miss=22`・2 round 目 full cache hit）、target=current click（#118）は status API のみで card/dataset fetch 増なし。JSON 形状 API 正典と一致: `{"hit":{"flags":{"favorite":0,"read":0,"saved":0,"viewed":1},"gallery_id":2299308,"page":2,"rank":25},"lang":"all","query":"female:yuri language:polish","status_mask":15,"total":59}`
   4. random disabled: query 入力欄に `female:yuri language:polish orderby:random` を実入力（input listener → `updateJumpButton`）→ button `disabled=true`、network 追加なし。スクリーンショット `2026-11-05-jump-first-status-page-3-random-disabled.png`
-- スクリーンショット3枚は Playwright browser 画面画像で `I:\マイドライブ\kilo` 保存（filename に task ID 含む）。OS full-screen 例外は不使用（Playwright browser 画面で確認可）
+- スクリーンショット3枚は Playwright browser 画面画像で `I:\マイルドライブ\kilo` 保存（filename に task ID 含む）。OS full-screen 例外は不使用（Playwright browser 画面で確認可）
+
+### スクリーンショット保存のタスクフォルダ化（ユーザー指示 2026-11-05 08:54）
+
+- 保存先をタスクフォルダへ変更: `I:\マイルドライブ\kilo\2026-11-05-jump-to-first-status-page\`（既存3枚を同名で移動）
+- 項目2は操作前後の対が必要（ユーザー指示）。正典 build 再確認（canonical `go build` flags 再build・runtime root `Common_Operations\scratch\hitomi-usage`・port 8731・server PID 30676。viewed 状態 `#2299308` は既存 record のまま。API hit 確認: page 2・rank 25・status_mask 15・total 59。人工 resize なし・actual window size 1920x1040・content viewport inner 1920x953（前回と一致））
+  - 操作前: `2-jump-before.png`（page 1・status「検索完了・カード表示済み 25件」・jump button enabled・25 cards）
+  - 操作後: `2-jump-after.png`（click 後 page 2・hit card `card has-status highlight`・top 93px・badge「表示済み」。click 直後の status は「jump: page 2・rank 25・#2299308・表示済み」→ runSearch 完了で「検索完了」へ更新（既存 shared status 挙動））
+- フォルダ内: `2-jump-before.png` / `2-jump-after.png`（新規対）＋既存 `2026-11-05-jump-first-status-page-1-nomatch.png` / `-2-jump-highlight.png`（単発・対導入前の記録として保持） / `-3-random-disabled.png`
 
 ## 完了時 Memory Bank 操作
 
