@@ -63,6 +63,7 @@
 - UI actual network response: `X-Search-Timing: search=1;record=349;json=1`、`Cache-Control: no-store`、`Content-Length: 1092`、ids direct exact match、total `76272`。Full JSON metrics/timing は direct と byte-identical でない（cache state 差）。
 - Target `4304794`: first card cache `miss`、target card cache `miss`。Disk JSON `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\cache\galleryinfo\4304794.json` content common fields match: title `9月-02`、language `japanese`、type `artistcg`、tags `female:kemonomimi`/`female:sole female`/`male:sole male`、artists `[]`、groups `[]`、characters `hishi miracle`、galleryurl `/cg/9月-02-日本語-4304794.html`、files hash/name/width/height/hasavif、scene_indexes `[]`。
 - Target-specific `metrics delta gallery/image = 0` は `search-card` response に metrics が含まれないため直接観察不能。Disk hit inference と memory cold `miss` は確認済み、target-specific metrics delta は未確認として記録。
+- 判定: 合格点（本最終確認で確認できた点）は direct/UI IDs・total 一致、target disk JSON content match、card `x-cache: miss`。未確認点（未検証）は target-specific `metrics delta=0` を card response に metrics がなく直接観察不能＝未検証。
 - Google Drive evidence: `final-phase3-kemonomimi-20261105.png`、`final-phase3-confirmation-20261105.txt`。スクショは Playwright 画面スクリーンショット代替（許可済み、記録済み）。
 
 ## 完了時 Memory Bank 操作
