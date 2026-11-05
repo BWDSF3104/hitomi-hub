@@ -281,6 +281,18 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	if len(lists["favorites"].([]any)) != 2 || len(lists["queries"].([]any)) != 1 {
 		t.Errorf("lists: got %v", lists)
 	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/reset", `{"gallery_id":125,"target":"all"}`))
+	if rec.Code != 200 {
+		t.Fatalf("reset-all: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resetOut); err != nil {
+		t.Fatal(err)
+	}
+	if resetOut["last_page"] != float64(0) || resetOut["fully_read"] != float64(0) || resetOut["viewed"] != float64(0) || resetOut["favorite"] != float64(0) {
+		t.Errorf("reset-all must clear read, viewed and favorite together: got %v", resetOut)
+	}
 }
 
 func TestViewerPOSTSecurityAllowsLoopbackJSONAndRejectsCrossOriginText(t *testing.T) {
@@ -1710,18 +1722,44 @@ search := uiText(t, "search.html")
 	if !strings.Contains(renderBody, `local " + localCount + "/" + (r.count ?? 0)`) {
 		t.Errorf("partial save must show in meta as local N/M, not as a badge: got %q", renderBody)
 	}
-	badgeBody := sliceBetween(t, search, "function badgeText(id) {", "function mergeReadState(id, row) {")
-	if !strings.Contains(badgeBody, `parts.push("表示済み")`) || !strings.Contains(badgeBody, `parts.push("既読")`) || !strings.Contains(badgeBody, `parts.push("保存済み")`) || !strings.Contains(badgeBody, `parts.push("お気に入り")`) {
-		t.Errorf("badgeText should render the three state flags plus favorite: got %q", badgeBody)
+	if !strings.Contains(renderBody, `cardStatusClass(r.id)`) {
+		t.Errorf("search card must mark status-set cards with the card status class: got %q", renderBody)
 	}
-	if !strings.Contains(badgeBody, `<button type='button' data-reset='viewed'>`) || !strings.Contains(badgeBody, `<button type='button' data-reset='read'>`) {
-		t.Errorf("badge row must carry inline reset buttons for viewed and read on the same row: got %q", badgeBody)
+	if !strings.Contains(search, `function badgeFlag(label, className) {`) || !strings.Contains(search, `escapeHTML(label)`) {
+		t.Errorf("search should render each badge flag as an escapable class-colored span: got %q", search)
+	}
+	if !strings.Contains(search, `function hasStatus(id) {`) || !strings.Contains(search, `function hasResetStatus(id) {`) || !strings.Contains(search, `function cardStatusClass(id) {`) {
+		t.Errorf("search should expose status helpers for the card frame and summary reset: got %q", search)
+	}
+	for _, want := range []string{
+		`.card .badge .flag-viewed { color: #7cc3fa; }`,
+		`.card .badge .flag-read { color: #4db6ac; }`,
+		`.card .badge .flag-saved { color: #ff8a65; }`,
+		`.card .badge .flag-favorite { color: #c77dff; }`,
+		`.card.has-status { outline: 2px solid #8ab4f8; border-radius: 6px; }`,
+	} {
+		if !strings.Contains(search, want) {
+			t.Errorf("each state flag must have a distinct color through its class: got %q", search)
+		}
+	}
+	badgeBody := sliceBetween(t, search, "function badgeText(id) {", "function mergeReadState(id, row) {")
+	if !strings.Contains(badgeBody, `parts.push(badgeFlag("表示済み", "flag-viewed"))`) || !strings.Contains(badgeBody, `parts.push(badgeFlag("既読", "flag-read"))`) || !strings.Contains(badgeBody, `parts.push(badgeFlag("保存済み", "flag-saved"))`) || !strings.Contains(badgeBody, `parts.push(badgeFlag("お気に入り", "flag-favorite"))`) {
+		t.Errorf("badgeText should render the three state flags plus favorite through class-colored flags: got %q", badgeBody)
+	}
+	if !strings.Contains(badgeBody, `<button type='button' data-reset='all'>reset</button>`) || !strings.Contains(badgeBody, `hasResetStatus(id)`) {
+		t.Errorf("badge row must carry one summary reset button on the same row: got %q", badgeBody)
+	}
+	if strings.Contains(badgeBody, `data-reset='viewed'`) || strings.Contains(badgeBody, `data-reset='read'`) {
+		t.Errorf("badge row must not keep per-flag reset buttons: got %q", badgeBody)
 	}
 	if strings.Contains(badgeBody, `parts.push("p" +`) {
 		t.Errorf("the badge row must not add a separate row or keep the old p{page} text as a state flag: got %q", badgeBody)
 	}
 	if !strings.Contains(search, "function renderReadBadges() {") || !strings.Contains(search, `badge.innerHTML = badgeInner(`) {
-		t.Errorf("renderReadBadges must refresh badges through badgeInner so the reset buttons survive: got %q", search)
+		t.Errorf("renderReadBadges must refresh badges through badgeInner so the reset button survives: got %q", search)
+	}
+	if !strings.Contains(search, `li.classList.toggle("has-status", hasStatus(id))`) {
+		t.Errorf("renderReadBadges must also refresh the status frame when the maps change: got %q", search)
 	}
 	cardHelper := sliceBetween(t, search, "function completeCardState(card) {", "function mergeReadState(id, row) {")
 	if !strings.Contains(search, `completeCardState(card);`) || !strings.Contains(cardHelper, `readStateByGallery.set(id, state)`) || !strings.Contains(cardHelper, `savedByGallery.set(id, 1)`) {
@@ -1745,6 +1783,9 @@ search := uiText(t, "search.html")
 	}
 	if !strings.Contains(search, `post("/api/reset", { gallery_id: id, target: btn.dataset.reset })`) {
 		t.Errorf("reset buttons must post to /api/reset through the actual click handler: got %q", search)
+	}
+	if !strings.Contains(search, `else favoriteByGallery.delete(id);`) {
+		t.Errorf("reset handler must clear favorite from the badge maps when the reset response clears it: got %q", search)
 	}
 	if strings.Contains(search, `BroadcastChannel`) {
 		t.Errorf("manual display refresh must not add a page-to-page sync mechanism: got %q", search)

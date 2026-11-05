@@ -300,6 +300,20 @@ func TestResetReadStateCascadeAndExplicitTargets(t *testing.T) {
 	if err := resetReadState(db, 103, "bogus"); err == nil {
 		t.Error("unknown reset target must fail")
 	}
+
+	if err := setFavorite(db, 103, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetReadState(db, 103, "all"); err != nil {
+		t.Fatal(err)
+	}
+	row, err = readStateRow(db, 103)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["last_page"] != 0 || row["fully_read"] != 0 || row["viewed"] != 0 || row["favorite"] != 0 {
+		t.Errorf("reset-all must clear read, viewed and favorite together: got %v", row)
+	}
 }
 
 func TestCLIReadResetFlagsUseResetReadState(t *testing.T) {

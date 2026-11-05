@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: Minimum Playwright screen confirmation re-run済み。通常 visual evidenceは Playwright browser viewport screenshotのみ。OS full-screenは exception scriptで例外理由必須
+**Next Action**: 追加要件 actual UI confirmationは exact current Playwright targetで完了。strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要
 
 ## 意図 / 背景
 
@@ -166,13 +166,82 @@
   - `#perf-status` `cards 50` after the actual `#search-submit` event is the app's cumulative card-processing counter across the initial search and the actual submit event. The actual card DOM count is `25`, and `#count`/`#search-status` match the direct baseline.
   - Initial display target viewport remains not confirmed as exact `1280x900` because actual content viewport was `1259x810`; `outerWidth/outerHeight` was `1280x900`. If project policy accepts canonical `--window-size` as target, all measured strict criteria pass. Otherwise exact inner target requires a tool change or policy decision and remains unverified.
 
+### Playwright exact-target continuation（2026-11-05 07:12）
+
+- Target after explicit `browser_resize`: inner viewport exact `1280x900`, URL `http://127.0.0.1:8731/search?newtab=1#/q/furry/page/1`.
+- Before actual UI event, same target direct server baseline via Playwright fetch: HTTP `200`, `cache-control: no-store`, `x-search-timing: search=0;record=51;json=1`, `total=32916`, `ids.length=25`, `results.length=0`.
+- Actual UI event `#search-submit` click: network response `HTTP 200`, `cache-control: no-store`, `x-search-timing: search=0;record=52;json=1`, `total=32916`, `ids.length=25`. Direct baseline and UI response match.
+- Same target layout after actual UI event: `.side` `getBoundingClientRect().width=480px`, `form#search` computed height `67.7734px`, `#results` card count `25`, `.card` computed height `130px`. Card bounding rect `737x140.59375px` is padding-inclusive.
+- Actual UI route input for `4305294`: clicked target card title link, opened fresh viewer tab, `POST /api/viewed => 200`, direct SQL `viewed=1`.
+- Actual final-page UI event in viewer tab: `ArrowRight` to `page/7-8`; `POST /api/read` response `{"gallery_id":4305294,"last_page":8,"fully_read":1}`. Direct SQL after event: `last_page=8`, `fully_read=1`, `viewed=1`, `viewed_at=2026-11-05T03:57:10Z`.
+- Actual reset-click confirmation on target card `4305294`:
+  - `button[data-reset="read"]` click: UI `表示済み・保存済み`, `button[data-reset="viewed"]` remains; direct SQL `last_page=8`, `fully_read=0`, `viewed=1`.
+  - `button[data-reset="viewed"]` click: UI `保存済み`, no reset button remains; direct SQL `last_page=0`, `fully_read=0`, `viewed=0`; `viewed_at` preserved.
+- Post-reset actual UI restore: `#search-submit` click, route input, final page, direct SQL restored to `4305294 last_page=8, fully_read=1, viewed=1`, UI badge `表示済み・既読・保存済み` with `reset read` and `reset viewed` buttons.
+- Actual `#lists-refresh` click on same exact target: `GET /api/lists => 200`; `#lists-refresh` visible; UI badge remained `表示済み・既読・保存済み`, buttons `viewed`/`read`; second target `4305205` showed `表示済み`, `button[data-reset="viewed"]`, direct SQL `last_page=1`, `fully_read=0`, `favorite=0`, `viewed=1`, `viewed_at=2026-11-05T04:20:07Z`.
+- Playwright screenshots copied to Google Drive:
+  - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\search-state-badges-before-reset-2026-11-05.png`
+  - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\search-state-reset-read-2026-11-05.png`
+  - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\search-state-reset-viewed-2026-11-05.png`
+  - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\exact-target-1280x900-search-state-badges-2026-11-05.png`
+  - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\exact-target-1280x900-search-state-badges-after-lists-refresh-2026-11-05.png`
+- Strict criteria note: this is valid actual UI badge/reset confirmation on the exact current Playwright target after explicit resize. It is not the initial display pass, because strict criteria require target measurement before any `window.resize` on a fresh isolated tab. A fresh `browser_tabs new` tab measured `1920x953`, so exact `1280x900` initial display remains pending policy/tool confirmation.
+
+### 追加要件の実装（2026-11-05 07:20）
+
+- 追加要件の正典: `docs/ai/decisions/2026-11-05-search-result-card-status-frame-and-summary-reset.md`。この decision は `docs/ai/decisions/2026-11-05-search-result-state-badges-approved.md` の `data-reset="viewed|read"` 個別 button 配置のみ supersede する。既存の `reset-read` / `reset-viewed` cascade 意味は維持し、その上位として `target=all` を追加した。
+- `app/search.html` 変更:
+  - `.card.has-status { outline: 2px solid #8ab4f8; border-radius: 6px; }` を追加。layout height contract を壊さないため `outline` を使用。
+  - `hasStatus(id)` は viewed / fully_read / saved / favorite のどれかが true なら status frame の対象とする。
+  - `hasResetStatus(id)` は persisted user status（viewed / fully_read / favorite）があるときだけ summary reset button の対象とする。`saved` はファイル由来なので file delete なしの summary reset ではクリアしない。
+  - `cardStatusClass(id)` を render の card class へ反映し、`renderReadBadges()` で `li.classList.toggle("has-status", hasStatus(id))` も更新する。
+  - badge row は `data-reset='viewed'` / `data-reset='read'` の個別 button ではなく、`<button type='button' data-reset='all'>reset</button>` のまとめ button 1つへ変更。
+  - reset handler は `/api/reset` response の `favorite` から `favoriteByGallery` を update/delete する。
+- `app/library.go` 変更:
+  - `resetReadState` に `case "all"` を追加。`last_page = 0`・`fully_read = 0`・`viewed = 0`・`favorite = 0` をまとめてクリアする。`saved` はファイル由来なので DB 削除しない。
+- `app/viewer.go` 変更:
+  - `POST /api/reset` の `target` は `viewed` / `read` / `all` を許可。
+- Test re-anchor:
+  - `app/main_test.go`: `reset-all` が read / viewed / favorite をまとめてクリアすること。
+  - `app/viewer_test.go`: `target=all` handler、`hasStatus` / `hasResetStatus` / `cardStatusClass`、`.card.has-status` exact CSS、single summary reset button、per-flag reset 禁止、renderReadBadges で frame refresh、`favoriteByGallery.delete(id)`。
+
+### 追加要件 actual UI confirmation（2026-11-05 07:28）
+
+- Exact current Playwright target after explicit `browser_resize`:
+  - URL `http://127.0.0.1:8731/search?newtab=1#/q/furry/page/1`
+  - before resize fresh target measured `1920x953`; this exact `1280x900` is after explicit `browser_resize`, so it is not strict initial display pass.
+  - after exact target resize: `.side` `480px`, `form#search` height `67.7734375px`, `#results` card count `25`, first card computed height `130px`.
+- Direct server baseline via Playwright fetch before actual UI event:
+  - HTTP `200`, `cache-control: no-store`, `x-search-timing: search=0;record=161;json=1`, `total=32916`, `ids.length=25`, `results.length=25`.
+- Actual UI event `#search-submit` click:
+  - UI `/api/search` response `HTTP 200`, `cache-control: no-store`, `x-search-timing: search=0;record=421;json=1`, `total=32916`, `ids.length=25`. Direct baseline and UI response match on total/ids/no-store.
+- Exact target visual confirmation before summary reset:
+  - card `4305294`: `class="card has-status"`, badge `表示済み 既読 保存済み`, single `button[data-reset='all']`, `hasStatus=true`.
+  - Direct SQL before reset: `gallery_id=4305294`, `last_page=8`, `fully_read=1`, `favorite=0`, `viewed=1`, `viewed_at=2026-11-05T03:57:10Z`.
+- Actual summary reset click on `4305294`:
+  - Direct SQL after `target=all`: `last_page=0`, `fully_read=0`, `viewed=0`, `favorite=0`; `viewed_at=2026-11-05T03:57:10Z` preserved.
+  - UI after reset: `card has-status`, badge `保存済み`, no reset button remains. `saved` remains because it is file-derived.
+- Actual summary reset click on `4305205`:
+  - UI before reset: `card has-status`, badge `表示済み`, `button[data-reset='all']`.
+  - Direct SQL before reset: `last_page=1`, `fully_read=0`, `favorite=0`, `viewed=1`, `viewed_at=2026-11-05T04:20:07Z`.
+  - Direct SQL after reset: `last_page=0`, `fully_read=0`, `favorite=0`, `viewed=0`.
+  - UI after reset: `card`, no badge, no reset button, `hasStatus=false`.
+- Status restore through actual UI route:
+  - Click card `4305294` title link to viewer; route input actual event opened viewer tab and direct SQL after route/final-page actual event returned `4305294` to `last_page=8`, `fully_read=1`, `viewed=1`.
+  - After `#search-submit` UI event, `4305294` again shows `card has-status`, badge `表示済み 既読 保存済み`, single `button[data-reset='all']`.
+- Playwright screenshot copied to Google Drive:
+  - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\badge-status-frame-and-summary-reset-2026-11-05.png`
+
 ## Verification
 
 - Commands:
   - `go vet .`：合格
-  - `go test -count=1 -timeout 300s .`：`ok hitomi-hub/app 18.028s`
-  - `python -m pytest tests/ -v`：`53 passed in 9.30s`
-  - `task_manager.py` Memory Bank update：Status `進行中` / Next Action「resize 前 target viewport（1280x900）で測れる正典経路で initial display（`.side` 480px・card height 130px）を再測定し、記録・commit/push する」
+  - `go test -count=1 -timeout 300s .`：追加要件変更後に `ok hitomi-hub/app 18.685s`
+  - `python -m pytest tests/ -v`：追加要件変更後に `53 passed in 10.16s`（canonical build rebuild 後）
+  - `task_manager.py` Memory Bank update：Status `進行中` / Next Action「strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要。追加要件 actual UI confirmationは exact current Playwright targetで完了し、canonical build rebuild・server restart・Google Drive screenshot保存済み」
+- Canonical build after visual change:
+  - `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`：合格
+  - canonical server pid `29792` を stopし、fresh canonical exe から pid `30388` で `http://127.0.0.1:8731/` を restart した。
 - Direct SQL helper used for row read: `python docs\ai\tmp\badges_db_check.py "S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\hitomi.db" <gallery_id>`
 - initial display：canonical fresh target re-measurement completed before resize at outer target `1280x900`; actual content viewport `1259x810`; `.side` `480px`, `form#search` `67.7734375px`, card count `25`, `.card` computed height `130px`, `#count`, `#search-page-status`, `#search-status`, `#perf-status`, direct server baseline, actual `#search-submit` CDP trusted click, `#lists-refresh`, reset button, visual read, and Drive confirmation all confirmed. Exact strict inner target `1280x900` remains tool limitation and is not treated as pass until policy/tool explicitly accepts canonical window-size as target.
 

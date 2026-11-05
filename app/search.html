@@ -26,6 +26,12 @@
   .card .badge { font-size: .8rem; color: #8ab4f8; }
   .card .badge:empty { display: none; }
   .card .badge button { padding: .1rem .35rem; font-size: .75rem; }
+  .card .badge .flag { font-weight: 600; }
+  .card .badge .flag-viewed { color: #7cc3fa; }
+  .card .badge .flag-read { color: #4db6ac; }
+  .card .badge .flag-saved { color: #ff8a65; }
+  .card .badge .flag-favorite { color: #c77dff; }
+  .card.has-status { outline: 2px solid #8ab4f8; border-radius: 6px; }
   .search-card-cover { object-fit: cover; background: #1d2126; }
   .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
@@ -177,22 +183,39 @@ function sameTitleJapaneseAnchor(r) {
   return "<div class='meta'>同名の日本語版: <a href='" + viewerLink(group.bestId) + "'" + targetAttr() + ">#" + group.bestId + "</a></div>";
 }
 
+function badgeFlag(label, className) {
+  return "<span class='flag " + className + "'>" + escapeHTML(label) + "</span>";
+}
+
+function hasStatus(id) {
+  const state = readStateByGallery.get(id);
+  return Boolean((state && state.viewed) || (state && state.fully_read) || savedByGallery.get(id) || favoriteByGallery.has(id));
+}
+
+function hasResetStatus(id) {
+  const state = readStateByGallery.get(id);
+  return Boolean((state && state.viewed) || (state && state.fully_read) || favoriteByGallery.has(id));
+}
+
+// 3 state flags are separated by distinct classes so each flag can have its own visible color.
 function badgeText(id) {
   const parts = [];
   const state = readStateByGallery.get(id);
-  if (state && state.viewed) parts.push("表示済み");
-  if (state && state.fully_read) parts.push("既読");
-  if (savedByGallery.get(id)) parts.push("保存済み");
-  if (favoriteByGallery.has(id)) parts.push("お気に入り");
-  return parts.join("・");
+  if (state && state.viewed) parts.push(badgeFlag("表示済み", "flag-viewed"));
+  if (state && state.fully_read) parts.push(badgeFlag("既読", "flag-read"));
+  if (savedByGallery.get(id)) parts.push(badgeFlag("保存済み", "flag-saved"));
+  if (favoriteByGallery.has(id)) parts.push(badgeFlag("お気に入り", "flag-favorite"));
+  return parts.join(" ");
 }
 
 // badge 行 inline に reset button（同一行・行を追加しない）。card height contract を越えない。
+function cardStatusClass(id) {
+  return hasStatus(id) ? " has-status" : "";
+}
+
 function badgeInner(id) {
-  const state = readStateByGallery.get(id);
-  const parts = [escapeHTML(badgeText(id))];
-  if (state && state.viewed) parts.push("<button type='button' data-reset='viewed'>reset</button>");
-  if (state && state.fully_read) parts.push("<button type='button' data-reset='read'>reset</button>");
+  const parts = [badgeText(id)];
+  if (hasResetStatus(id)) parts.push("<button type='button' data-reset='all'>reset</button>");
   return parts.join(" ");
 }
 
@@ -208,7 +231,7 @@ function renderSearchCard(r) {
   const thumbnail = searchCardCoverSource(r);
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
   const localCount = (r.files || []).filter((f) => f.local).length;
-  return "<li class='card' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + localCount + "/" + (r.count ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
+  return "<li class='card" + cardStatusClass(r.id) + "' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + localCount + "/" + (r.count ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
 }
 
 function searchCardCoverSource(card) {
@@ -439,9 +462,11 @@ function renderReadBadges() {
   const results = document.getElementById("results");
   if (!results) return;
   for (const li of results.querySelectorAll("li[data-search-id]")) {
+    const id = Number(li.dataset.searchId);
+    li.classList.toggle("has-status", hasStatus(id));
     const badge = li.querySelector(".badge");
     if (!badge) continue;
-    badge.innerHTML = badgeInner(Number(li.dataset.searchId));
+    badge.innerHTML = badgeInner(id);
   }
 }
 
@@ -646,6 +671,8 @@ document.getElementById("results").addEventListener("click", async (e) => {
   try {
     const row = await post("/api/reset", { gallery_id: id, target: btn.dataset.reset });
     readStateByGallery.set(id, { last_page: row.last_page || 0, fully_read: row.fully_read || 0, viewed: row.viewed || 0 });
+    if (row.favorite) favoriteByGallery.set(id, 1);
+    else favoriteByGallery.delete(id);
     renderReadBadges();
     setStatus(document.getElementById("search-status"), "reset: #" + id + " " + btn.dataset.reset);
   } catch (err) {

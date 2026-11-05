@@ -1001,8 +1001,8 @@ func (v *viewer) resetState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery_id is required", http.StatusBadRequest)
 		return
 	}
-	if body.Target != "viewed" && body.Target != "read" {
-		http.Error(w, "target must be viewed or read", http.StatusBadRequest)
+	if body.Target != "viewed" && body.Target != "read" && body.Target != "all" {
+		http.Error(w, "target must be viewed, read, or all", http.StatusBadRequest)
 		return
 	}
 	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {

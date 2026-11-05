@@ -103,6 +103,7 @@ func setViewed(db *sql.DB, galleryID int) error {
 // resetReadState は手動リセット。cascade（承認済み設計）:
 // target "viewed" → viewed=0・fully_read=0・last_page=0（fully_read は viewed を含意するため）。
 // target "read" → fully_read=0 のみ（viewed・last_page 保持）。
+// target "all" → last_page・fully_read・viewed・favorite をまとめて 0（ファイル由来の saved は削除しない）。
 func resetReadState(db *sql.DB, galleryID int, target string) error {
 	switch target {
 	case "viewed":
@@ -110,6 +111,9 @@ func resetReadState(db *sql.DB, galleryID int, target string) error {
 		return err
 	case "read":
 		_, err := db.Exec("UPDATE read_state SET fully_read = 0 WHERE gallery_id = ?", galleryID)
+		return err
+	case "all":
+		_, err := db.Exec("UPDATE read_state SET last_page = 0, fully_read = 0, viewed = 0, favorite = 0 WHERE gallery_id = ?", galleryID)
 		return err
 	}
 	return errors.New("reset target must be viewed or read")
