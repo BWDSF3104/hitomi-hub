@@ -1,6 +1,6 @@
 # 正典 CDP/click tool が本項目の実測で #search-submit を確定できない
 
-**Status**: 部分解決（Edge executable launchは正典 scriptで禁止化。CDP target selection limitationは残る）
+**Status**: 部分解決（browser executable launch pathを正典 scriptから除去。CDP target selection limitationは残る）
 
 ## 実測
 
@@ -31,9 +31,9 @@
 
 ## 正典 script fix
 
-- 本プロジェクトルール `docs/ai/rules/normal-screenshot-rule.md` により、Edge executable launchを禁止。
-- `S:\Documents\Kilo_Commons\Common_Operations\bin\kilo-fresh-browser.ps1` は `msedge.exe` / `chrome.exe` launch pathを削除し、通常実行では Playwright browser tool利用を要求する policy guardへ変更した。
-- CDP target selection limitationは残る。Edgeを起動しない確認経路では、Playwright browser targetを正典 Playwright toolで測る。
+- 本プロジェクトルール `docs/ai/rules/normal-screenshot-rule.md` により、確認スクリプトは browser executableを launchせず、Playwright browser toolの targetを直接使用する。
+- `S:\Documents\Kilo_Commons\Common_Operations\bin\kilo-fresh-browser.ps1` の browser executable launch pathを削除し、通常実行では Playwright browser tool利用を要求する policy guardへ変更した。
+- CDP target selection limitationは残る。browser executable launchを使わない確認経路では、Playwright browser targetを正典 Playwright toolで測る。
 
 ## 次の対応（段階3）
 
