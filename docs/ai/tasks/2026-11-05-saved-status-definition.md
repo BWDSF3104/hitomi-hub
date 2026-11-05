@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 定義の確定（既存正典 2026-11-05 badges 3項との関係を確定）
+**Next Action**: 完成後ファイル削除の扱い確認（時点記録 vs state 再計算）。実装開始指示未受領
 
 ## 意図 / 背景
 
@@ -14,7 +14,20 @@
 
 ## 調査結果 / 変更内容
 
-（記入）
+### 定義確定（ユーザー指示 2026-11-05 13:52）
+
+- **saved = 当該 gallery のすべての page（全 entry）を指定フォルダ（config `gallery_dir`、既定 `Galleries`）へコピーし終わった時点**
+- 既存正典 `docs/ai/decisions/2026-11-05-search-result-state-badges-approved.md` 3項との関係:
+  - 正典の「指定フォルダ内に全 entry の local ファイルがあること」は、通常運用（削除なし）でコピー完了時点と等価 → **正典は無変更**
+  - 部分保存の扱い: 無変更。部分保存は badge に出さず meta 側 `local N/M`（この定義と一致 — badge は完成時点のみ）
+  - この定義は**時点（event）基準**。現行実装（card API の `entryLocalFormats` ループによる state 再計算）との唯一の分岐は**完成後のファイル削除**: state 再計算では saved が false に戻る、時点基準では true を保持
+- 算出源の恒久的な決め方（保留・確認必要）:
+  - 逐再計算（現行どおり・追加 I/O なし）→ 完成後削除で badge が戻る
+  - 完成時点の記録（sticky）→ `read_state` 等に event 列が必要（schema 変更・迁移は非破壊規約準守）
+
+### 残る確認点
+
+1. 完成後ファイル削除時に saved を保持するか（時点記録）それとも state 再計算で false へ戻すか。これにより算出源（event 列 vs 既存 `entryLocalFormats`）が確定する。
 
 ## Verification
 
