@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 通常スクリーンショットは Playwright browser画面画像を基準にする。initial display確認を Playwright で再取得し、OS full-screen は browser画面で確認できない例外時のみ
+**Next Action**: Minimum Playwright screen confirmation re-run済み。通常 visual evidenceは Playwright browser viewport screenshotのみ。OS full-screenは exception scriptで例外理由必須
 
 ## 意図 / 背景
 
@@ -108,6 +108,16 @@
   - 通常スクリーンショットの被写体は Playwright browser画面の画像。
   - `canonical_initial_display_fresh_target_clean.png` の full virtual screen capture は、例外理由がない通常 visual confirmation evidence として無効。
   - 2026-11-05 06:27 に `taskkill /IM msedge.exe /F /T` を実行し、起動中 Edge を停止した。
+
+### Minimum Playwright screen confirmation re-run（2026-11-05 06:51）
+
+- Target: Playwright current target `http://127.0.0.1:8731/search#/q/furry/page/1`.
+- before-resize target viewport exact `1280x900`: `.side` `480px`, `form#search` `67.7734375px`, `#results` cards `25`, `.card` computed height `130px`.
+- Direct server baseline via Playwright fetch: HTTP `200`, `cache-control: no-store`, `x-search-timing: search=0;record=25;json=1`, `total=32916`, `ids.length=25`, `results.length=0`.
+- actual UI event: `#search-submit` click. UI `/api/search` request response: HTTP `200`, `cache-control: no-store`, `x-search-timing: search=0;record=554;json=1`, `total=32916`, `ids.length=25`, `results.length=0`. Direct baseline and UI response match on total/ids/no-store/timing.
+- DOM/status before screenshot: `#search-page-status` `page 1 / 1317・total 32916`, `#count` `32916 件・page 1`, `#search-status` `検索完了・カード表示済み 25件`.
+- Minimum visual screenshot: Playwright viewport screenshot `docs/ai/tmp/minimum-playwright-viewport-2026-11-05.png`. It shows first card `保存済み`, `local 8/8`, TN cover, target status fields, and no OS full-screen capture was used.
+- OS full-screen capture was not used. Normal screen confirmation is Playwright browser viewport screenshot only.
 
 ### visual confirmation
 
