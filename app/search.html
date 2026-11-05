@@ -15,6 +15,15 @@
   form { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
   input { padding: .35rem; background: #1d2126; color: #e8eaed; border: 1px solid #2f343b; }
   button { padding: .35rem .6rem; background: #2f343b; color: #e8eaed; border: 0; cursor: pointer; }
+  form#search { gap: .5rem; }
+  form#search .search-row, form#search .filter-row { flex-basis: 100%; display: flex; flex-wrap: nowrap; gap: .5rem; align-items: center; }
+  form#search .pager { flex-shrink: 0; display: flex; flex-wrap: nowrap; gap: .5rem; align-items: center; }
+  form#search .pager button { min-width: 40px; }
+  form#search input, form#search button { box-sizing: border-box; min-height: 31px; }
+  form#search input:focus-visible, form#search button:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+  form#search button:disabled { opacity: .5; cursor: not-allowed; }
+  form#search #query { flex: 1 1 160px; min-width: 0; }
+  form#search #search-page-status { margin-left: auto; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
   a { color: #8ab4f8; text-decoration: none; }
@@ -55,18 +64,24 @@
     <section>
       <h2>検索（hitomi search.html と同じ term routing）</h2>
       <form id="search">
-        <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
-        <input id="lang" value="all" size="8">
-        <input id="page" value="1" size="4">
-        <button id="search-prev" type="button">前</button>
-        <button id="search-next" type="button">次</button>
-        <button id="search-submit" type="submit">検索</button>
-        <label><input type="checkbox" id="status-viewed" value="viewed">表示済み</label>
-        <label><input type="checkbox" id="status-read" value="read">既読</label>
-        <label><input type="checkbox" id="status-saved" value="saved">保存済み</label>
-        <label><input type="checkbox" id="status-favorite" value="favorite">お気に入り</label>
+        <div class="search-row">
+          <input id="query" value="furry" size="30" placeholder="furry / female:yuri language:english">
+          <input id="lang" value="all" size="8">
+          <button id="search-submit" type="submit">検索</button>
+        </div>
+        <span class="pager">
+          <button id="search-prev" type="button">前</button>
+          <input id="page" value="1" size="4">
+          <button id="search-next" type="button">次</button>
+        </span>
+        <div id="search-page-status" class="meta"></div>
+        <div class="filter-row">
+          <label><input type="checkbox" id="status-viewed" value="viewed">表示済み</label>
+          <label><input type="checkbox" id="status-read" value="read">既読</label>
+          <label><input type="checkbox" id="status-saved" value="saved">保存済み</label>
+          <label><input type="checkbox" id="status-favorite" value="favorite">お気に入り</label>
+        </div>
       </form>
-      <div id="search-page-status" class="meta"></div>
       <div id="perf-status" class="meta"></div>
       <div id="search-status" class="status"></div>
       <div id="count" class="meta"></div>

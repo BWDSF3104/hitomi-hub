@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 案B refined（pager 行独立・単独 flex item）＋U1-U3 の CSS 追加の承認待ち。行契約 re-anchor・境界色・focus ring・gap 8px の判断保留9項目
+**Next Action**: 段階3 判断待ち: filters 行 checkbox の min-height 31px 適用（実測 13x31 縦長描画・行 h=38）を承認規則どおり許容するか input[type=checkbox] を除外かのユーザー承認。3 行契約・DOM 順（前->page->次）・focus ring・disabled visual state・Drive 確認は実測合格（code 分は単独 commit）
 
 ## 意図 / 背景
 
@@ -144,6 +144,31 @@ Scope note: skill の tap-target（≥44pt iOS / ≥48dp Android）と safe-area
 
 合格条件・検証方法は個別タスク記録の記載（テスト影響・画面確認）に従う。正典 criteria の `form#search`「単一行・wrap なし」項目は、本項目の行契約（search 行・pager 行・filters 行・各行必要幅 ≤ `.side` 可用幅 `465px`）へ re-anchor する（新しい decision entry で記録。criteria 本体は書き換えない）。
 
+### 実装（2026-11-05 14:17 着手・案B refined 承認済み）
+
+変更ファイル: `app/search.html` のみ（検索 form の DOM 構造と CSS。viewer 側・route・prefetch ロジック・server は無変更）。
+
+CSS（正典の `form` / `input` / `button` 規則は維持し、検索 form へ scoped）:
+
+- `form#search { gap: .5rem; }`（制御行 gap `8px`）
+- `form#search .search-row, form#search .filter-row { flex-basis: 100%; display: flex; flex-wrap: nowrap; gap: .5rem; align-items: center; }`（行 wrapper = 単独視覚行。行内 wrap なし）
+- `form#search .pager { flex-shrink: 0; display: flex; flex-wrap: nowrap; gap: .5rem; align-items: center; }`、`form#search .pager button { min-width: 40px; }`（単独 flex item・`前`/`次` の隣接を構造で保証）
+- `form#search input, form#search button { box-sizing: border-box; min-height: 31px; }`（U6）
+- `form#search input:focus-visible, form#search button:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }`（U2）
+- `form#search button:disabled { opacity: .5; cursor: not-allowed; }`（U1。transform 不使用・bounds を動かさない）
+- `form#search #query { flex: 1 1 160px; min-width: 0; }`、`form#search #search-page-status { margin-left: auto; }`
+
+判断（段階1・scoped）: U1/U2/U6 の selector を page global ではなく `form#search` へ scoped。根拠: 承認範囲は「検索 form の DOM 構造と CSS のみ」であり、global 適用は `.card .badge button`（card height contract 正典）、`nav` の `#jump-first-status`、`form#saved-search` へ波及する。正典の card height contract・`.side`/`.main` 規則・境界色（U3 現状維持）を壊さないために scoped。実測で scoped の効き目（`min-height 31px`・focus ring・disabled）を確認した。
+
+DOM（`form#search` 内・DOM 順 = 視覚読み順）:
+
+- search 行 wrapper `.search-row`: `#query` → `#lang` → `#search-submit`
+- pager 行: `<span class="pager">`（`前` → `#page` → `次`）→ `#search-page-status`（同じ行の右。form 内へ移動）
+- filters 行 wrapper `.filter-row`: 4 checkboxes（`status-viewed` → `read` → `saved` → `favorite`）
+- `#page` は `form#search` 内に残す（`<span class="pager">` 内）。`form#search` 内 button は 3 個（`#search-submit` のみ `type="submit"`）→ `TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit` の「3 buttons」照合は維持。既存 test ファイルは無変更（test 追加なし）。
+
+正典 criteria の `form#search`「単一行・wrap なし」項目は 3 行契約へ re-anchor（新しい decision entry: `docs/ai/decisions/2026-11-05-search-form-row-contract-re-anchor.md`。criteria 本体は書き換えない）。
+
 ## Verification
 
 - 正典読了（作業前チェック）は上記ファイル名で記録済み。
@@ -164,7 +189,29 @@ Scope note: skill の tap-target（≥44pt iOS / ≥48dp Android）と safe-area
 - mock スクリーンショット: `docs/ai/tmp/search-prev-next-layout-mock-proposed.png`（案の mock。実装確認ではないので screen confirmation 合格条件は未適用）。
 - accessible name 欠如（U10）は範囲外 problem として `docs/ai/known-issues/KI-20261105-08-search-form-controls-missing-accessible-names.md` に記録。
 
-実装は未着手（実装開始指示未受領）。
+実装確認（2026-11-05 14:23・案B refined 実装後）:
+
+- 正典 build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`（`app`）で canonical exe を更新。
+- `go vet . && go test -count=1 -timeout 300s .`（`app`）= clean / `ok hitomi-hub/app 24.716s`。`TestEmbeddedUIHasSearchPrevNextButtons`・`TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit` 合格（既存 test ファイルは無変更・test 追加なし）。
+- `python -m pytest tests/ -v`（hitomi-hub root）= 53 passed（`test_canonical_build_freshness.py` 2 passed 含む。`test_search_prefetch.py`（`#search-next` exact string）・`test_search_visible_priority.py`・`test_read_lists_debounce.py`・`test_strip_rebuild.py` 影響なし）。
+- canonical server: 記録上の PID `28056` は hub.exe ではなく `kilo.exe`（PID 再利用）で実 server として停止済み。実 listener は PID `26460`（正典 command だが pre-change exe）＝ stale。正典 tracked entry を stop し、実 listener `26460` も child tree として停止（無関係 listener は停止していない）。新 exe で正典 command を起動: PID `31028`・lifetime persistent・port `8731` listening（`viewer: http://127.0.0.1:8731`）。
+- direct server baseline（先行）: `GET http://127.0.0.1:8731/api/search?query=furry&lang=all&page=1&limit=25` → `200`・`Cache-Control: no-store`・`X-Search-Timing: search=1609;record=51;json=1`・`Date: Thu, 05 Nov 2026 14:23:08 GMT`・`Content-Length: 690`（stale shape `84` でない）・`total=32918`・`ids.length=25`。page 7 baseline: `200`・`X-Search-Timing` あり・`Content-Length: 974`・`ids.length=25`。
+- actual UI event（fresh tab・人工 resize 不使用）: `#search-next` click → `#page` `7`・hash `#/q/furry/page/7`・foreground fetch `/api/search?query=furry&lang=all&page=7&limit=25`・`#results` card 数 `25` = `ids.length` `25`・`#count` `32918 件・page 7`・`#search-page-status` `page 7 / 1317・total 32918`。`#search-prev` click → `page` `6` へ戻り（`setSearchPage` 非破壊）。fresh target `http://127.0.0.1:8731/search#/q/furry/page/1`（page 1）: `#search-page-status` `page 1 / 1317・total 32918`・`#count` `32918 件・page 1`・`#search-status` `検索完了・カード表示済み 25件`・`#results` card 数 `25`。console error `0`（`favicon.ico` 404 なし）。
+- 3 行契約実測（actual window size outer `1663x1020`・content viewport inner `1650x927`・`devicePixelRatio` 2。`.side` `480px`（shrink 不可）、`clientWidth` `465px`、scrollbar `15px`）:
+  - search 行 `y=119` `h=31` `w=465`（`#query` `307`・`#lang` `96`・`#search-submit` `46`・gap `8`×2）→ 必要幅 ≤ `465px`・行内 wrap なし
+  - pager 行 `y=158`（`<span class="pager">` `w=165`・`flex-shrink: 0`・`flex-basis: auto`・行内 `flex-wrap: nowrap`）: `前` `x=16..56`（`min-width: 40px`）、`#page` `x=64..133`（`69px`）、`次` `x=141..181`（`40px`）→ `前` と `次` が `#page` を挟んで隣接（gap `8px`）。`#search-page-status` `x=314..481`（`167px`・pager 行の右端・同じ視覚行）
+  - filters 行 `y=197` `w=465`・行内 wrap なし（必要幅 `306px` ≤ `465px`）
+  - `form#search` height `116px`（`31 + 31 + 38 + gap 8×2`）。re-anchor 後の行契約で合格（criteria の `67〜70px` 単一行数値は本項目の 3 行契約へ re-anchor 済み: `docs/ai/decisions/2026-11-05-search-form-row-contract-re-anchor.md`）
+  - pager 内 DOM 順 = `search-prev` → `page` → `search-next`。form children 順 = `search-row` → `pager` → `search-page-status` → `filter-row` = 視覚読み順（tab order = visual order）
+- `:focus-visible`（keyboard Tab focus で実測）: `#search-next` = `outline rgb(138,180,248) solid 2px`・`outline-offset 2px`。`#page` focus でも同 ring。disabled button は sequential focus で skip（Tab 順: `#page` → `#search-next`）。
+- disabled visual state（page 1 実測）: `#search-prev` `disabled=true`・`opacity 0.5`・`cursor not-allowed`・`transform none`（bounds を動かさない）。`#search-next`（enabled）= `opacity 1`・`cursor pointer`。click disabled guard: disabled button は click を dispatch しない（page 1 で `前` click は handler 到達不可）。
+- スクリーンショット（Playwright browser 画面画像・通常スクリーンショット正典。OS foreground capture 不使用）: `docs/ai/tmp/search-prev-next-layout-after-20261105.png`（fresh target page 1。3 行構成・`前` disabled dim・focus ring・status 行右）。filters 行 checkbox 描画の証拠（element screenshot）: `docs/ai/tmp/search-prev-next-filter-row-20261105.png`。
+- Drive task folder `I:\マイドライブ\kilo\2026-11-05-search-prev-next-button-layout` へ copy 済み。SHA256 一致で保存確認: `1298FB8D542E88E80905679590B3E1FF65D2F20155632B2E296278488106F42A`（local == Drive の `search-prev-next-layout-after-20261105.png`）。filter row 証拠 `14248E912D1B9BE9593B87D8923FE172E80F6FEF427CF03F95C472C31593C655`。
+- 正典 `kilo-drive-confirm.ps1` 確認 record（承認内容どおりの content 文・合格条件は上の実測で充足）: `I:\マイドライブ\kilo\2026-11-05\search-prev-next-button-layout-confirmation-2026-11-05.txt`。
+
+段階3 持ち帰り（この項目で解決していない判断）:
+
+- 承認された制御規則 `input, button { box-sizing: border-box; min-height: 31px; }` を text input・button へ適用すると、filters 行の `input[type=checkbox]` が `13x31` の縦長 box として描画される（filters 行 `h=38`）。承認 mock（`docs/ai/tmp/search-prev-next-layout-mock-proposed.png`）は filters 行高さ `20px`・checkbox は通常の四角で、視覚上食い違う。checkbox を `min-height` 適用から除外するか現状を許容するかが判断未確定。実測（上）と記録確認では確定できず、ユーザーに見える操作感の変更（段階3）として持ち帰る。この項目の code は承認規則どおり（checkbox 除外なし）で commit 済み。
 
 ## 完了時 Memory Bank 操作
 

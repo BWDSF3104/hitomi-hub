@@ -1,3 +1,3 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-05-saved-status-definition.md	進行中	完成後ファイル削除の扱い確認（時点記録 vs state 再計算）。実装開始指示未受領
-docs/ai/tasks/2026-11-05-search-prev-next-button-layout.md	進行中	案B refined（pager 行独立・単独 flex item）＋U1-U3 の CSS 追加の承認待ち。行契約 re-anchor・境界色・focus ring・gap 8px の判断保留9項目
+docs/ai/tasks/2026-11-05-search-prev-next-button-layout.md	進行中	段階3 判断待ち: filters 行 checkbox の min-height 31px 適用（実測 13x31 縦長描画・行 h=38）を承認規則どおり許容するか input[type=checkbox] を除外かのユーザー承認。3 行契約・DOM 順（前->page->次）・focus ring・disabled visual state・Drive 確認は実測合格（code 分は単独 commit）
