@@ -655,33 +655,54 @@ type GalleryInfo struct {
 	SceneIndexes  []int       `json:"scene_indexes"`
 }
 
-type rawGallery struct {
-	ID            string              `json:"id"`
-	Title         string              `json:"title"`
-	JapaneseTitle string              `json:"japanese_title"`
-	Language      string              `json:"language"`
-	Type          string              `json:"type"`
-	Tags          []map[string]string `json:"tags"`
-	Artists       []map[string]string `json:"artists"`
-	Groups        []map[string]string `json:"groups"`
-	Characters    []map[string]string `json:"characters"`
-	GalleryURL    string              `json:"galleryurl"`
-	Files         []FileEntry         `json:"files"`
-	SceneIndexes  []int               `json:"scene_indexes"`
+// flexString は string/number 両対応（旧形式 live galleryinfo の number 値受入）。
+// number は字面そのまま string 化（float 丸めなし）。null は ""。
+type flexString string
+
+func (f *flexString) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*f = flexString(s)
+		return nil
+	}
+	if string(data) == "null" {
+		*f = ""
+		return nil
+	}
+	*f = flexString(string(data))
+	return nil
 }
 
-func names(entries []map[string]string, key string) []string {
+type rawGallery struct {
+	ID            flexString              `json:"id"`
+	Title         string                  `json:"title"`
+	JapaneseTitle string                  `json:"japanese_title"`
+	Language      string                  `json:"language"`
+	Type          string                  `json:"type"`
+	Tags          []map[string]flexString `json:"tags"`
+	Artists       []map[string]flexString `json:"artists"`
+	Groups        []map[string]flexString `json:"groups"`
+	Characters    []map[string]flexString `json:"characters"`
+	GalleryURL    string                  `json:"galleryurl"`
+	Files         []FileEntry             `json:"files"`
+	SceneIndexes  []int                   `json:"scene_indexes"`
+}
+
+func names(entries []map[string]flexString, key string) []string {
 	out := []string{}
 	for _, entry := range entries {
 		if entry == nil || entry[key] == "" {
 			continue
 		}
 		if entry["female"] != "" {
-			out = append(out, "female:"+entry[key])
+			out = append(out, "female:"+string(entry[key]))
 		} else if entry["male"] != "" {
-			out = append(out, "male:"+entry[key])
+			out = append(out, "male:"+string(entry[key]))
 		} else {
-			out = append(out, entry[key])
+			out = append(out, string(entry[key]))
 		}
 	}
 	return out
@@ -701,7 +722,7 @@ func (c *Client) Gallery(id int, background bool) (*GalleryInfo, error) {
 	if err := json.Unmarshal([]byte(text[idx+len("var galleryinfo = "):]), raw); err != nil {
 		return nil, err
 	}
-	galleryID, err := strconv.Atoi(raw.ID)
+	galleryID, err := strconv.Atoi(string(raw.ID))
 	if err != nil {
 		return nil, fmt.Errorf("gallery id %q: %s", raw.ID, err)
 	}

@@ -807,6 +807,33 @@ func TestGalleryParse(t *testing.T) {
 	if len(info.SceneIndexes) != 3 || info.SceneIndexes[0] != 0 || info.SceneIndexes[1] != 13 {
 		t.Errorf("scene_indexes: got %v", info.SceneIndexes)
 	}
+
+	// 旧形式 fixture（KI-20261105-06）: id・tags value が number。live 実測 296403 と同じ形
+	//（false フラグは実測で "" のまま。number は 1 の字面のみ観測）
+	c2 := &Client{cfg: defaultHitomiConfig()}
+	c2.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		if !strings.Contains(rawurl, "/galleries/296403.js") {
+			t.Errorf("url: got %s", rawurl)
+		}
+		return []byte(`var galleryinfo = {"id":296403,"title":"Sailor Moon - Secret Lingerin Scent","language":"polish","type":"doujinshi","tags":[{"tag":"futanari","female":1,"male":""}],"characters":[{"character":"sailor mars"}],"scene_indexes":[],"files":[{"hash":"78a2c688096c34e56680ec2eee30b4e3d20a15f054c8165312cae8e0374a8bfb","name":"01.jpg","width":517,"height":718,"hasavif":1}]}`), nil
+	}
+	num, err := c2.Gallery(296403, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if num.ID != 296403 || num.Title != "Sailor Moon - Secret Lingerin Scent" {
+		t.Errorf("numeric fixture: got %+v", num)
+	}
+	// names() 出力は string 形式と同一意味（female:1 → truthy → "female:<tag>"）
+	if len(num.Tags) != 1 || num.Tags[0] != "female:futanari" {
+		t.Errorf("numeric tags: got %v", num.Tags)
+	}
+	if len(num.Characters) != 1 || num.Characters[0] != "sailor mars" {
+		t.Errorf("numeric characters: got %v", num.Characters)
+	}
+	if len(num.Files) != 1 || num.Files[0].HasAVIF != 1 {
+		t.Errorf("numeric files: got %v", num.Files)
+	}
 }
 
 func TestRateGatePerRequest(t *testing.T) {

@@ -2,7 +2,7 @@
 
 **Status**: 完了
 **Date**: 2026-11-05
-**Next Action**: 実装承認（推奨: flexString flexible decode + `TestGalleryParse` に数値形式 fixture 追加）
+**Next Action**: なし（実装・検証完了・合格）
 
 ## 意図 / 背景
 
@@ -55,9 +55,14 @@ Go 再現は `docs/ai/tmp/ki06-gocheck/`（`go run .`）で項目原文の error
 - 永続 disk cache の既存 entry（parse 済み string 形）は再 parse 不要。失敗 gallery の entry は存在しない（失敗時点で書込み前のため）。修復後の live 成功で正常に永続化。
 - 正典ルール変更なし。UX の意味変更なし（badge・card 表示は既存仕様の復帰のみ）。
 
-### UI 画面確認
+### UI 画面確認（実装後の実操作で合格）
 
-- 未確認。アプリ未起動（`127.0.0.1:8731` へ HTTP 応答なし・2026-11-05 確認）。子制約（ソース変更禁止・評価専用）により正典 build の起動は評価スコープ外の行为（実装受入行為）として実行しない。Google Drive への保存は実施せず。UI 症状（card error 本文・badge 空）は項目原文の runtime 確認時点で観察済みで、上記 mechanism 補正と実測により有効性判断は画面再確認に依存しない。
+- 正典 server（`output/hitomi-hub/hub.exe view --data-dir hitomi-hub --root Common_Operations\scratch\p3_canonical_fresh --port 8731`）を正典 build の exe から起動し `http://127.0.0.1:8731/` を確認（2026-11-05 09:38〜09:42）。
+- 実操作: `/search` で `female:yuri language:polish` page 3（項目原文の symptoms と同一 page・同一 ids 296403・293004・241311・238019・236142）を検索実行 → card error 本文なし、card 正常表示。viewer 実操作で 296403 を開く（`/api/read` 経由で `viewed=1`・DB `read_state` 記録確認: `viewed_at 2026-11-05T09:41:06Z`）→ `/search` で「一覧更新」→「検索」再実行。
+- badge 表示復帰確認: card 296403 の `li[data-search-id] .badge` に `表示済み 保存済み reset` が描画（`has-status` true）。badge 空症状の解消を実画面で確認。
+- 画面確認基準（normal-screenshot-rule・screen-confirmation-size-rule）: Playwright browser 画面画像を基準。actual window size `1920x1040`・content viewport（inner）`1920x953`・dpr 2。要素切りなし（card 296403 の bounding box `x=512 y=92.6 w=1377 h=140.6`・viewport 内）。固定 target size 合格条件にはしていない。
+- 保存: `I:\マイドライブ\kilo\2026-11-05-ki06-badge-296403-searchpage3.png`（373,158 bytes・Playwright browser screenshot）。
+- 備考（非スコープ・本項目と無関係): viewer ページ console に worker の `TypeError ... reading 'entry'`・`/api/search` 502 観測（別言語 probe 由来）。decode 修復とは無関係・未修復・known-issue 化しない（本項目スコープ外）。
 
 ### 推定規模・優先順位付け要素
 
@@ -67,16 +72,31 @@ Go 再現は `docs/ai/tmp/ki06-gocheck/`（`go run .`）で項目原文の error
 - リスク: 低（decode 層のみ・正典不変条件・永続 cache 流儀に触れない）。
 - 依存: 実装には別の実装承認が必要（項目原文維持）。正典 decision・AGENTS.md 変更なし。テスト方針（external API 呼出し可）は既存の `docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md` を参照し遵守（実測は scratch script で実施）。正典文書間の状態記述矛盾は検出なし（採用正典: decision 2026-11-01・normal-screenshot-rule・screen-confirmation-size-rule）。
 
+### 実装（子実行 2026-11-05・推奨案採用）
+
+- 作業前チェック（AGENTS.md・viewer/download 接触タスク): 3 decision を読了 — `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`・`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`・`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。正典 Latest Build ルールは `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md`（ポインタ先）と `docs/ai/decisions/2026-11-02-canonical-latest-build-confirmation-rule.md` を参照。
+- 変更は承認範囲どおり（decode 層と test fixture のみ）:
+  1. `app/hitomi.go`: `flexString` 型（string/number 両受入・number は字面 string 化・null→""）を `rawGallery.ID` と tag namespace map の value 型へ適用。`names()` の型適応（`[]map[string]flexString`・意味不変）。`strconv.Atoi(string(raw.ID))`（flexString 型適応のみ）。
+  2. `app/hitomi_test.go`: `TestGalleryParse` に数値形式 fixture 追加（live 実測 296403 と同じ形: id・tags value 数値・false フラグは実測どおり `""`。mock 維持・外部 API 呼出しなし）。
+- 実測で確定した意味: live 旧形式で真は字面 `1` の number、偽は `""`（0 は観測なし）。`names()` の truthy 判定は string 化後同一意味（`female:1`→`"1"`→`female:<tag>`）。
+
 ## Verification
 
-- 本タスクは記録のみ（ソース無変更）。正典検証（pytest・go vet/test）は適用外（docs/ai のみ変更条の例外）。
-- 実測コマンド（2026-11-05）:
-  - `python docs\ai\tmp\ki06-live-galleryinfo.py` — live 6 gallery fetch（1.1s 間隔）。結果表は上記。保存: `docs/ai/tmp/ki06-*.json`。
-  - `go run .`（workdir `docs\ai\tmp\ki06-gocheck`）— 項目原文の error 文一致再現（正常系 2299308 は ok）。
-  - `curl.exe -s -m 3 http://127.0.0.1:8731/api/lists` — 応答なし（UI 未確認の根拠）。
+- 実装後の正典検証（2026-11-05）。評価段階の記録は上文（実測表・scratch 参照）。
+- 評価段階の実測コマンド（2026-11-05・上文）: `python docs\ai\tmp\ki06-live-galleryinfo.py`、`go run .`（`docs\ai\tmp\ki06-gocheck`）、`curl.exe -s -m 3 http://127.0.0.1:8731/api/lists`（応答なし=評価当時未起動）。
+- 実装後の検証（2026-11-05・合格証拠）:
+  - `go vet .`（app）: 出力なし（pass）。
+  - `go test -count=1 -timeout 300s .`（app）: `ok hitomi-hub/app 17.509s`。`TestGalleryParse` 数値形式 fixture 合格（新 fixture で mock 内・外部 API 呼出しなし）。
+  - `python -m pytest tests/ -v`: 53 passed（`test_canonical_build_freshness.py` 2 items 含む。単独再実行でも 2 passed・正典 exe が現行 viewer.html/search.html を embed）。
+  - 正典 build 再構築: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` 後、正典 server コマンドで `127.0.0.1:8731` 起動（正典 exe 由来）。
+  - CLI download（正典 exe・実在旧形式 gallery 296403・root `Common_Operations\scratch\p3_canonical_fresh`）: `attempted=8`・`written=8`・skipped=0 — attempted と written 一致。decode 層成功が CLI 経路まで贯通。
+  - viewer: `GET /api/image/78a2c688096c34e56680ec2eee30b4e3d20a15f054c8165312cae8e0374a8bfb?format=webp`（296403）→ HTTP 200・`x-cache: miss`・48,144 bytes・`no_full` でない（2026-11-05 09:38）。
+  - viewer DOM 実測（正典 server・Playwright）: gallery 296403 reader img `naturalWidth 517/505/515`（full objectURL `/files/...` 由来・TN 不使用）。
+  - UI 画面確認: 上記「UI 画面確認（実装後の実操作で合格）」（badge 表示復帰・window size 1920x1040/viewport 1920x953・保存 `I:\マイドライブ\kilo\2026-11-05-ki06-badge-296403-searchpage3.png`）。
+- 合格条件: ① `TestGalleryParse` 数値 fixture 合格（go vet/test）② 実在旧 gallery 296403 の live decode 成功（CLI download・search-card API・UI card 表示で確認）③ `names()` 出力が string 形式と同一意味（card API 応答 tags `female:futanari`・UI tag 行一致）④ UI badge 表示復帰（実画面）。すべて合格。
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除 — 該当なし（本タスクは評価段階で tsv 未登録・既存行は別タスク `saved-status-definition` で非接触）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合） — 実施（commit 分）。項目原文 Status の「記録のみ・修復は別承認」は実装完了により解消
+- [x] `backlog.md` の完了項目を削除（該当する場合） — 該当なし（backlog 参照なし）
