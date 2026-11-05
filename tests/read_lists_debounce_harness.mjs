@@ -15,6 +15,13 @@ check(
 check(searchCheckBlock.includes("function debounceLists() {"), "debounce helper exists for the lists display");
 
 const viewerHelperBlock = viewerCheckBlock.slice(viewerCheckBlock.indexOf("function runBackgroundRead(showGen, openGen) {"));
+const viewerShowPageBlock = bodyIn(viewerHtml, "async function showPage() {", "\nasync function openGallery(id, page, second) {");
+check(
+  viewerShowPageBlock.includes("currentPairEnd = doubleActive() && displayed.length > 1 ? displayed[1].page : null;") &&
+  viewerShowPageBlock.includes("runBackgroundRead(showGen, openGen);") &&
+  viewerShowPageBlock.indexOf("currentPairEnd = doubleActive() && displayed.length > 1 ? displayed[1].page : null;") < viewerShowPageBlock.indexOf("runBackgroundRead(showGen, openGen);"),
+  "showPage records the displayed pair end before the debounced read helper call so the final double pair marks complete"
+);
 const searchExecBlock = searchCheckBlock.slice(searchCheckBlock.indexOf("let listsDebounceTimer = null;"));
 const searchListsHelperBlock = searchExecBlock.slice(0, searchExecBlock.indexOf("async function showLists(searchGen) {"));
 
@@ -34,8 +41,17 @@ check(
   "read helper keeps the generation guard at entry and inside the debounced run"
 );
 check(viewerHelperBlock.includes("if (readKey === lastReadPostKey)"), "read helper skips the duplicate post for the same gallery and page");
+check(viewerHelperBlock.includes("const lastShown = doubleActive() ? (Number(currentPairEnd) || current.page) : current.page;"), "read helper uses the pair end as the last shown page when double mode is active");
+check(viewerHelperBlock.includes("const complete = lastPage > 0 && lastShown >= lastPage;"), "read helper computes complete from the last shown page (final single page or final double pair end)");
 
 const searchListsBody = bodyIn(searchHtml, "async function showLists(searchGen) {", "\nasync function runSearch() {");
+check(searchListsBody.includes("renderReadBadges();"), "showLists still refreshes card badges after the merge");
+check(searchListsBody.includes("mergeReadState("), "showLists merges lists rows into the maps so card-observed state is kept");
+check(!searchListsBody.includes("readStateByGallery.clear()") && !searchListsBody.includes("favoriteByGallery.clear()"), "showLists must not clear the card-observed state maps");
+check(searchExecBlock.includes("badge.innerHTML = badgeInner("), "renderReadBadges renders through badgeInner so the inline reset buttons survive");
+check(searchExecBlock.includes("const savedByGallery = new Map();"), "the saved state map is kept for the three state badges");
+const cardBlock = searchExecBlock.slice(searchExecBlock.indexOf("async function processCard(id) {"), searchExecBlock.indexOf("async function worker() {"));
+check(cardBlock.includes("completeCardState(card);"), "card response state completes the maps before the badge render");
 const loadBody = bodyIn(viewerHtml, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {", "\nfunction renderReader() {");
 check(searchListsBody.includes("await debounceLists();"), "showLists waits for the debounce window before fetching");
 check(searchListsBody.includes("if (!pending)") && searchListsBody.includes("listsFetchPending"), "showLists shares one in-flight lists fetch per window");
@@ -55,6 +71,7 @@ const mockElements = {
   queries: { innerHTML: "" },
   favorites: { innerHTML: "" },
   unread: { innerHTML: "" },
+  pagenum: { value: "" },
 };
 
 const documentMock = { getElementById: (id) => mockElements[id] || null };
@@ -65,7 +82,25 @@ let openGeneration = 0;
 let readListsDebounceTimer = null;
 let lastReadPostKey = "";
 const readListsDebounceMs = 250;
+let viewMode = "single";
+let currentPairEnd = null;
+function doubleActive() { return viewMode === "double"; }
+let displaySource = "";
 function highlightStrip() {}
+function entrySource() { return "local"; }
+function formatForEntry() { return "webp"; }
+function setPrefetchStatus() {}
+function ensureBackgroundPrefetch() {}
+function refreshStrip() {}
+function renderReader() {}
+function renderPosition() {}
+function renderViewState() {}
+function setRoute() {}
+function readerItems() {
+  const pair = [{ page: current.page, entry: "e" }];
+  if (viewMode === "double") pair.push({ page: current.page + 1, entry: "e" });
+  return pair;
+}
 `;
 
 const testScript = `
@@ -94,6 +129,7 @@ async function testRun() {
   check(counter.readPosts === 1, "consecutive page movements coalesce to one debounced read post");
   check(counter.listFetches === 1, "consecutive page movements coalesce to one debounced lists fetch");
   check(counter.lastReadBody && counter.lastReadBody.gallery_id === current.id && counter.lastReadBody.page === 6, "debounced post targets the latest gallery and page");
+  check(counter.lastReadBody && counter.lastReadBody.complete === false, "non-final page movement posts with complete false");
 
   viewerMove(6);
   searchMove(6);
@@ -104,12 +140,22 @@ async function testRun() {
   searchMove(7);
   await sleep(800);
   check(counter.readPosts === 2, "post runs again when the page changes");
+  check(counter.lastReadBody && counter.lastReadBody.complete === true, "final page reach posts with complete true (reach alone marks fully_read)");
 
   const staleGen = showGeneration;
   showGeneration++;
   runBackgroundRead(staleGen, openGeneration);
   await sleep(800);
   check(counter.readPosts === 2, "stale show generation does not schedule a debounced post");
+
+  const finalPair = { id: 102, page: 7, files: [1, 2, 3, 4, 5, 6, 7, 8], count: 8, sceneIndexes: [] };
+  viewMode = "double";
+  currentPairEnd = null;
+  current = finalPair;
+  showPage();
+  await sleep(800);
+  check(counter.readPosts === 3, "the final double pair display through showPage posts for the new gallery");
+  check(counter.lastReadBody && counter.lastReadBody.page === 8 && counter.lastReadBody.complete === true, "showPage records the displayed pair end as the last shown page (final double pair marks complete true)");
 
   const gen = searchGeneration;
   const before = counter.listFetches;
@@ -132,10 +178,11 @@ const apiStub = async (p) => {
 
 const run = new Function(
   "current", "document", "post", "api", "check", "counter",
-  stubs + "\n" + viewerHelperBlock + "\n" + searchExecBlock + "\n" + testScript + "\n return testRun();"
+  stubs + "\n" + viewerHelperBlock + "\n" + viewerShowPageBlock + "\n" + searchExecBlock + "\n" + testScript + "\n return testRun();"
 );
 
-const current0 = { id: 101, page: 1, files: [] };
+// count 7 makes page 7 the final page (scene_indexes sentinel or files length); pages 2-6 are not final.
+const current0 = { id: 101, page: 1, files: [1, 2, 3, 4, 5, 6, 7], count: 7, sceneIndexes: [] };
 
 await run(current0, documentMock, postStub, apiStub, check, counter);
 

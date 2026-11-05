@@ -173,12 +173,75 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("read: %d %s", rec.Code, rec.Body.String())
 	}
+	if row, err := readStateRow(v.db, 125); err != nil || row["viewed"] != 0 {
+		t.Errorf("page reach alone must not record viewed: got %v err %v", row, err)
+	}
 
 	rec = httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/fav", `{"gallery_id":125,"on":true}`))
 
 	if rec.Code != 200 {
 		t.Fatalf("fav: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/viewed", `{"gallery_id":125}`))
+	if rec.Code != 200 {
+		t.Fatalf("viewed: %d %s", rec.Code, rec.Body.String())
+	}
+	var viewedOut map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &viewedOut); err != nil {
+		t.Fatal(err)
+	}
+	if viewedOut["viewed"] != float64(1) || viewedOut["viewed_at"] == nil || viewedOut["viewed_at"] == "" {
+		t.Errorf("POST /api/viewed must set viewed with a first timestamp: got %v", viewedOut)
+	}
+
+	// the fav handler on a fresh gallery creates a last_page=0 row that must not become viewed
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/fav", `{"gallery_id":126,"on":true}`))
+	if rec.Code != 200 {
+		t.Fatalf("fav (fresh gallery): %d %s", rec.Code, rec.Body.String())
+	}
+	if row, err := readStateRow(v.db, 126); err != nil || row["viewed"] != 0 {
+		t.Errorf("setFavorite must not set viewed: got %v err %v", row, err)
+	}
+
+	// reset-read clears fully_read only; reset-viewed cascades
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/read", `{"gallery_id":125,"page":4,"complete":true}`))
+	if rec.Code != 200 {
+		t.Fatalf("read complete: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/reset", `{"gallery_id":125,"target":"read"}`))
+	if rec.Code != 200 {
+		t.Fatalf("reset-read: %d %s", rec.Code, rec.Body.String())
+	}
+	var resetOut map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resetOut); err != nil {
+		t.Fatal(err)
+	}
+	if resetOut["fully_read"] != float64(0) || resetOut["viewed"] != float64(1) || resetOut["last_page"] != float64(4) {
+		t.Errorf("reset-read must keep viewed and last_page: got %v", resetOut)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/reset", `{"gallery_id":125,"target":"viewed"}`))
+	if rec.Code != 200 {
+		t.Fatalf("reset-viewed: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resetOut); err != nil {
+		t.Fatal(err)
+	}
+	if resetOut["viewed"] != float64(0) || resetOut["fully_read"] != float64(0) || resetOut["last_page"] != float64(0) {
+		t.Errorf("reset-viewed must cascade fully_read and last_page: got %v", resetOut)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/reset", `{"gallery_id":125,"target":"bogus"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown reset target must be rejected: got %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
@@ -192,8 +255,14 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0]["last_page"] != 4 || rows[0]["favorite"] != 1 {
-		t.Errorf("favorites after handlers: got %v", rows)
+	// both favorited galleries must appear; the reset-viewed cascade cleared last_page on 125
+	if len(rows) != 2 {
+		t.Fatalf("favorites after handlers: got %v", rows)
+	}
+	for _, row := range rows {
+		if row["favorite"] != 1 {
+			t.Errorf("favorites row must keep favorite: got %v", row)
+		}
 	}
 	queries, err := listRows(v.db, "queries")
 	if err != nil {
@@ -209,7 +278,7 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &lists); err != nil {
 		t.Fatal(err)
 	}
-	if len(lists["favorites"].([]any)) != 1 || len(lists["queries"].([]any)) != 1 {
+	if len(lists["favorites"].([]any)) != 2 || len(lists["queries"].([]any)) != 1 {
 		t.Errorf("lists: got %v", lists)
 	}
 }
@@ -1631,22 +1700,51 @@ search := uiText(t, "search.html")
 
 func TestEmbeddedUISearchCardsShowReadAndFavoriteBadgesFromListsMaps(t *testing.T) {
 search := uiText(t, "search.html")
-	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) {
-		t.Errorf("search should build client-side maps from the lists response: got %q", search)
+	if !strings.Contains(search, `const readStateByGallery = new Map();`) || !strings.Contains(search, `const favoriteByGallery = new Map();`) || !strings.Contains(search, `const savedByGallery = new Map();`) {
+		t.Errorf("search should build client-side maps from the lists response and the card response state: got %q", search)
 	}
 	renderBody := sliceBetween(t, search, "function renderSearchCard(r) {", "function searchCardCoverSource(card) {")
 	if !strings.Contains(renderBody, `badgeRow(r.id)`) {
 		t.Errorf("search card should render the read/favorite badge row: got %q", renderBody)
 	}
+	if !strings.Contains(renderBody, `local " + localCount + "/" + (r.count ?? 0)`) {
+		t.Errorf("partial save must show in meta as local N/M, not as a badge: got %q", renderBody)
+	}
+	badgeBody := sliceBetween(t, search, "function badgeText(id) {", "function mergeReadState(id, row) {")
+	if !strings.Contains(badgeBody, `parts.push("表示済み")`) || !strings.Contains(badgeBody, `parts.push("既読")`) || !strings.Contains(badgeBody, `parts.push("保存済み")`) || !strings.Contains(badgeBody, `parts.push("お気に入り")`) {
+		t.Errorf("badgeText should render the three state flags plus favorite: got %q", badgeBody)
+	}
+	if !strings.Contains(badgeBody, `<button type='button' data-reset='viewed'>`) || !strings.Contains(badgeBody, `<button type='button' data-reset='read'>`) {
+		t.Errorf("badge row must carry inline reset buttons for viewed and read on the same row: got %q", badgeBody)
+	}
+	if strings.Contains(badgeBody, `parts.push("p" +`) {
+		t.Errorf("the badge row must not add a separate row or keep the old p{page} text as a state flag: got %q", badgeBody)
+	}
+	if !strings.Contains(search, "function renderReadBadges() {") || !strings.Contains(search, `badge.innerHTML = badgeInner(`) {
+		t.Errorf("renderReadBadges must refresh badges through badgeInner so the reset buttons survive: got %q", search)
+	}
+	cardHelper := sliceBetween(t, search, "function completeCardState(card) {", "function mergeReadState(id, row) {")
+	if !strings.Contains(search, `completeCardState(card);`) || !strings.Contains(cardHelper, `readStateByGallery.set(id, state)`) || !strings.Contains(cardHelper, `savedByGallery.set(id, 1)`) {
+		t.Errorf("card response state must complete the maps before badge render: got %q", cardHelper)
+	}
 	listsBody := sliceBetween(t, search, "async function showLists(searchGen) {", "async function runSearch() {")
 	if !strings.Contains(listsBody, `readStateByGallery.set(`) || !strings.Contains(listsBody, `favoriteByGallery.set(`) || !strings.Contains(listsBody, `renderReadBadges();`) {
-		t.Errorf("showLists should build the badge maps from /api/lists and refresh card badges: got %q", listsBody)
+		t.Errorf("showLists should complete the badge maps from /api/lists and refresh card badges: got %q", listsBody)
+	}
+	if strings.Contains(listsBody, `readStateByGallery.clear()`) || strings.Contains(listsBody, `favoriteByGallery.clear()`) {
+		t.Errorf("showLists must merge into the maps, not clear the card-observed state: got %q", listsBody)
+	}
+	if !strings.Contains(listsBody, `mergeReadState(`) {
+		t.Errorf("showLists should preserve card-derived state (viewed / saved) while merging the lists rows: got %q", listsBody)
 	}
 	if strings.Count(listsBody, `api("/api/lists")`) != 1 {
 		t.Errorf("badge maps must not add a second lists fetch per window: got %q", listsBody)
 	}
 	if !strings.Contains(search, `id="lists-refresh"`) || !strings.Contains(search, `document.getElementById("lists-refresh").addEventListener("click", () => { showLists(); });`) {
 		t.Errorf("ui should expose a manual lists refresh button that re-runs showLists(): got %q", search)
+	}
+	if !strings.Contains(search, `post("/api/reset", { gallery_id: id, target: btn.dataset.reset })`) {
+		t.Errorf("reset buttons must post to /api/reset through the actual click handler: got %q", search)
 	}
 	if strings.Contains(search, `BroadcastChannel`) {
 		t.Errorf("manual display refresh must not add a page-to-page sync mechanism: got %q", search)
@@ -1843,12 +1941,17 @@ func TestEmbeddedUIDebouncesReadAndListsToSingleCall(t *testing.T) {
 	readHelper := sliceBetween(t, viewer, "function runBackgroundRead(showGen, openGen) {", "async function showPage() {")
 	clearIndex := strings.Index(readHelper, `clearTimeout(readListsDebounceTimer)`)
 	setTimeoutIndex := strings.Index(readHelper, `setTimeout(() => {`)
-	postIndex := strings.Index(readHelper, `post("/api/read", { gallery_id: current.id, page: current.page })`)
+	postIndex := strings.Index(readHelper, `post("/api/read", { gallery_id: current.id, page: lastShown, complete })`)
 	if clearIndex < 0 || setTimeoutIndex < 0 || clearIndex >= setTimeoutIndex {
 		t.Errorf("viewer consecutive page movements should coalesce to one debounced read run: got %q", readHelper)
 	}
 	if postIndex < 0 || postIndex < setTimeoutIndex {
 		t.Errorf("viewer read post should only run inside the debounced timer callback: got %q", readHelper)
+	}
+	lastShownIndex := strings.Index(readHelper, `const lastShown = doubleActive() ? (Number(currentPairEnd) || current.page) : current.page;`)
+	completeIndex := strings.Index(readHelper, `const complete = lastPage > 0 && lastShown >= lastPage;`)
+	if lastShownIndex < 0 || completeIndex < 0 || lastShownIndex >= postIndex || completeIndex >= postIndex {
+		t.Errorf("the debounced read helper must compute lastShown (double pair end when double) and complete from the last page before posting: got %q", readHelper)
 	}
 	if strings.Count(readHelper, `post("/api/read"`) != 1 {
 		t.Errorf("viewer debounced run should post exactly once per burst: got %q", readHelper)
@@ -1895,6 +1998,11 @@ func TestEmbeddedUIDebouncesReadAndListsToSingleCall(t *testing.T) {
 	}
 	if !strings.Contains(viewerShowBody, `runBackgroundRead(showGen, openGen);`) {
 		t.Errorf("viewer showPage must keep the generation-guarded background read helper call: got %q", viewerShowBody)
+	}
+	pairPos := strings.Index(viewerShowBody, `currentPairEnd = doubleActive() && displayed.length > 1 ? displayed[1].page : null;`)
+	helperPos := strings.Index(viewerShowBody, `runBackgroundRead(showGen, openGen);`)
+	if pairPos < 0 || pairPos > helperPos {
+		t.Errorf("showPage must set currentPairEnd from the displayed pair before the debounced read helper so the final double pair marks complete: got %q", viewerShowBody)
 	}
 
 	loadBody := sliceBetween(t, viewer, "async function loadFullImage(img, entry, signal, galleryId = current.id, loadShowGen = showGeneration, loadOpenGen = openGeneration, loadRender = renderGeneration, allowRecount = false) {", "function renderReader() {")
@@ -2019,6 +2127,12 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	if !strings.Contains(openBody, `history.replaceState(null, "", route(id, page, second));`) {
 		t.Errorf("openGallery should update the gallery route immediately before waiting for gallery data: got %q", openBody)
 	}
+	postPos := strings.Index(openBody, `post("/api/viewed", { gallery_id: id })`)
+	routePos := strings.Index(openBody, `history.replaceState(null, "", route(id, page, second));`)
+	cachedPos := strings.Index(openBody, `const cached = galleryCache.get(id);`)
+	if postPos < 0 || routePos < 0 || cachedPos < 0 || postPos <= routePos || postPos >= cachedPos {
+		t.Errorf("openGallery must record viewed at the route input time (after the route write, before the display path) without awaiting it: got %q", openBody)
+	}
 	if !strings.Contains(openBody, `showGalleryMetaFromCache(id);`) || !strings.Contains(openBody, `const cached = galleryCache.get(id);`) || !strings.Contains(openBody, `if (cached) {`) || !strings.Contains(openBody, `galleryCache.set(id, data);`) {
 		t.Errorf("openGallery should use cached gallery data for immediate page movement: got %q", openBody)
 	}
@@ -2059,6 +2173,9 @@ func TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen(t *testing.T) {
 	if out["format"] != wantFormat || out["scene_indexes"] == nil || out["files"] == nil || out["read_state"] == nil {
 		t.Errorf("search card should include immediate open gallery data: got %v", out)
 	}
+	if out["viewed"] == nil || out["saved"] == nil {
+		t.Errorf("search card should include the viewed / saved state flags for badges: got %v", out)
+	}
 	if _, ok := out["pages"]; ok {
 		t.Errorf("search card should not include mini page thumbnails: got %v", out)
 	}
@@ -2070,9 +2187,81 @@ func TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen(t *testing.T) {
 	if entry["hash"] != sampleHash || entry["hasavif"] != float64(1) || entry["local_formats"] == nil {
 		t.Errorf("search card entry should include immediate open fields: got %v", entry)
 	}
+	if out["saved"] != float64(0) || entry["local"] != false {
+		t.Errorf("nothing saved on disk must report saved=0 (partial or empty save is not a badge): got %v", out)
+	}
 	readState := out["read_state"].(map[string]any)
-	if readState["gallery_id"] != float64(1) || readState["favorite"] != float64(0) {
+	if readState["gallery_id"] != float64(1) || readState["favorite"] != float64(0) || readState["viewed"] != float64(0) {
 		t.Errorf("search card read_state: got %v", readState)
+	}
+}
+
+func TestSearchCardViewedAndSavedStates(t *testing.T) {
+	hashB := "1111111111111111111111111111111111111111111111111111111111111111"
+	galleryJSON := `var galleryinfo = {"id":"9","title":"Kemo","files":[{"hash":"` + sampleHash + `","name":"001.png"},{"hash":"` + hashB + `","name":"002.png"}]}`
+	v, galleryRoot := newTestViewer(t, galleryJSON)
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/viewed", `{"gallery_id":9}`))
+	if rec.Code != 200 {
+		t.Fatalf("viewed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// partial save: only the first entry exists on disk → saved must stay 0 (badge is full-save only)
+	if err := os.MkdirAll(filepath.Join(galleryRoot, "9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(galleryRoot, "9", sampleHash+".webp"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["viewed"] != float64(1) {
+		t.Errorf("card must report viewed after the open event: got %v", out)
+	}
+	if out["saved"] != float64(0) {
+		t.Errorf("partial save must report saved=0: got %v", out)
+	}
+
+	if err := os.WriteFile(filepath.Join(galleryRoot, "9", hashB+".webp"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["saved"] != float64(1) {
+		t.Errorf("all entries local must report saved=1: got %v", out)
+	}
+
+	// reopen is idempotent: viewed stays 1 and the first timestamp is kept
+	firstAt := out["read_state"].(map[string]any)["viewed_at"]
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/viewed", `{"gallery_id":9}`))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["viewed"] != float64(1) || out["viewed_at"] != firstAt {
+		t.Errorf("reopen must not overwrite the first viewed_at: got %v", out)
+	}
+
+	// final page reach marks fully_read through the read post even with no_full (no image fetch needed)
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/read", `{"gallery_id":9,"page":2,"complete":true}`))
+	if rec.Code != 200 {
+		t.Fatalf("read complete: %d %s", rec.Code, rec.Body.String())
+	}
+	row, err := readStateRow(v.db, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["fully_read"] != 1 || row["last_page"] != 2 || row["viewed"] != 1 {
+		t.Errorf("final page reach must mark fully_read (reach is enough, no_full allowed): got %v", row)
 	}
 }
 
@@ -2953,6 +3142,9 @@ func TestEmbeddedUIFavoriteToggleSyncsReadStateCaches(t *testing.T) {
 	if !strings.Contains(helper, "galleryCache.get(id)") || strings.Contains(helper, "searchCardCache") {
 		t.Errorf("viewer syncReadStateCache must update viewer galleryCache only, not search-owned card cache: got %q", helper)
 	}
+	if !strings.Contains(helper, "viewed: 0") {
+		t.Errorf("syncReadStateCache default entry must carry viewed so the three state flags can be re-displayed from the cache: got %q", helper)
+	}
 
 	favStart := strings.Index(viewer, `document.getElementById("fav").addEventListener("click", async () => {`)
 	if favStart < 0 {
@@ -2987,6 +3179,10 @@ func TestEmbeddedUIFavoriteToggleSyncsReadStateCaches(t *testing.T) {
 	cSyncPos := strings.Index(completeBody, "syncReadStateCache(current.id, { last_page: current.page, fully_read: 1 });")
 	if cPostPos < 0 || cSyncPos < 0 || cPostPos > cSyncPos {
 		t.Errorf("complete handler must sync caches after post: got %q", completeBody)
+	}
+	helperReadBody := sliceBetween(t, viewer, "function runBackgroundRead(showGen, openGen) {", "async function showPage() {")
+	if !strings.Contains(helperReadBody, `post("/api/read", { gallery_id: current.id, page: lastShown, complete })`) {
+		t.Errorf("auto complete must be sent from the debounced read helper, not from the showPage display path: got %q", helperReadBody)
 	}
 
 	if !strings.Contains(viewer, "favorite: s.favorite") {

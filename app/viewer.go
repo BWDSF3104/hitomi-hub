@@ -142,6 +142,8 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /api/image/{hash}", v.imageProxy)
 	mux.HandleFunc("POST /api/read", v.read)
 	mux.HandleFunc("POST /api/fav", v.fav)
+	mux.HandleFunc("POST /api/viewed", v.markViewed)
+	mux.HandleFunc("POST /api/reset", v.resetState)
 	mux.HandleFunc("POST /api/query", v.query)
 	mux.HandleFunc("POST /api/cache/acquire", v.acquire)
 	mux.HandleFunc("POST /api/acquisition/check", v.acquisitionCheck)
@@ -632,24 +634,32 @@ func (v *viewer) searchResult(id int, background bool) map[string]any {
 	}
 	readState, err := readStateRow(v.db, id)
 	if err != nil {
-		readState = map[string]any{"gallery_id": id, "last_page": 0, "fully_read": 0, "favorite": 0}
+		readState = map[string]any{"gallery_id": id, "last_page": 0, "fully_read": 0, "favorite": 0, "viewed": 0, "viewed_at": nil}
 	}
 	files := []map[string]any{}
+	localEntries := 0
 	for _, entry := range info.Files {
 		eFormat := entryFormat(entry, baseFormat)
 		localFormats := v.entryLocalFormats(id, entry.Hash, baseFormat, eFormat)
+		if len(localFormats) > 0 {
+			localEntries++
+		}
 		files = append(files, map[string]any{
 			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
 			"hasavif": entry.HasAVIF, "format": eFormat, "local": len(localFormats) > 0,
 			"local_formats": localFormats,
 		})
 	}
+	// saved は指定フォルダ内に全 entry の local ファイルがあること（部分保存は saved=0。
+	// meta の local N/M は card 応答の files[].local を分子へ使う）。追加 I/O なし・既存ループで計算。
+	saved := boolToInt(len(info.Files) > 0 && localEntries == len(info.Files))
 	return map[string]any{"id": id, "title": info.Title, "japanese_title": info.JapaneseTitle,
 		"language": info.Language, "type": info.Type, "url": info.URL,
 		"tags": info.Tags, "artists": info.Artists, "groups": info.Groups,
 		"characters": info.Characters, "count": len(info.Files), "local": v.localCount(id),
 		"thumbnail": thumbnail, "scene_indexes": info.SceneIndexes, "files": files,
-		"format": baseFormat, "read_state": readState}
+		"format": baseFormat, "read_state": readState,
+		"viewed": readState["viewed"], "saved": saved}
 }
 
 func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
@@ -948,6 +958,67 @@ func (v *viewer) read(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, map[string]any{"gallery_id": body.GalleryID, "last_page": body.Page,
 		"fully_read": boolToInt(body.Complete)})
+}
+
+func (v *viewer) markViewed(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		GalleryID int `json:"gallery_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.GalleryID <= 0 {
+		http.Error(w, "gallery_id is required", http.StatusBadRequest)
+		return
+	}
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := setViewed(v.db, body.GalleryID); err != nil {
+		http.Error(w, "viewed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	row, err := readStateRow(v.db, body.GalleryID)
+	if err != nil {
+		http.Error(w, "read_state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOut(w, row)
+}
+
+func (v *viewer) resetState(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		GalleryID int    `json:"gallery_id"`
+		Target    string `json:"target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.GalleryID <= 0 {
+		http.Error(w, "gallery_id is required", http.StatusBadRequest)
+		return
+	}
+	if body.Target != "viewed" && body.Target != "read" {
+		http.Error(w, "target must be viewed or read", http.StatusBadRequest)
+		return
+	}
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := resetReadState(v.db, body.GalleryID, body.Target); err != nil {
+		http.Error(w, "reset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	row, err := readStateRow(v.db, body.GalleryID)
+	if err != nil {
+		http.Error(w, "read_state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOut(w, row)
 }
 
 func (v *viewer) fav(w http.ResponseWriter, r *http.Request) {

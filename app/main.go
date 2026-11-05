@@ -222,7 +222,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 // execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
 type execer interface {
@@ -308,6 +308,8 @@ func ensureSchema(db *sql.DB) error {
 // A-12（schemaVersion 5）: scan_cache に scan skip 判定用の size / mtime を追加する。
 // 追加のみで既存行を削除しない（D-03 の非破壊迁移規約）。DB に記録のない file は skip
 // 判定できないため再ハッシュ（安全側）。
+// schemaVersion 6（search-result-state-badges）: read_state へ viewed / viewed_at を
+// 追加する。列追加のみ・既存行を削除しない（同じ D-03 非破壊迁移規約）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -323,6 +325,51 @@ func migrateSchema(db *sql.DB, current int) error {
 	}
 	if current < 5 {
 		if err := ensureScanCacheSizeMtime(db); err != nil {
+			return err
+		}
+	}
+	if current < 6 {
+		if err := ensureReadStateViewed(db); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureReadStateViewed は read_state へ viewed / viewed_at 列を追加する（schemaVersion 6）。
+// 列追加のみ・既存行はそのまま（viewed は DEFAULT 0 で埋まる）。新 DB は schema.sql 定義で
+// 揃う（正典 DB は次回 ensureSchema 実行で自然に揃う・D-03 非破壊迁移規約）。
+func ensureReadStateViewed(db *sql.DB) error {
+	var exists int
+	if err := db.QueryRow("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'read_state'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return nil
+	}
+	have := map[string]bool{}
+	rows, err := db.Query("PRAGMA table_info(read_state)")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for _, col := range []struct{ name, ddl string }{
+		{"viewed", "viewed INTEGER NOT NULL DEFAULT 0"},
+		{"viewed_at", "viewed_at TEXT"},
+	} {
+		if have[col.name] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE read_state ADD COLUMN " + col.ddl); err != nil {
 			return err
 		}
 	}
@@ -811,6 +858,8 @@ type flags struct {
 	out          string
 	config       string
 	clearComplete bool
+	resetViewed   bool
+	resetRead     bool
 }
 
 func main() {
@@ -836,6 +885,8 @@ func main() {
 	fsFlags.BoolVar(&f.complete, "complete", false, "mark read_state as fully_read")
 	fsFlags.BoolVar(&f.unfav, "unfav", false, "clear favorite instead of setting it")
 	fsFlags.BoolVar(&f.clearComplete, "clear-complete", false, "clear fully_read explicitly")
+	fsFlags.BoolVar(&f.resetViewed, "reset-viewed", false, "reset viewed, cascade fully_read and last_page")
+	fsFlags.BoolVar(&f.resetRead, "reset-read", false, "clear fully_read only (keep viewed and last_page)")
 	fsFlags.StringVar(&f.list, "list", "", "unread | favorites | queries")
 	fsFlags.IntVar(&f.port, "port", 0, "viewer port (default 8731)")
 	fsFlags.StringVar(&f.format, "format", "cbz", "export format: cbz | pdf")
@@ -1037,16 +1088,31 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
 		}
-		if err := setReadStateWithClear(db, id, f.page, f.complete, f.clearComplete); err != nil {
-			fmt.Fprintln(os.Stderr, "read: "+err.Error())
-			os.Exit(1)
+		if f.resetViewed || f.resetRead {
+			if f.resetViewed {
+				if err := resetReadState(db, id, "viewed"); err != nil {
+					fmt.Fprintln(os.Stderr, "read: "+err.Error())
+					os.Exit(1)
+				}
+			}
+			if f.resetRead {
+				if err := resetReadState(db, id, "read"); err != nil {
+					fmt.Fprintln(os.Stderr, "read: "+err.Error())
+					os.Exit(1)
+				}
+			}
+		} else {
+			if err := setReadStateWithClear(db, id, f.page, f.complete, f.clearComplete); err != nil {
+				fmt.Fprintln(os.Stderr, "read: "+err.Error())
+				os.Exit(1)
+			}
 		}
 		row, err := readStateRow(db, id)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "read_state: "+err.Error())
 			os.Exit(1)
 		}
-		printJSON(map[string]any{"gallery_id": id, "last_page": row["last_page"], "fully_read": row["fully_read"]})
+		printJSON(row)
 	case "fav":
 		id, err := targetID(f)
 		if err != nil {

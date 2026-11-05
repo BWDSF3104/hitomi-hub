@@ -1,2 +1,1 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-05-search-result-state-badges-implementation.md	進行中	子へフォアグラウンド委譲（schema 迁移・library・viewer.go・viewer.html・search.html・CLI）。正典 build 実機画面確認まで

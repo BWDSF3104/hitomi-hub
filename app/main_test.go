@@ -94,6 +94,9 @@ func TestSetReadStatePreservesFullyReadAndClearIsExplicit(t *testing.T) {
 	if err := recordDiscovered(db, 100, "Galleries/100"); err != nil {
 		t.Fatal(err)
 	}
+	if err := setViewed(db, 100); err != nil {
+		t.Fatal(err)
+	}
 	if err := setReadState(db, 100, 1, true); err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +110,9 @@ func TestSetReadStatePreservesFullyReadAndClearIsExplicit(t *testing.T) {
 	if row["fully_read"] != 1 || row["last_page"] != 2 {
 		t.Errorf("normal page move must preserve fully_read: got %v", row)
 	}
+	if row["viewed"] != 1 {
+		t.Errorf("setReadState must preserve viewed: got %v", row)
+	}
 	if err := setReadStateWithClear(db, 100, 3, false, true); err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +122,198 @@ func TestSetReadStatePreservesFullyReadAndClearIsExplicit(t *testing.T) {
 	}
 	if row["fully_read"] != 0 || row["last_page"] != 3 {
 		t.Errorf("explicit clear: got %v", row)
+	}
+	if row["viewed"] != 1 {
+		t.Errorf("explicit clear of fully_read must not clear viewed: got %v", row)
+	}
+}
+
+func TestSchemaMigration6AddsViewedColumnsAndPreservesReadStateRows(t *testing.T) {
+	dataDir = dataRoot()
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// pre-migration shape (schemaVersion 5: read_state has no viewed / viewed_at)
+	if _, err := db.Exec(`CREATE TABLE galleries (
+		gallery_id INTEGER PRIMARY KEY, title TEXT, author TEXT, lang TEXT, dir TEXT,
+		first_seen TEXT NOT NULL, last_seen TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE read_state (
+		gallery_id INTEGER PRIMARY KEY REFERENCES galleries(gallery_id),
+		last_page INTEGER NOT NULL DEFAULT 0, fully_read INTEGER NOT NULL DEFAULT 0,
+		opened_at TEXT, favorite INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO galleries (gallery_id, first_seen) VALUES (7, ?)", nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO read_state (gallery_id, last_page, fully_read) VALUES (7, 4, 1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 5"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatal(err)
+	}
+	if userVersion != schemaVersion {
+		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
+	}
+
+	have := map[string]bool{}
+	rows, err := db.Query("PRAGMA table_info(read_state)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		have[name] = true
+	}
+	rows.Close()
+	if !have["viewed"] || !have["viewed_at"] {
+		t.Fatalf("migration must add viewed / viewed_at columns: got %v", have)
+	}
+
+	var lastPage, fully, viewed int
+	var viewedAt sql.NullString
+	if err := db.QueryRow("SELECT last_page, fully_read, viewed, viewed_at FROM read_state WHERE gallery_id = 7").
+		Scan(&lastPage, &fully, &viewed, &viewedAt); err != nil {
+		t.Fatal(err)
+	}
+	if lastPage != 4 || fully != 1 {
+		t.Errorf("existing read_state row must survive the non-destructive migration: got last_page=%d fully_read=%d", lastPage, fully)
+	}
+	if viewed != 0 || viewedAt.Valid {
+		t.Errorf("added viewed column must default to 0 / NULL for existing rows: got %d %v", viewed, viewedAt)
+	}
+}
+
+func TestSetViewedRecordsEventOnceAndKeepsFirstTimestamp(t *testing.T) {
+	db := openTestDB(t)
+	if err := recordDiscovered(db, 101, "Galleries/101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setViewed(db, 101); err != nil {
+		t.Fatal(err)
+	}
+	row, err := readStateRow(db, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["viewed"] != 1 {
+		t.Fatalf("setViewed must set viewed: got %v", row)
+	}
+	first, ok := row["viewed_at"].(string)
+	if !ok || first == "" {
+		t.Fatalf("first setViewed must write viewed_at: got %v", row)
+	}
+	if _, err := db.Exec("UPDATE read_state SET viewed_at = 'first-marker' WHERE gallery_id = 101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setViewed(db, 101); err != nil {
+		t.Fatal(err)
+	}
+	row, err = readStateRow(db, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["viewed_at"] != "first-marker" {
+		t.Errorf("reopen must be idempotent and keep the first viewed_at: got %v", row)
+	}
+	if row["last_page"] != 0 || row["fully_read"] != 0 || row["favorite"] != 0 {
+		t.Errorf("setViewed must not touch other flags: got %v", row)
+	}
+}
+
+func TestSetFavoriteRowDoesNotBecomeViewed(t *testing.T) {
+	db := openTestDB(t)
+	if err := recordDiscovered(db, 102, "Galleries/102"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setFavorite(db, 102, true); err != nil {
+		t.Fatal(err)
+	}
+	row, err := readStateRow(db, 102)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["favorite"] != 1 {
+		t.Fatalf("setFavorite must set favorite: got %v", row)
+	}
+	if row["viewed"] != 0 || row["viewed_at"] != nil || row["last_page"] != 0 {
+		t.Errorf("setFavorite must not set viewed (last_page=0 row must stay unviewed): got %v", row)
+	}
+}
+
+func TestResetReadStateCascadeAndExplicitTargets(t *testing.T) {
+	db := openTestDB(t)
+	if err := recordDiscovered(db, 103, "Galleries/103"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setViewed(db, 103); err != nil {
+		t.Fatal(err)
+	}
+	if err := setReadState(db, 103, 5, true); err != nil {
+		t.Fatal(err)
+	}
+	row, err := readStateRow(db, 103)
+	if err != nil || row["viewed"] != 1 || row["fully_read"] != 1 || row["last_page"] != 5 {
+		t.Fatalf("precondition: got %v err %v", row, err)
+	}
+
+	if err := resetReadState(db, 103, "read"); err != nil {
+		t.Fatal(err)
+	}
+	row, err = readStateRow(db, 103)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["fully_read"] != 0 || row["viewed"] != 1 || row["last_page"] != 5 {
+		t.Errorf("reset-read must clear fully_read only (keep viewed and last_page): got %v", row)
+	}
+
+	if err := resetReadState(db, 103, "viewed"); err != nil {
+		t.Fatal(err)
+	}
+	row, err = readStateRow(db, 103)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["viewed"] != 0 || row["fully_read"] != 0 || row["last_page"] != 0 {
+		t.Errorf("reset-viewed must cascade viewed, fully_read and last_page: got %v", row)
+	}
+
+	if err := resetReadState(db, 103, "bogus"); err == nil {
+		t.Error("unknown reset target must fail")
+	}
+}
+
+func TestCLIReadResetFlagsUseResetReadState(t *testing.T) {
+	text, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(text)
+	if !strings.Contains(src, `fsFlags.BoolVar(&f.resetViewed, "reset-viewed"`) || !strings.Contains(src, `fsFlags.BoolVar(&f.resetRead, "reset-read"`) {
+		t.Errorf("read command must register --reset-viewed and --reset-read flags")
+	}
+	readCase := src[strings.Index(src, `case "read":`):strings.Index(src, `case "fav":`)]
+	if !strings.Contains(readCase, `resetReadState(db, id, "viewed")`) || !strings.Contains(readCase, `resetReadState(db, id, "read")`) {
+		t.Errorf("read command must apply the approved reset cascade through resetReadState: got %q", readCase)
 	}
 }
 

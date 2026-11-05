@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS read_state (
     last_page INTEGER NOT NULL DEFAULT 0,
     fully_read INTEGER NOT NULL DEFAULT 0,
     opened_at TEXT,
-    favorite INTEGER NOT NULL DEFAULT 0
+    favorite INTEGER NOT NULL DEFAULT 0,
+    viewed INTEGER NOT NULL DEFAULT 0,
+    viewed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bookmark_seen (

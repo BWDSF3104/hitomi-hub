@@ -681,7 +681,7 @@ function setSpreadDirection(dir) {
 function syncReadStateCache(id, patch) {
   const entry = galleryCache.get(id);
   if (!entry) return;
-  if (!entry.read_state) entry.read_state = { gallery_id: id, last_page: current.page || 1, fully_read: 0, favorite: 0 };
+  if (!entry.read_state) entry.read_state = { gallery_id: id, last_page: current.page || 1, fully_read: 0, favorite: 0, viewed: 0 };
   for (const [key, value] of Object.entries(patch)) entry.read_state[key] = value;
 }
 
@@ -1064,7 +1064,10 @@ function runBackgroundRead(showGen, openGen) {
       highlightStrip();
       return;
     }
-    post("/api/read", { gallery_id: current.id, page: current.page }).then(() => {
+    const lastPage = current.count || (current.files || []).length;
+    const lastShown = doubleActive() ? (Number(currentPairEnd) || current.page) : current.page;
+    const complete = lastPage > 0 && lastShown >= lastPage;
+    post("/api/read", { gallery_id: current.id, page: lastShown, complete }).then(() => {
       if (showGen !== showGeneration || openGen !== openGeneration) return;
       lastReadPostKey = readKey;
       highlightStrip();
@@ -1092,6 +1095,7 @@ async function showPage() {
   const showGen = ++showGeneration;
   const openGen = openGeneration;
   const displayed = readerItems().filter((item) => item.entry);
+  currentPairEnd = doubleActive() && displayed.length > 1 ? displayed[1].page : null;
   renderReader();
   ensureBackgroundPrefetch(displayed);
   displaySource = data.local ? "local" : "cdn/TN（未ダウンロード）";
@@ -1111,6 +1115,7 @@ async function openGallery(id, page, second) {
   if (backgroundSignal) backgroundSignal.abort();
   backgroundGalleryId = null;
   history.replaceState(null, "", route(id, page, second));
+  post("/api/viewed", { gallery_id: id }).catch(() => {});
   const cached = galleryCache.get(id);
   if (cached) {
     if (page) current.page = page;

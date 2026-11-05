@@ -25,6 +25,7 @@
   .card .text { display: flex; flex-direction: column; min-height: 0; max-height: var(--search-card-height); overflow: hidden; }
   .card .badge { font-size: .8rem; color: #8ab4f8; }
   .card .badge:empty { display: none; }
+  .card .badge button { padding: .1rem .35rem; font-size: .75rem; }
   .search-card-cover { object-fit: cover; background: #1d2126; }
   .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
@@ -108,6 +109,7 @@ let listsWaiters = [];
 let listsFetchPending = null;
 const readStateByGallery = new Map();
 const favoriteByGallery = new Map();
+const savedByGallery = new Map();
 let searchGeneration = 0;
 let currentSearchTotal = 0;
 let perfStatus = { searchMs: 0, serverTiming: "", cardsLoaded: 0, cardTotalMs: 0, cacheDistribution: {} };
@@ -177,14 +179,25 @@ function sameTitleJapaneseAnchor(r) {
 
 function badgeText(id) {
   const parts = [];
-  if (favoriteByGallery.has(id)) parts.push("お気に入り");
   const state = readStateByGallery.get(id);
-  if (state) parts.push(state.fully_read ? "既読" : "p" + (state.last_page || 1));
+  if (state && state.viewed) parts.push("表示済み");
+  if (state && state.fully_read) parts.push("既読");
+  if (savedByGallery.get(id)) parts.push("保存済み");
+  if (favoriteByGallery.has(id)) parts.push("お気に入り");
   return parts.join("・");
 }
 
+// badge 行 inline に reset button（同一行・行を追加しない）。card height contract を越えない。
+function badgeInner(id) {
+  const state = readStateByGallery.get(id);
+  const parts = [escapeHTML(badgeText(id))];
+  if (state && state.viewed) parts.push("<button type='button' data-reset='viewed'>reset</button>");
+  if (state && state.fully_read) parts.push("<button type='button' data-reset='read'>reset</button>");
+  return parts.join(" ");
+}
+
 function badgeRow(id) {
-  return "<div class='badge'>" + escapeHTML(badgeText(id)) + "</div>";
+  return "<div class='badge'>" + badgeInner(id) + "</div>";
 }
 
 function renderSearchCard(r) {
@@ -194,7 +207,8 @@ function renderSearchCard(r) {
   const anchor = sameTitleJapaneseAnchor(r);
   const thumbnail = searchCardCoverSource(r);
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' loading='lazy' src='' alt='cover'>";
-  return "<li class='card' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + (r.local ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
+  const localCount = (r.files || []).filter((f) => f.local).length;
+  return "<li class='card' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + localCount + "/" + (r.count ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
 }
 
 function searchCardCoverSource(card) {
@@ -358,6 +372,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
       perfStatus.cardTotalMs += performance.now() - cardStart;
       recordPerfCache(card._x_cache);
       renderPerfStatus();
+      completeCardState(card);
       if (li) {
         li.outerHTML = renderSearchCard(card);
         await loadSearchCardCover(card, searchGen);
@@ -400,13 +415,33 @@ function debounceLists() {
   });
 }
 
+function completeCardState(card) {
+  const id = Number(card.id);
+  const s = card.read_state || {};
+  const state = readStateByGallery.get(id) || { last_page: 0, fully_read: 0, viewed: 0 };
+  state.last_page = s.last_page || state.last_page || 1;
+  if (s.viewed) state.viewed = 1;
+  if (s.fully_read) state.fully_read = 1;
+  readStateByGallery.set(id, state);
+  if (card.saved) savedByGallery.set(id, 1);
+  if (s.favorite) favoriteByGallery.set(id, 1);
+}
+
+function mergeReadState(id, row) {
+  const state = readStateByGallery.get(id) || { last_page: 0, fully_read: 0, viewed: 0 };
+  state.last_page = row.last_page || state.last_page || 1;
+  if (row.fully_read) state.fully_read = 1;
+  if (row.viewed) state.viewed = 1;
+  return state;
+}
+
 function renderReadBadges() {
   const results = document.getElementById("results");
   if (!results) return;
   for (const li of results.querySelectorAll("li[data-search-id]")) {
     const badge = li.querySelector(".badge");
     if (!badge) continue;
-    badge.textContent = badgeText(Number(li.dataset.searchId));
+    badge.innerHTML = badgeInner(Number(li.dataset.searchId));
   }
 }
 
@@ -421,16 +456,15 @@ async function showLists(searchGen) {
   }
   const lists = await pending;
   if (searchGen !== undefined && searchGen !== searchGeneration) return;
-  readStateByGallery.clear();
-  favoriteByGallery.clear();
+  // card 応答の state で maps を補完する（clear しない。viewed / saved は card 由来）。
   for (const row of lists.favorites) {
     const id = Number(row.gallery_id);
     favoriteByGallery.set(id, 1);
-    readStateByGallery.set(id, { last_page: row.last_page || 1, fully_read: row.fully_read ? 1 : 0 });
+    readStateByGallery.set(id, mergeReadState(id, row));
   }
   for (const row of lists.unread) {
     const id = Number(row.gallery_id);
-    readStateByGallery.set(id, { last_page: row.last_page || 1, fully_read: 0 });
+    readStateByGallery.set(id, mergeReadState(id, row));
   }
   document.getElementById("queries").innerHTML = lists.queries.map((q) =>
     "<li><a href='#/q/" + encodeURIComponent(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
@@ -602,6 +636,21 @@ document.getElementById("search-next").addEventListener("mouseenter", () => { st
 document.getElementById("search-next").addEventListener("focus", () => { startPrefetchNow(); });
 document.getElementById("results").addEventListener("click", (e) => {
   if (e.target.closest("a")) interruptPrefetch();
+});
+document.getElementById("results").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-reset]");
+  if (!btn) return;
+  const li = e.target.closest("li[data-search-id]");
+  if (!li) return;
+  const id = Number(li.dataset.searchId);
+  try {
+    const row = await post("/api/reset", { gallery_id: id, target: btn.dataset.reset });
+    readStateByGallery.set(id, { last_page: row.last_page || 0, fully_read: row.fully_read || 0, viewed: row.viewed || 0 });
+    renderReadBadges();
+    setStatus(document.getElementById("search-status"), "reset: #" + id + " " + btn.dataset.reset);
+  } catch (err) {
+    setStatus(document.getElementById("search-status"), "reset error: " + err.message, true);
+  }
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) interruptPrefetch();

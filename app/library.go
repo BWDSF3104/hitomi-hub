@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strconv"
 )
@@ -72,16 +73,46 @@ func markQueryRun(db dbExec, id int) error {
 }
 
 func readStateRow(db *sql.DB, galleryID int) (map[string]any, error) {
-	var lastPage, fully, fav int
-	err := db.QueryRow("SELECT last_page, fully_read, favorite FROM read_state WHERE gallery_id = ?", galleryID).
-		Scan(&lastPage, &fully, &fav)
+	var lastPage, fully, fav, viewed int
+	var viewedAt sql.NullString
+	err := db.QueryRow("SELECT last_page, fully_read, favorite, viewed, viewed_at FROM read_state WHERE gallery_id = ?", galleryID).
+		Scan(&lastPage, &fully, &fav, &viewed, &viewedAt)
 	if err == sql.ErrNoRows {
-		return map[string]any{"gallery_id": galleryID, "last_page": 0, "fully_read": 0, "favorite": 0}, nil
+		return map[string]any{"gallery_id": galleryID, "last_page": 0, "fully_read": 0, "favorite": 0, "viewed": 0, "viewed_at": nil}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"gallery_id": galleryID, "last_page": lastPage, "fully_read": fully, "favorite": fav}, nil
+	var at any
+	if viewedAt.Valid {
+		at = viewedAt.String
+	}
+	return map[string]any{"gallery_id": galleryID, "last_page": lastPage, "fully_read": fully, "favorite": fav, "viewed": viewed, "viewed_at": at}, nil
+}
+
+// setViewed は viewer document が gallery を開いた事件を記録する（route 入力時点）。
+// viewed_at は初回のみ写入（reopen は idempotent・既存 timestamp を上書きしない）。
+// setFavorite が作った last_page=0 行とは別経路（setFavorite は viewed を立てない）。
+func setViewed(db *sql.DB, galleryID int) error {
+	_, err := db.Exec(`INSERT INTO read_state (gallery_id, viewed, viewed_at) VALUES (?, 1, ?)
+		ON CONFLICT(gallery_id) DO UPDATE SET viewed = 1,
+		viewed_at = COALESCE(viewed_at, excluded.viewed_at)`, galleryID, nowISO())
+	return err
+}
+
+// resetReadState は手動リセット。cascade（承認済み設計）:
+// target "viewed" → viewed=0・fully_read=0・last_page=0（fully_read は viewed を含意するため）。
+// target "read" → fully_read=0 のみ（viewed・last_page 保持）。
+func resetReadState(db *sql.DB, galleryID int, target string) error {
+	switch target {
+	case "viewed":
+		_, err := db.Exec("UPDATE read_state SET viewed = 0, fully_read = 0, last_page = 0 WHERE gallery_id = ?", galleryID)
+		return err
+	case "read":
+		_, err := db.Exec("UPDATE read_state SET fully_read = 0 WHERE gallery_id = ?", galleryID)
+		return err
+	}
+	return errors.New("reset target must be viewed or read")
 }
 
 func recordPage(db *sql.DB, galleryID, pageIndex int, hash string) error {
