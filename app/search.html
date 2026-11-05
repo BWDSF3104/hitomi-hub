@@ -4,46 +4,77 @@
 <meta charset="utf-8">
 <title>hitomi hub search</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }
-  h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
-  nav { font-size: .9rem; margin-bottom: .6rem; }
-  .cols { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
+  :root {
+    color-scheme: dark;
+    --bg: #14161a;
+    --surface: #1d2126;
+    --border: #2f343b;
+    --border-soft: #23272d;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --link: #8ab4f8;
+    --error: #f0a441;
+    --focus: #8ab4f8;
+    --button: #2f343b;
+    --button-hover: #383e47;
+    --button-active: #262b32;
+    --highlight: #ffd166;
+    --font-ui: system-ui, "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+    --radius: 6px;
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --tap-min: 34px;
+    --speed-fast: 120ms;
+  }
+  body { font-family: var(--font-ui); margin: var(--space-4); background: var(--bg); color: var(--text); height: calc(100vh - var(--space-4) * 2); overflow: hidden; display: flex; flex-direction: column; }
+  h1 { font-size: 1.1rem; margin: 0 0 var(--space-3); }
+  nav { font-size: .9rem; margin-bottom: var(--space-2); }
+  .cols { display: flex; gap: var(--space-4); align-items: flex-start; flex: 1; min-height: 0; }
   .side { width: 30rem; min-width: 30rem; flex-shrink: 0; height: 100%; min-height: 0; overflow-y: auto; }
   .main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }
-  section { margin-bottom: 1rem; }
-  h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
-  form { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
-  input { padding: .35rem; background: #1d2126; color: #e8eaed; border: 1px solid #2f343b; }
-  button { padding: .35rem .6rem; background: #2f343b; color: #e8eaed; border: 0; cursor: pointer; }
-  form#search { gap: .5rem; }
-  form#search .search-row, form#search .filter-row { flex-basis: 100%; display: flex; flex-wrap: nowrap; gap: .5rem; align-items: center; }
-  form#search .pager { flex-shrink: 0; display: flex; flex-wrap: nowrap; gap: .5rem; align-items: center; }
+  .side, .main { scroll-padding-top: 44px; }
+  @media (prefers-reduced-motion: no-preference) { .side, .main { scroll-behavior: smooth; } }
+  section { margin-bottom: var(--space-4); }
+  h2 { font-size: .95rem; margin: 0 0 var(--space-2); color: var(--muted); }
+  form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+  input { padding: var(--space-1) var(--space-2); min-height: var(--tap-min); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); font: inherit; }
+  button { padding: var(--space-1) var(--space-3); min-height: var(--tap-min); background: var(--button); color: var(--text); border: 0; border-radius: var(--radius); cursor: pointer; font: inherit; transition: background var(--speed-fast) ease, box-shadow var(--speed-fast) ease; }
+  button:hover { background: var(--button-hover); }
+  button:active { background: var(--button-active); box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  form#search { gap: var(--space-2); }
+  form#search .search-row, form#search .filter-row { flex-basis: 100%; display: flex; flex-wrap: nowrap; gap: var(--space-2); align-items: center; }
+  form#search .pager { flex-shrink: 0; display: flex; flex-wrap: nowrap; gap: var(--space-2); align-items: center; }
   form#search .pager button { min-width: 40px; }
-  form#search input, form#search button { box-sizing: border-box; min-height: 31px; }
+  form#search input, form#search button { box-sizing: border-box; min-height: var(--tap-min); }
   form#search input[type="checkbox"] { min-height: auto; }
-  form#search input:focus-visible, form#search button:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
   form#search button:disabled { opacity: .5; cursor: not-allowed; }
   form#search #query { flex: 1 1 160px; min-width: 0; }
   form#search #search-page-status { margin-left: auto; }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
-  a { color: #8ab4f8; text-decoration: none; }
-  .meta { font-size: .9rem; color: #9aa0a6; }
-  .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
+  li { padding: .3rem 0; border-bottom: 1px solid var(--border-soft); }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .meta { font-size: .9rem; color: var(--muted); }
   .error { font-size: .85rem; color: #f0a441; }
-  .card { display: flex; gap: .5rem; align-items: flex-start; --search-card-height: 130px; height: var(--search-card-height); overflow: hidden; }
-  .card .text { display: flex; flex-direction: column; min-height: 0; max-height: var(--search-card-height); overflow: hidden; }
-  .card .badge { font-size: .8rem; color: #8ab4f8; }
+  .status { font-size: .85rem; color: var(--focus); margin-bottom: .4rem; }
+  .card { display: flex; gap: var(--space-2); align-items: flex-start; --search-card-height: 130px; height: var(--search-card-height); overflow: hidden; border-radius: var(--radius); transition: background-color var(--speed-fast) ease; }
+  .card:hover { background-color: #1b1f25; }
+  .card .text { display: flex; flex-direction: column; min-height: 0; max-height: calc(var(--search-card-height) - 2rem); overflow: hidden; }
+  .card .badge { font-size: .8rem; color: var(--focus); }
   .card .badge:empty { display: none; }
-  .card .badge button { padding: .1rem .35rem; font-size: .75rem; }
+  .card .badge button { padding: .15rem .4rem; min-height: 24px; font-size: .75rem; }
   .card .badge .flag { font-weight: 600; }
   .card .badge .flag-viewed { color: #7cc3fa; }
   .card .badge .flag-read { color: #4db6ac; }
   .card .badge .flag-saved { color: #ff8a65; }
   .card .badge .flag-favorite { color: #c77dff; }
   .card.has-status { background-color: #252a31; box-shadow: inset 0 0 0 2px #8ab4f8; border-radius: 6px; }
-  .card.highlight { outline: 2px solid #ffd166; border-radius: 6px; }
-  .search-card-cover { object-fit: cover; background: #1d2126; }
+  .card.highlight { outline: 2px solid var(--highlight); border-radius: var(--radius); }
+  .card[data-busy] { animation: ui-pulse 1.2s ease-in-out infinite; }
+  .search-card-cover { object-fit: cover; background: var(--surface); border-radius: var(--radius); }
   .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
   .tags {
@@ -55,6 +86,9 @@
     display: -webkit-box;
     -webkit-line-clamp: 9;
   }
+  @keyframes ui-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+  html.fullscreen h1, body.fullscreen h1, html.fullscreen nav.page-nav, body.fullscreen nav.page-nav, body.pseudo-fullscreen nav.page-nav, html.fullscreen section, body.fullscreen section, body.pseudo-fullscreen section, html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta, html.fullscreen .side, body.fullscreen .side, body.pseudo-fullscreen .side { display: none; }
 </style>
 </head>
 <body>
@@ -72,10 +106,10 @@
         </div>
         <span class="pager">
           <button id="search-prev" type="button">前</button>
-          <input id="page" value="1" size="4">
+          <input id="page" value="1" size="4" inputmode="numeric" aria-label="ページ">
           <button id="search-next" type="button">次</button>
         </span>
-        <div id="search-page-status" class="meta"></div>
+        <div id="search-page-status" class="meta" role="status"></div>
         <div class="filter-row">
           <label><input type="checkbox" id="status-viewed" value="viewed">表示済み</label>
           <label><input type="checkbox" id="status-read" value="read">既読</label>
@@ -84,15 +118,15 @@
         </div>
       </form>
       <div id="perf-status" class="meta"></div>
-      <div id="search-status" class="status"></div>
+      <div id="search-status" class="status" role="status" aria-live="polite"></div>
       <div id="count" class="meta"></div>
     </section>
     <section>
       <h2>保存検索</h2>
       <form id="saved-search">
-        <input id="qname" placeholder="name" size="10">
+        <input id="qname" placeholder="名前" size="10">
         <input id="qtext" placeholder="female:yuri language:english" size="22">
-        <button>save</button>
+        <button>保存</button>
       </form>
       <ul id="queries"></ul>
     </section>
@@ -238,7 +272,7 @@ function cardStatusClass(id) {
 
 function badgeInner(id) {
   const parts = [badgeText(id)];
-  if (hasResetStatus(id)) parts.push("<button type='button' data-reset='all'>reset</button>");
+  if (hasResetStatus(id)) parts.push("<button type='button' data-reset='all'>リセット</button>");
   return parts.join(" ");
 }
 
@@ -293,7 +327,7 @@ function loadSearchState() {
   }
 }
 function placeholderCard(id) {
-  return "<li class='card' data-search-id='" + id + "'><div class='text'><a href='" + viewerLink(id) + "'" + targetAttr() + ">#" + id + "</a>" + badgeRow(id) + "<span class='meta'>loading</span></div></li>";
+  return "<li class='card' data-search-id='" + id + "' data-busy='1' aria-busy='true'><div class='text'><a href='" + viewerLink(id) + "'" + targetAttr() + ">#" + id + "</a>" + badgeRow(id) + "<span class='meta'>読み込み中</span></div></li>";
 }
 function restoreSearchState() {
   const state = loadSearchState();
@@ -310,7 +344,7 @@ function restoreSearchState() {
   const ids = Array.isArray(state.ids) ? state.ids : [];
   currentSearchTotal = Number(state.total || 0);
   renderSearchPageStatus();
-  if (count) count.textContent = (state.total || 0) + " 件・page " + (state.page || 1);
+  if (count) count.textContent = (state.total || 0) + " 件・ページ " + (state.page || 1);
   setStatus(status, "検索結果復元: " + state.query);
   results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
   loadSearchCards(ids, searchGeneration);
@@ -331,8 +365,8 @@ function renderPerfStatus() {
     el.textContent = "";
     return;
   }
-  const cacheText = Object.keys(perfStatus.cacheDistribution).length ? "・cache " + Object.keys(perfStatus.cacheDistribution).map((k) => k + "=" + perfStatus.cacheDistribution[k]).join(" ") : "";
-  el.textContent = "perf: /api/search " + Math.round(perfStatus.searchMs) + "ms" + (perfStatus.serverTiming ? "・server " + perfStatus.serverTiming : "") + "・cards " + perfStatus.cardsLoaded + " " + Math.round(perfStatus.cardTotalMs) + "ms" + cacheText;
+  const cacheText = Object.keys(perfStatus.cacheDistribution).length ? "・キャッシュ " + Object.keys(perfStatus.cacheDistribution).map((k) => k + "=" + perfStatus.cacheDistribution[k]).join(" ") : "";
+  el.textContent = "計測: /api/search " + Math.round(perfStatus.searchMs) + "ms" + (perfStatus.serverTiming ? "・サーバー " + perfStatus.serverTiming : "") + "・カード " + perfStatus.cardsLoaded + " " + Math.round(perfStatus.cardTotalMs) + "ms" + cacheText;
 }
 function renderSearchPageStatus() {
   const status = document.getElementById("search-page-status");
@@ -344,7 +378,7 @@ function renderSearchPageStatus() {
   const next = document.getElementById("search-next");
   if (prev) prev.disabled = page <= 1;
   if (next) next.disabled = total > 0 && page >= totalPages;
-  status.textContent = "page " + page + " / " + (total ? totalPages : "-") + "・total " + total;
+  status.textContent = "ページ " + page + " / " + (total ? totalPages : "-") + "・合計 " + total;
 }
 async function setSearchPage(delta) {
   const total = Number(currentSearchTotal || 0);
@@ -565,7 +599,7 @@ async function runSearch() {
     const ids = data.ids || (data.results || []).map((r) => r.id);
     currentSearchTotal = Number(data.total || 0);
     renderSearchPageStatus();
-    document.getElementById("count").textContent = data.total + " 件・page " + data.page;
+    document.getElementById("count").textContent = data.total + " 件・ページ " + data.page;
     setStatus(status, "検索完了・カード読み込み " + ids.length + "件");
     results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
     saveSearchState({ query, lang, page, ids, total: data.total });
@@ -717,9 +751,9 @@ document.getElementById("results").addEventListener("click", async (e) => {
     if (row.favorite) favoriteByGallery.set(id, 1);
     else favoriteByGallery.delete(id);
     renderReadBadges();
-    setStatus(document.getElementById("search-status"), "reset: #" + id + " " + btn.dataset.reset);
+    setStatus(document.getElementById("search-status"), "リセット: #" + id + " " + btn.dataset.reset);
   } catch (err) {
-    setStatus(document.getElementById("search-status"), "reset error: " + err.message, true);
+    setStatus(document.getElementById("search-status"), "リセットエラー: " + err.message, true);
   }
 });
 document.addEventListener("visibilitychange", () => {
@@ -770,7 +804,7 @@ document.getElementById("jump-first-status").addEventListener("click", async () 
     }
     const target = Number(hit.page || 1);
     const flagText = flagNamesText(hit.flags);
-    setStatus(status, "jump: page " + target + "・rank " + hit.rank + "・#" + hit.gallery_id + (flagText ? "・" + flagText : ""));
+    setStatus(status, "ジャンプ: ページ " + target + "・順位 " + hit.rank + "・#" + hit.gallery_id + (flagText ? "・" + flagText : ""));
     if (target === currentPage) {
       highlightCard(hit.gallery_id);
       return;
@@ -783,7 +817,7 @@ document.getElementById("jump-first-status").addEventListener("click", async () 
       window.location.hash = route;
     }
   } catch (err) {
-    setStatus(status, "jump error: " + err.message, true);
+    setStatus(status, "ジャンプエラー: " + err.message, true);
   }
 });
 

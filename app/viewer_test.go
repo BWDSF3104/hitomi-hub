@@ -1573,9 +1573,9 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `item.badge > 1`) {
 		t.Errorf("ui should render hitomi scene badge count for scenes with multiple images: got %q", s)
 	}
-	if !strings.Contains(s, "const marker = entry.local ? \" title='local'\" : \"\";") {
-		t.Errorf("ui should keep local as app feature marker, not filter: got %q", s)
-	}
+  if !strings.Contains(s, "const marker = entry.local ? \" title='ローカル'\" : \"\";") {
+    t.Errorf("ui should keep local as app feature marker, not filter: got %q", s)
+  }
 }
 
 func TestEmbeddedUIStripControlsUseSelectableGroup(t *testing.T) {
@@ -1666,9 +1666,9 @@ func TestEmbeddedUIHasNewTabQueryPolicy(t *testing.T) {
 
 func TestEmbeddedUIIndependentScrollPanels(t *testing.T) {
 s := uiText(t, "viewer.html", "search.html")
-	if !strings.Contains(s, `body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }`) {
-		t.Errorf("body should constrain the viewport so panels can scroll independently: got %q", s)
-	}
+  if !strings.Contains(s, `body { font-family: var(--font-ui); margin: var(--space-4); background: var(--bg); color: var(--text); height: calc(100vh - var(--space-4) * 2); overflow: hidden; display: flex; flex-direction: column; }`) {
+    t.Errorf("body should constrain the viewport through shared tokens so panels can scroll independently: got %q", s)
+  }
 	if !strings.Contains(s, `flex: 1; min-height: 0;`) {
 		t.Errorf(".cols should take the remaining viewport height without allowing inner panels to expand the page scroll: got %q", s)
 	}
@@ -1746,9 +1746,9 @@ search := uiText(t, "search.html")
 	if !strings.Contains(badgeBody, `parts.push(badgeFlag("表示済み", "flag-viewed"))`) || !strings.Contains(badgeBody, `parts.push(badgeFlag("既読", "flag-read"))`) || !strings.Contains(badgeBody, `parts.push(badgeFlag("保存済み", "flag-saved"))`) || !strings.Contains(badgeBody, `parts.push(badgeFlag("お気に入り", "flag-favorite"))`) {
 		t.Errorf("badgeText should render the three state flags plus favorite through class-colored flags: got %q", badgeBody)
 	}
-	if !strings.Contains(badgeBody, `<button type='button' data-reset='all'>reset</button>`) || !strings.Contains(badgeBody, `hasResetStatus(id)`) {
-		t.Errorf("badge row must carry one summary reset button on the same row: got %q", badgeBody)
-	}
+  if !strings.Contains(badgeBody, `<button type='button' data-reset='all'>リセット</button>`) || !strings.Contains(badgeBody, `hasResetStatus(id)`) {
+    t.Errorf("badge row must carry one Japanese summary reset button on the same row: got %q", badgeBody)
+  }
 	if strings.Contains(badgeBody, `data-reset='viewed'`) || strings.Contains(badgeBody, `data-reset='read'`) {
 		t.Errorf("badge row must not keep per-flag reset buttons: got %q", badgeBody)
 	}
@@ -1844,9 +1844,9 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `displayPassByEntry`) || !strings.Contains(s, `sourceStatusByEntry`) || !strings.Contains(s, `sourceTypeByEntry`) || !strings.Contains(s, `activeObjectUrlKeys`) {
 		t.Errorf("ui should keep actual display pass separate from backend/source status: got %q", s)
 	}
-	if !strings.Contains(s, `actual pixels `) || !strings.Contains(s, `local direct `) || !strings.Contains(s, `objectURL cache `) || !strings.Contains(s, `no full `) || !strings.Contains(s, `TN display fallback disabled`) {
-		t.Errorf("prefetch status should show actual pixels, local direct display, objectURL cache, no full, and TN display fallback disabled, not TN display: got %q", s)
-	}
+  if !strings.Contains(s, `実表示ピクセル `) || !strings.Contains(s, `ローカル直接 `) || !strings.Contains(s, `objectURLキャッシュ `) || !strings.Contains(s, `フル画像なし `) || !strings.Contains(s, `TN表示フォールバック禁止`) {
+    t.Errorf("prefetch status should show actual pixels, local direct display, objectURL cache, no full, and TN display fallback disabled through Japanese labels: got %q", s)
+  }
 	if !strings.Contains(s, `counts.noFullDone`) {
 		t.Errorf("ui should count no_full separately from network errors: got %q", s)
 	}
@@ -1961,7 +1961,7 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(loadBody, `loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration`) || !strings.Contains(loadBody, `URL.revokeObjectURL(objectUrl)`) {
 		t.Errorf("stale async render/write guard on the objectURL display path must be maintained: got %q", loadBody)
 	}
-	if !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `r.headers.get("x-cache")`) {
+	if !strings.Contains(loadBody, `TN表示フォールバック禁止`) || !strings.Contains(loadBody, `r.headers.get("x-cache")`) {
 		t.Errorf("TN display fallback disabled and x-cache full cache judgement must be unchanged: got %q", loadBody)
 	}
 	renderStart := strings.Index(s, "function renderReader() {")
@@ -2053,7 +2053,7 @@ func TestEmbeddedUIDebouncesReadAndListsToSingleCall(t *testing.T) {
 	if !strings.Contains(loadBody, `loadShowGen !== showGeneration || loadOpenGen !== openGeneration || loadRender !== renderGeneration`) || !strings.Contains(loadBody, `URL.revokeObjectURL(objectUrl)`) {
 		t.Errorf("stale async render/write guard on the objectURL display path must be maintained: got %q", loadBody)
 	}
-	if !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `r.headers.get("x-cache")`) {
+	if !strings.Contains(loadBody, `TN表示フォールバック禁止`) || !strings.Contains(loadBody, `r.headers.get("x-cache")`) {
 		t.Errorf("TN display fallback disabled and x-cache full cache judgement must be unchanged: got %q", loadBody)
 	}
 }
@@ -2179,9 +2179,9 @@ func TestEmbeddedUIMovesGalleryImmediatelyAndCachesGalleryData(t *testing.T) {
 	}
 
 	cacheBody := sliceBetween(t, viewer, "function showGalleryMetaFromCache(id) {", "function updateThumbCache(key, objectUrl) {")
-	if !strings.Contains(cacheBody, `const card = galleryCache.get(id);`) || !strings.Contains(cacheBody, `<span class='meta'>loading</span>`) || !strings.Contains(cacheBody, `setPrefetchStatus("gallery read load: " + id);`) {
-		t.Errorf("showGalleryMetaFromCache should show loading status before async gallery data arrives: got %q", cacheBody)
-	}
+  if !strings.Contains(cacheBody, `const card = galleryCache.get(id);`) || !strings.Contains(cacheBody, `<span class='meta'>読み込み中</span>`) || !strings.Contains(cacheBody, `setPrefetchStatus("ギャラリー読み込み: " + id);`) {
+    t.Errorf("showGalleryMetaFromCache should show Japanese loading status before async gallery data arrives: got %q", cacheBody)
+  }
 	if strings.Contains(cacheBody, `searchCardCache`) {
 		t.Errorf("viewer showGalleryMetaFromCache must use viewer gallery cache, not search card cache: got %q", cacheBody)
 	}
@@ -2378,9 +2378,12 @@ s := uiText(t, "search.html")
 
 func TestEmbeddedUIHasReaderSpreadAndFullscreen(t *testing.T) {
 s := uiText(t, "viewer.html")
-	if !strings.Contains(s, `id="view-mode"`) || !strings.Contains(s, `value="double"`) || !strings.Contains(s, `value="fullscreen"`) {
-		t.Errorf("ui should expose reader view modes: got %q", s)
-	}
+  if !strings.Contains(s, `id="view-mode-buttons"`) || !strings.Contains(s, `data-mode="single"`) || !strings.Contains(s, `data-mode="double"`) || !strings.Contains(s, `data-mode="fullscreen"`) {
+    t.Errorf("ui should expose reader view modes through view-mode buttons: got %q", s)
+  }
+  if !strings.Contains(s, `function syncViewModeButtons() {`) || !strings.Contains(s, `document.querySelectorAll("#view-mode-buttons button[data-mode]")`) {
+    t.Errorf("ui should sync view-mode button pressed state through syncViewModeButtons: got %q", s)
+  }
 	if !strings.Contains(s, `function displayMode() {`) || !strings.Contains(s, `function readerItems() {`) || !strings.Contains(s, `function parseReaderHash(hash) {`) {
 		t.Errorf("ui should have reader spread display mode and hash parser: got %q", s)
 	}
@@ -2483,7 +2486,7 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(loadBody, `if (!r.ok) {`) || !strings.Contains(loadBody, `updatePrefetchCounts("error", entry, galleryId, allowRecount);`) {
 		t.Errorf("loadFullImage should still count true fetch failures as error, not no_full: got %q", loadBody)
 	}
-	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `tn display fallback disabled`) || !strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
+	if !strings.Contains(loadBody, `if (cache === "tn") {`) || !strings.Contains(loadBody, `TN表示フォールバック禁止`) || !strings.Contains(loadBody, `storeFullCache(entry, "tn", null, galleryId);`) {
 		t.Errorf("loadFullImage should not store TN bytes as full display object URL: got %q", loadBody)
 	}
 	if !strings.Contains(loadBody, `if (activeObjectUrlKeys.has(key))`) || !strings.Contains(loadBody, `img.src = fullCache.get(key).objectUrl`) {
@@ -2684,8 +2687,8 @@ s := uiText(t, "viewer.html")
 		t.Fatalf("renderPrefetchStatus function not found")
 	}
 	statusBody := s[statusStart:strings.Index(s, "\nfunction stripItems() {")]
-	if !strings.Contains(statusBody, `actual pixels `) || !strings.Contains(statusBody, `local direct `) || !strings.Contains(statusBody, `objectURL cache `) || !strings.Contains(statusBody, `no full `) || !strings.Contains(statusBody, `TN display fallback disabled`) {
-		t.Errorf("renderPrefetchStatus should report actual pixels, local direct display, objectURL cache, no full, and TN display fallback disabled separately: got %q", statusBody)
+	if !strings.Contains(statusBody, `実表示ピクセル `) || !strings.Contains(statusBody, `ローカル直接 `) || !strings.Contains(statusBody, `objectURLキャッシュ `) || !strings.Contains(statusBody, `フル画像なし `) || !strings.Contains(statusBody, `TN表示フォールバック禁止`) {
+		t.Errorf("renderPrefetchStatus should report actual pixels, local direct display, objectURL cache, no full, and TN display fallback disabled through Japanese labels separately: got %q", statusBody)
 	}
 	if !strings.Contains(statusBody, `displayPassByEntry.get(key)`) || !strings.Contains(statusBody, `sourceTypeByEntry.get(key)`) || !strings.Contains(statusBody, `activeObjectUrlKeys.has(key)`) {
 		t.Errorf("renderPrefetchStatus should count display truth and active objectURL cache, not status text alone: got %q", statusBody)
@@ -2806,13 +2809,14 @@ s := uiText(t, "viewer.html")
 	fIndex := strings.Index(keyBody, `if (e.key === "f") {`)
 	escapeIndex := strings.Index(keyBody, `if (e.key === "Escape") {`)
 	buttonIndex := strings.Index(keyBody, `e.target.tagName === "BUTTON"`)
+	arrowIndex := strings.Index(keyBody, `if (e.key === "ArrowLeft") { if (movePage(spreadDirection === "rtl" ? 1 : -1)) await showPage(); }`)
 	modifierIndex := strings.Index(keyBody, `if (e.ctrlKey || e.metaKey || e.altKey) return;`)
-	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || modifierIndex < 0 || modifierIndex > fIndex || modifierIndex > escapeIndex || fIndex > buttonIndex || escapeIndex > buttonIndex {
-		t.Errorf("f and Escape should remain fullscreen gestures even from control focus after modifier keys are excluded before d/s/r are skipped: got %q", keyBody)
+	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || arrowIndex < 0 || modifierIndex < 0 || modifierIndex > fIndex || modifierIndex > escapeIndex || fIndex > buttonIndex || escapeIndex > buttonIndex || arrowIndex >= buttonIndex {
+		t.Errorf("f, Escape, and ArrowLeft should remain active even from control focus, with ArrowLeft before the control-focus guard and d/s/r after it: got %q", keyBody)
 	}
-	if !strings.Contains(s, `last layout: " + lastViewMode`) || !strings.Contains(s, `fullscreen " + fullscreenState`) {
-		t.Errorf("view state should show last layout mode and fullscreenState: got %q", s)
-	}
+  if !strings.Contains(s, `直前レイアウト " + viewLabel(lastViewMode)`) || !strings.Contains(s, `全画面 " + viewLabel(fullscreenState)`) {
+    t.Errorf("view state should show last layout mode and fullscreenState through Japanese labels: got %q", s)
+  }
 
 	setStart := strings.Index(s, "function setViewMode(mode) {")
 	if setStart < 0 {
@@ -2913,15 +2917,16 @@ s := uiText(t, "viewer.html")
 	fIndex := strings.Index(keyBody, `if (e.key === "f") {`)
 	escapeIndex := strings.Index(keyBody, `if (e.key === "Escape") {`)
 	buttonIndex := strings.Index(keyBody, `e.target.tagName === "BUTTON"`)
+	arrowIndex := strings.Index(keyBody, `if (e.key === "ArrowLeft") { if (movePage(spreadDirection === "rtl" ? 1 : -1)) await showPage(); }`)
 	modifierIndex := strings.Index(keyBody, `if (e.ctrlKey || e.metaKey || e.altKey) return;`)
-	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || modifierIndex < 0 || modifierIndex > fIndex || modifierIndex > escapeIndex || fIndex > buttonIndex || escapeIndex > buttonIndex {
-		t.Errorf("f and Escape should remain fullscreen gestures even from control focus after modifier keys are excluded before d/s/r are skipped: got %q", keyBody)
+	if fIndex < 0 || escapeIndex < 0 || buttonIndex < 0 || arrowIndex < 0 || modifierIndex < 0 || modifierIndex > fIndex || modifierIndex > escapeIndex || fIndex > buttonIndex || escapeIndex > buttonIndex || arrowIndex >= buttonIndex {
+		t.Errorf("f, Escape, and ArrowLeft should remain active from control focus, with ArrowLeft before the control-focus guard and d/s/r after it: got %q", keyBody)
 	}
 }
 
 func TestEmbeddedUIHasManualFullImageRetryButton(t *testing.T) {
 s := uiText(t, "viewer.html")
-	if !strings.Contains(s, `id="retry-failed"`) || !strings.Contains(s, `retry failed`) || !strings.Contains(s, `manualRetryFailedFullImages()`) || !strings.Contains(s, `manualRetryingKeys`) || !strings.Contains(s, `manualRetryRunning`) || !strings.Contains(s, `allowRecount = false`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "error"`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "no_full"`) {
+	if !strings.Contains(s, `id="retry-failed"`) || !strings.Contains(s, `失敗を再試行`) || !strings.Contains(s, `manualRetryFailedFullImages()`) || !strings.Contains(s, `manualRetryingKeys`) || !strings.Contains(s, `manualRetryRunning`) || !strings.Contains(s, `allowRecount = false`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "error"`) || !strings.Contains(s, `sourceStatusByEntry.get(key) !== "no_full"`) {
 		t.Errorf("ui should expose a manual full-image retry button with manual-only recount and error/no_full targeting: got %q", s)
 	}
 	if !strings.Contains(s, `document.getElementById("retry-failed").addEventListener("click",`) {
@@ -3304,8 +3309,8 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `function renderLoadingPosition(id, pageLabel, pairLabel) {`) {
 		t.Errorf("ui should show a loading position without claiming gallery count: got %q", s)
 	}
-	if !strings.Contains(s, `const page = second ? current.page + "-" + second : String(current.page);`) || !strings.Contains(s, `el.textContent = "position: " + page + " / " + (current.count || "-");`) {
-		t.Errorf("renderPosition should show current page/pair and current count: got %q", s)
+	if !strings.Contains(s, `const page = second ? current.page + "-" + second : String(current.page);`) || !strings.Contains(s, `el.textContent = "位置: " + page + " / " + (current.count || "-");`) {
+		t.Errorf("renderPosition should show current page/pair and current count through a Japanese label: got %q", s)
 	}
 
 	setStart := strings.Index(s, "function setGalleryMeta(data) {")

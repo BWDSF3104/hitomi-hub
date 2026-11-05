@@ -141,7 +141,7 @@ const current0 = { id: 101, page: 1, count: 130, files: [] };
 run(current0, null, null, null, documentMock, check, openGalleryBody, showPageBody, thumbs, counter);
 
 check(html.includes("function stripThumbSource(entry, galleryId = current.id) {\n  return displayViewerSource(entry, galleryId);\n}"), "TN display source rule unchanged");
-check(html.includes('" | TN display fallback disabled"'), "TN display fallback policy text unchanged");
+check(html.includes('" | TN表示フォールバック禁止"'), "TN display fallback policy text unchanged");
 
 if (failures.length) {
   for (const f of failures) console.log("FAIL " + f);

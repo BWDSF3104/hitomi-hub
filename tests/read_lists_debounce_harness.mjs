@@ -59,7 +59,7 @@ check(
   loadBody.includes('fetch(fullSrc, { cache: "no-store", signal })') &&
   loadBody.includes("URL.createObjectURL(blob)") &&
   loadBody.includes("img.src = objectUrl;") &&
-  loadBody.includes("tn display fallback disabled") &&
+  loadBody.includes("TN表示フォールバック禁止") &&
   loadBody.includes('r.headers.get("x-cache")'),
   "full image display path unchanged: no-store fetch, objectURL display, x-cache judgement, TN display fallback disabled"
 );

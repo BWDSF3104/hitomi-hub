@@ -4,54 +4,90 @@
 <meta charset="utf-8">
 <title>hitomi hub viewer</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 1rem; background: #14161a; color: #e8eaed; height: calc(100vh - 2rem); overflow: hidden; display: flex; flex-direction: column; }
-  h1 { font-size: 1.1rem; margin: 0 0 .8rem; }
-  nav { font-size: .9rem; margin-bottom: .6rem; }
+  :root {
+    color-scheme: dark;
+    --bg: #14161a;
+    --surface: #1d2126;
+    --border: #2f343b;
+    --border-soft: #23272d;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --link: #8ab4f8;
+    --error: #f0a441;
+    --focus: #8ab4f8;
+    --button: #2f343b;
+    --button-hover: #383e47;
+    --button-active: #262b32;
+    --highlight: #ffd166;
+    --font-ui: system-ui, "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+    --radius: 6px;
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --tap-min: 34px;
+    --speed-fast: 120ms;
+  }
+  body { font-family: var(--font-ui); margin: var(--space-4); background: var(--bg); color: var(--text); height: calc(100vh - var(--space-4) * 2); overflow: hidden; display: flex; flex-direction: column; }
+  h1 { font-size: 1.1rem; margin: 0 0 var(--space-3); }
+  nav { font-size: .9rem; margin-bottom: var(--space-2); }
   .cols { display: flex; gap: 1rem; align-items: flex-start; flex: 1; min-height: 0; }
   .main { flex: 1; min-width: 20rem; height: 100%; min-height: 0; overflow-y: auto; }
-  section { margin-bottom: 1rem; }
-  h2 { font-size: .95rem; margin: 0 0 .4rem; color: #9aa0a6; }
-  form { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
-  input { padding: .35rem; background: #1d2126; color: #e8eaed; border: 1px solid #2f343b; }
-  button { padding: .35rem .6rem; background: #2f343b; color: #e8eaed; border: 0; cursor: pointer; }
+  .main { scroll-padding-top: 44px; }
+  #nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: var(--space-2) 0; }
+  @media (prefers-reduced-motion: no-preference) { .main { scroll-behavior: smooth; } }
+  section { margin-bottom: var(--space-4); }
+  h2 { font-size: .95rem; margin: 0 0 var(--space-2); color: var(--muted); }
+  form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+  input { padding: var(--space-1) var(--space-2); min-height: var(--tap-min); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); font: inherit; }
+  button { padding: var(--space-1) var(--space-3); min-height: var(--tap-min); background: var(--button); color: var(--text); border: 0; border-radius: var(--radius); cursor: pointer; font: inherit; transition: background var(--speed-fast) ease, box-shadow var(--speed-fast) ease; }
+  button:hover { background: var(--button-hover); }
+  button:active { background: var(--button-active); box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
+  input:focus-visible, button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { padding: .3rem 0; border-bottom: 1px solid #23272d; }
-  a { color: #8ab4f8; text-decoration: none; }
-  .meta { font-size: .9rem; color: #9aa0a6; }
+  li { padding: .3rem 0; border-bottom: 1px solid var(--border-soft); }
+  a { color: var(--link); text-decoration: none; }
+  .meta { font-size: .9rem; color: var(--muted); }
   .error { font-size: .85rem; color: #f0a441; }
-  .status { font-size: .85rem; color: #8ab4f8; margin-bottom: .4rem; }
-  .strip img { object-fit: cover; background: #1d2126; }
-  .strip { margin-top: .35rem; }
+  .status { font-size: .85rem; color: var(--focus); margin-bottom: .4rem; }
+  .strip img { object-fit: cover; background: var(--surface); }
+  .strip { margin-top: var(--space-1); }
   .strip { display: flex; gap: .3rem; flex-wrap: wrap; }
   .strip img { width: 90px; height: 90px; }
   .strip .strip-loading {
     width: 90px;
     height: 90px;
-    background: #1d2126;
-    border: 1px solid #2f343b;
-    color: #9aa0a6;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
     font-size: .8rem;
     display: flex;
     align-items: center;
     justify-content: center;
+    border-radius: var(--radius);
+    animation: ui-pulse 1.2s ease-in-out infinite;
   }
+  @keyframes ui-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
   .strip a { position: relative; }
-  .badge { position: absolute; right: 4px; top: 4px; background: #8ab4f8; color: #14161a; padding: 2px 5px; border-radius: 4px; font-size: .8rem; }
-  .current { border: 2px solid #8ab4f8; }
-  .pageimg { max-width: 100%; max-height: 78vh; background: #1d2126; object-fit: contain; }
+  .badge { position: absolute; right: 4px; top: 4px; background: var(--focus); color: var(--bg); padding: 2px 5px; border-radius: 4px; font-size: .8rem; }
+  .current { border: 2px solid var(--focus); }
+  .pageimg { max-width: 100%; max-height: 78vh; background: var(--surface); object-fit: contain; }
   .reader .reader-loading {
     grid-column: 1 / -1;
     display: flex;
-    gap: .5rem;
+    gap: var(--space-2);
     align-items: center;
-    padding: .5rem;
-    background: #1d2126;
-    border: 1px solid #2f343b;
+    padding: var(--space-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
     min-height: var(--reader-page-height);
-    color: #9aa0a6;
+    color: var(--muted);
+    border-radius: var(--radius);
+    animation: ui-pulse 1.2s ease-in-out infinite;
   }
-  .reader-loading img { max-width: 180px; max-height: 180px; object-fit: contain; background: #14161a; }
-  .reader-loading-text { color: #8ab4f8; font-size: .9rem; }
+  .reader-loading img { max-width: 180px; max-height: 180px; object-fit: contain; background: var(--bg); }
+  .reader-loading-text { color: var(--focus); font-size: .9rem; }
   .reader {
     --reader-page-width: min(45vw, 500px);
     --reader-page-height: min(78vh, 700px);
@@ -66,9 +102,11 @@
     display: block;
     width: min(var(--reader-page-width), 100%);
     height: var(--reader-page-height);
-    background: #1d2126;
+    background: var(--surface);
     object-fit: contain;
   }
+  /* aspect 追従: 単一ページ表示では画像実測アスペクトで高さを縮める（枠高さは上限） */
+  .reader:not(.double) img { height: auto; max-height: var(--reader-page-height); }
   html.fullscreen h1, body.fullscreen h1, html.fullscreen nav.page-nav, body.fullscreen nav.page-nav, body.pseudo-fullscreen nav.page-nav, html.fullscreen #reader-controls, body.fullscreen #reader-controls, body.pseudo-fullscreen #reader-controls, html.fullscreen .meta, body.fullscreen .meta, body.pseudo-fullscreen .meta, html.fullscreen section h2, body.fullscreen section h2, body.pseudo-fullscreen section h2 { display: none; }
   html.fullscreen .reader, body.fullscreen .reader, body.pseudo-fullscreen .reader {
     --fullscreen-page-padding: 12px;
@@ -93,46 +131,41 @@
   <div class="main">
     <section>
       <h2>閲覧</h2>
-      <div id="gallery" class="meta">gallery meta（検索ページから gallery を選ぶ）</div>
+      <div id="gallery" class="meta">ギャラリー情報（検索ページからギャラリーを選ぶ）</div>
       <div id="reader-controls" class="meta">
-        <select id="view-mode">
-          <option value="double">見開き（通常）</option>
-          <option value="single">単一</option>
-          <option value="fullscreen">フルスクリーン</option>
-        </select>
-        <span class="meta">キーボード: ← / → / d=見開き / s=単一 / f=フルスクリーン</span>
-        <div id="view-mode-buttons" class="meta">
-          <button type="button" data-mode="single">single</button>
-          <button type="button" data-mode="double">double</button>
-          <button type="button" data-mode="fullscreen">fullscreen</button>
-          <button type="button" id="spread-direction" data-direction="rtl">rtl</button>
+        <div id="view-mode-buttons" class="meta" role="group" aria-label="表示モード">
+          <button type="button" data-mode="single" aria-pressed="false">単一</button>
+          <button type="button" data-mode="double" aria-pressed="false">見開き</button>
+          <button type="button" data-mode="fullscreen" aria-pressed="false">全画面</button>
+          <button type="button" id="spread-direction" data-direction="rtl" aria-pressed="true" aria-label="開き方向">右→左</button>
         </div>
-        <div id="view-state" class="meta"></div>
+        <span class="meta">キーボード: ← / → / d=見開き / s=単一 / f=全画面</span>
+        <div id="view-state" class="meta" role="status"></div>
       </div>
       <div id="acquisition-controls" class="meta">
-        <button type="button" id="acquisition-start">acquisition</button>
-        <button type="button" id="acquisition-abort">abort</button>
-        <span id="acquisition-status" class="status"></span>
+        <button type="button" id="acquisition-start">取得</button>
+        <button type="button" id="acquisition-abort">中止</button>
+        <span id="acquisition-status" class="status" role="status" aria-live="polite"></span>
       </div>
       <div id="acquisition-results" class="meta"></div>
-      <div id="reader-position" class="meta"></div>
-      <div id="prefetch-status" class="status"></div>
-      <div id="retry-controls" class="meta"><button id="retry-failed" type="button" disabled>retry failed</button></div>
+      <div id="reader-position" class="meta" role="status"></div>
+      <div id="prefetch-status" class="status" role="status" aria-live="polite"></div>
+      <div id="retry-controls" class="meta"><button id="retry-failed" type="button" disabled>失敗を再試行</button></div>
       <div id="reader" class="reader double"></div>
       <form id="nav">
         <button id="prev" type="button">前</button>
-        <input id="pagenum" size="4">
+        <input id="pagenum" size="4" inputmode="numeric" aria-label="ページ">
         <button id="next" type="button">次</button>
         <button id="complete" type="button">読み完了</button>
         <button id="fav" type="button">お気に入り</button>
       </form>
-      <div class="meta">キーボード: ← / → でページ送リ。通常サイズでは見開き。</div>
+      <div class="meta">キーボード: ← / → でページ送り。通常サイズでは見開き。</div>
       <div id="strip-controls" class="meta">
-        <button id="strip-prev-group">前 group</button>
-        <input id="strip-group" size="4" placeholder="group">
-        <button id="strip-go-group">go</button>
-        <button id="strip-next-group">次 group</button>
-        <span id="strip-group-status" class="meta">strip group -</span>
+        <button id="strip-prev-group">前のグループ</button>
+        <input id="strip-group" size="4" placeholder="グループ" inputmode="numeric" aria-label="グループ番号">
+        <button id="strip-go-group">移動</button>
+        <button id="strip-next-group">次のグループ</button>
+        <span id="strip-group-status" class="meta" role="status">グループ -</span>
       </div>
       <div class="strip" id="thumbs"></div>
     </section>
@@ -396,12 +429,12 @@ function renderPrefetchStatus() {
     if (pass && sourceType === "local-direct") localDirect++;
     if (activeObjectUrlKeys.has(key) && statusIsViewerDisplaySource(sourceStatus)) objectUrlCache++;
   }
-  let text = "actual pixels " + actualPixels + "/" + total +
-    " | local direct " + localDirect + "/" + total +
-    " | objectURL cache " + objectUrlCache + "/" + total +
-    " | no full " + counts.noFullDone + "/" + total +
-    " | TN display fallback disabled";
-  if (counts.errorDone) text += " | error " + counts.errorDone + "/" + total;
+  let text = "実表示ピクセル " + actualPixels + "/" + total +
+    " | ローカル直接 " + localDirect + "/" + total +
+    " | objectURLキャッシュ " + objectUrlCache + "/" + total +
+    " | フル画像なし " + counts.noFullDone + "/" + total +
+    " | TN表示フォールバック禁止";
+  if (counts.errorDone) text += " | エラー " + counts.errorDone + "/" + total;
   fullDone = counts.fullDone;
   tnDone = counts.tnDone;
   errorDone = counts.errorDone;
@@ -433,7 +466,7 @@ function renderStripControls(items, group) {
   const status = document.getElementById("strip-group-status");
   const total = stripGroupTotal(items);
   if (input) input.value = String(group);
-  if (status) status.textContent = "strip group " + group + "/" + total;
+  if (status) status.textContent = "グループ " + group + "/" + total;
 }
 function setStripGroup(group) {
   if (!current.id) return;
@@ -441,6 +474,8 @@ function setStripGroup(group) {
   const total = stripGroupTotal(items);
   stripGroup = Math.max(1, Math.min(total, Number(group) || 1));
   renderStrip();
+  const status = document.getElementById("strip-group-status");
+  if (status) status.textContent = "ジャンプ: " + group + "/" + total;
 }
 
 function entryForPage(page) {
@@ -604,8 +639,7 @@ function setViewMode(mode) {
     viewMode = mode;
     lastViewMode = mode;
   }
-  const select = document.getElementById("view-mode");
-  if (select) select.value = fullscreenState !== "off" ? "fullscreen" : viewMode;
+  syncViewModeButtons();
   applyFullscreenPresentation();
   renderReader();
   renderPosition();
@@ -637,25 +671,45 @@ function renderPosition() {
   }
   const second = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
   const page = second ? current.page + "-" + second : String(current.page);
-  el.textContent = "position: " + page + " / " + (current.count || "-");
+  el.textContent = "位置: " + page + " / " + (current.count || "-");
 }
 
 function renderLoadingPosition(id, pageLabel, pairLabel) {
   const el = document.getElementById("reader-position");
   if (!el || !id) return;
-  el.textContent = "position: " + pageLabel + pairLabel + " / -";
+  el.textContent = "位置: " + pageLabel + pairLabel + " / -";
+}
+
+function viewLabel(mode) {
+  const labels = { single: "単一", double: "見開き", fullscreen: "全画面", off: "オフ", fallback: "フォールバック", active: "アクティブ" };
+  return labels[mode] || mode;
+}
+function spreadButtonText(dir) {
+  return dir === "rtl" ? "右→左" : "左→右";
+}
+function syncViewModeButtons() {
+  const active = fullscreenState !== "off" ? "fullscreen" : viewMode;
+  for (const button of document.querySelectorAll("#view-mode-buttons button[data-mode]")) {
+    button.setAttribute("aria-pressed", button.dataset.mode === active ? "true" : "false");
+  }
+  const spreadButton = document.getElementById("spread-direction");
+  if (spreadButton) {
+    spreadButton.textContent = spreadButtonText(spreadDirection);
+    spreadButton.setAttribute("aria-pressed", String(spreadDirection === "rtl"));
+  }
 }
 
 function renderViewState() {
   const el = document.getElementById("view-state");
   if (!el) return;
+  syncViewModeButtons();
   if (!current.id) {
-    el.textContent = "view: " + viewMode + "・last layout: " + lastViewMode + "・spread " + spreadDirection + "・fullscreen " + fullscreenState;
+    el.textContent = "表示: " + viewLabel(viewMode) + "・直前レイアウト: " + viewLabel(lastViewMode) + "・開き方向 " + spreadButtonText(spreadDirection) + "・全画面 " + viewLabel(fullscreenState);
     return;
   }
   const pair = doubleActive() ? (currentPairEnd || (readerItems().length > 1 ? readerItems()[1].page : null)) : null;
   const pageText = pair ? current.page + "-" + pair : String(current.page);
-  el.textContent = "view: " + viewMode + "・display: " + displayMode() + "・last layout: " + lastViewMode + "・spread " + spreadDirection + "・page " + pageText + " / " + (current.count || "-") + "・source " + (displaySource || "-") + "・fullscreen " + fullscreenState;
+  el.textContent = "表示: " + viewLabel(viewMode) + "・表示モード " + viewLabel(displayMode()) + "・直前レイアウト " + viewLabel(lastViewMode) + "・開き方向 " + spreadButtonText(spreadDirection) + "・ページ " + pageText + " / " + (current.count || "-") + "・表示源 " + (displaySource || "-") + "・全画面 " + viewLabel(fullscreenState);
 }
 
 function loadSpreadDirection() {
@@ -671,7 +725,7 @@ function setSpreadDirection(dir) {
     localStorage.setItem(SPREAD_DIRECTION_STORAGE_KEY, spreadDirection);
   } catch (err) {}
   const button = document.getElementById("spread-direction");
-  if (button) button.textContent = spreadDirection;
+  if (button) button.textContent = spreadButtonText(spreadDirection);
   renderReader();
   renderPosition();
   renderViewState();
@@ -694,13 +748,13 @@ function renderGalleryLoading(id, page, second) {
   const card = galleryCache.get(id);
   const title = card && card.gallery ? card.gallery.title : id;
   const cover = "";
-  reader.innerHTML = "<div class='reader-loading' data-reader-loading data-id='" + id + "' data-page='" + pageLabel + "' data-render='" + renderGeneration + "'>" +
+  reader.innerHTML = "<div class='reader-loading' data-reader-loading aria-busy='true' data-id='" + id + "' data-page='" + pageLabel + "' data-render='" + renderGeneration + "'>" +
     cover +
-    "<div class='reader-loading-text'>読込中: " + escapeHTML(title) + " page " + pageLabel + pairLabel + "</div>" +
+    "<div class='reader-loading-text'>読込中: " + escapeHTML(title) + " ページ " + pageLabel + pairLabel + "</div>" +
     "</div>";
   const pagenum = document.getElementById("pagenum");
   if (pagenum) pagenum.value = pageLabel;
-  setPrefetchStatus("gallery read load: " + id);
+  setPrefetchStatus("ギャラリー読み込み: " + id);
   renderLoadingPosition(id, pageLabel, pairLabel);
   renderViewState();
   updateTabTitle((card && card.gallery && card.gallery.japanese_title) || title || id);
@@ -850,7 +904,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       storeFullCache(entry, "no_full", null, galleryId);
       updatePrefetchCounts("no_full", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-        setPrefetchStatus("no full image: " + targetPage, true);
+        setPrefetchStatus("フル画像なし: " + targetPage, true);
       }
       return;
     }
@@ -858,7 +912,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       storeFullCache(entry, "error", null, galleryId);
       updatePrefetchCounts("error", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-        setPrefetchStatus("image load failed: " + targetPage, true);
+        setPrefetchStatus("画像読み込み失敗: " + targetPage, true);
       }
       return;
     }
@@ -866,7 +920,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
       storeFullCache(entry, "tn", null, galleryId);
       updatePrefetchCounts("tn", entry, galleryId, allowRecount);
       if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-        setPrefetchStatus("tn display fallback disabled: " + targetPage, true);
+        setPrefetchStatus("TN表示フォールバック禁止: " + targetPage, true);
       }
       return;
     }
@@ -890,7 +944,7 @@ async function loadFullImage(img, entry, signal, galleryId = current.id, loadSho
     storeFullCache(entry, "error", null, galleryId);
     updatePrefetchCounts("error", entry, galleryId, allowRecount);
     if (loadShowGen === showGeneration && loadOpenGen === openGeneration && loadRender === renderGeneration && Number(img.dataset.render) === targetRender && Number(img.dataset.page) === targetPage && img.dataset.hash === targetHash) {
-      setPrefetchStatus("image load failed: " + targetPage, true);
+      setPrefetchStatus("画像読み込み失敗: " + targetPage, true);
     }
   }
 }
@@ -917,8 +971,8 @@ function renderReader() {
       setSourceStatus(entry, sourceStatusByEntry.get(key) || fullCache.get(key).status || "cache", current.id);
       markDisplayObjectUrlKey(key);
     }
-    const marker = entry.local ? " title='local'" : "";
-    const alt = item.page + (entry.local ? "・local" : "");
+    const marker = entry.local ? " title='ローカル'" : "";
+    const alt = "ページ " + item.page + (entry.local ? "・ローカル" : "");
     parts.push("<img data-viewer-display='1' data-gallery='" + current.id + "' data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
   }
   if (spreadDirection === "rtl" && items.length > 1) parts.reverse();
@@ -1076,7 +1130,7 @@ function runBackgroundRead(showGen, openGen) {
         const status = document.getElementById("prefetch-status");
         if (status) {
           status.classList.toggle("error", true);
-          status.textContent = "read post error: " + err.message;
+          status.textContent = "読み状態送信エラー: " + err.message;
         }
       }
     });
@@ -1088,7 +1142,7 @@ async function showPage() {
   refreshStrip();
   const entry = current.files[current.page - 1];
   if (!entry) {
-    setPrefetchStatus("page out of range", true);
+    setPrefetchStatus("ページ範囲外", true);
     return;
   }
   const data = { page: current.page, src: entrySource(entry, current.id), local: !!entry.local, format: formatForEntry(entry) };
@@ -1162,10 +1216,10 @@ function renderStrip() {
       setSourceStatus(entry, sourceStatusByEntry.get(key) || fullCache.get(key).status || "cache", current.id);
       markGalleryObjectUrlKey(key);
     }
-    const marker = entry.local ? " title='local'" : "";
-    const localMark = entry.local ? "・local" : "";
+    const marker = entry.local ? " title='ローカル'" : "";
+    const localMark = entry.local ? "・ローカル" : "";
     const badge = item.badge > 1 ? "<div class='badge'>" + item.badge + "</div>" : "";
-    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-viewer-display='1' data-gallery='" + current.id + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='" + page + localMark + "'>" + badge + "</a>");
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-viewer-display='1' data-gallery='" + current.id + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='ページ " + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
   attachDisplayLoadHandlers(document.getElementById("thumbs"));
@@ -1190,7 +1244,7 @@ function refreshStrip() {
 function renderStripLoading(id) {
   const thumbs = document.getElementById("thumbs");
   if (!thumbs) return;
-  thumbs.innerHTML = "<div class='strip-loading' data-strip-loading data-id='" + id + "'>strip loading</div>";
+  thumbs.innerHTML = "<div class='strip-loading' data-strip-loading data-id='" + id + "' aria-busy='true'>読み込み中</div>";
 }
 
 function showGalleryMetaFromCache(id) {
@@ -1199,8 +1253,8 @@ function showGalleryMetaFromCache(id) {
   document.getElementById("gallery").innerHTML =
     "<b>" + escapeHTML(title) + "</b> <span class='meta'>" + escapeHTML((card && card.gallery && card.gallery.language) || "") + " / " + escapeHTML((card && card.gallery && card.gallery.type) || "") + "</span><br>" +
     "<span class='meta'>" + escapeHTML(((card && card.gallery && card.gallery.tags) || []).join(", ")) + "</span><br>" +
-    "<span class='meta'>loading</span>";
-  setPrefetchStatus("gallery read load: " + id);
+    "<span class='meta'>読み込み中</span>";
+  setPrefetchStatus("ギャラリー読み込み: " + id);
   updateTabTitle((card && card.gallery && card.gallery.japanese_title) || title || id);
 }
 function updateThumbCache(key, objectUrl) {
@@ -1344,9 +1398,9 @@ window.addEventListener("keydown", async (e) => {
     if (fullscreenState !== "off") setFullscreenFromGesture();
     return;
   }
-  if (e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
   if (e.key === "ArrowLeft") { if (movePage(spreadDirection === "rtl" ? 1 : -1)) await showPage(); }
   if (e.key === "ArrowRight") { if (movePage(spreadDirection === "rtl" ? -1 : 1)) await showPage(); }
+  if (e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
   if (e.key === "d") setViewMode("double");
   if (e.key === "s") setViewMode("single");
   if (e.key === "r") setSpreadDirection(spreadDirection === "rtl" ? "ltr" : "rtl");
@@ -1385,7 +1439,6 @@ document.getElementById("complete").addEventListener("click", async () => {
   await post("/api/read", { gallery_id: current.id, page: current.page, complete: true });
   syncReadStateCache(current.id, { last_page: current.page, fully_read: 1 });
 });
-document.getElementById("view-mode").addEventListener("change", (e) => setViewMode(e.target.value));
 document.getElementById("view-mode-buttons").addEventListener("click", (e) => {
   const modeButton = e.target.closest("button[data-mode]");
   if (modeButton) {
