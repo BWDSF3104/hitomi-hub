@@ -7,6 +7,7 @@
 ## Rule
 
 - 本プロジェクトの通常スクリーンショットの被写体は、Playwright browser toolで表示したブラウザ画面の画像とする。
+- 画面確認サイズは `docs/ai/rules/screen-confirmation-size-rule.md` の window size基準を使う。固定 target size（`1280x900` など）を通常確認の合格条件にしない。
 - 通常確認のスクリーンショット・visual layoutは `kilo-playwright_browser_take_screenshot` / `kilo-playwright_browser_snapshot` などの Playwright browser画面を基準にする。
 - 通常スクリーンショットでは OS foreground化は不要。`kilo-screen-capture.ps1`を使う必要はない。
 - `kilo-screen-capture.ps1`は、Playwright browser画面画像で確認できない OS-level exceptionのためにだけ使う exception scriptとして扱う。その場合だけ foreground activationが必要。

@@ -1,10 +1,10 @@
 # Strict screen confirmation criteria (2026-11-02)
 
-Status: active. This decision sets how screen confirmation pass criteria must be defined. Previous visual confirmation using a stale browser tab is not accepted as meaningful visual confirmation.
+Status: active. This decision sets how screen confirmation pass criteria must be defined. Previous visual confirmation using a stale browser tab is not accepted as meaningful visual confirmation. The fixed target viewport requirement is superseded by `docs/ai/decisions/2026-11-05-window-size-based-screen-confirmation-rule.md`; screen confirmation uses the actual window size on the fresh target.
 
 ## Criteria setting method
 
-1. First set a target viewport and measure before any `window.resize`.
+1. First measure the actual window size on a fresh target and use that as the confirmation basis. Do not require a fixed target viewport.
 2. Use a fresh isolated browser tab or fresh profile. Do not reuse a tab that already produced an intercepted/stale response.
 3. Take a direct server baseline first. UI confirmation is valid only when the UI network response matches the direct server baseline.
 4. Confirm behavior through actual UI submit/click events, not only by checking handler existence or DOM state.
@@ -57,7 +57,7 @@ The search button passes only when all of the following are true:
 
 Initial display size means the visual state at first load before any `window.resize`, before any reload, and before any manual cache clear.
 
-Use target viewport `1280x900` for strict confirmation. At root font-size `16px`, the expected values are:
+No fixed target viewport is required. Use the actual window size on the fresh target as the confirmation basis. The following `1280x900` values are historical examples, not current target-size pass criteria. At root font-size `16px`, explicit contracts remain checked against the measured window size; otherwise expected values are:
 
 1. `.side`
    - actual `getBoundingClientRect().width` must be `480px`, equivalent to `30rem`.

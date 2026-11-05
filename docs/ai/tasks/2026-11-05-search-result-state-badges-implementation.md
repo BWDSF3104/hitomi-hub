@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: visual correction commit 1e1df8f push済み。Google Drive screenshot保存済み。strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要
+**Next Action**: 画面確認サイズをwindow size基準へルール化済み。commit/push後、人工resizeなしでfresh window size基準の actual confirmationを行い、本項目の合格条件を最終判断
 
 ## 意図 / 背景
 
@@ -245,6 +245,13 @@
 - First status card exact visual properties: `class="card has-status"`, `background-color: rgb(37, 42, 49)`, `box-shadow: rgb(138, 180, 248) 0px 0px 0px 2px inset`, badge `表示済み 既読 保存済み`, summary reset button `data-reset='all'`. `#results` rect left/right was `512px` / `1249px`.
 - Playwright screenshot saved locally: `docs/ai/tmp/gray-status-card-summary-reset-2026-11-05.png`.
 - Google Drive screenshot copied: `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\gray-status-card-summary-reset-2026-11-05.png`
+
+### ルール変更（2026-11-05 07:47）
+
+- 画面確認に固定目標サイズを設けない。以後の基準は実際に表示している window sizeとする。
+- 正典追加: `docs/ai/rules/screen-confirmation-size-rule.md`、`docs/ai/decisions/2026-11-05-window-size-based-screen-confirmation-rule.md`。
+- `docs/ai/decisions/2026-11-02-strict-screen-confirmation-criteria.md` の exact `1280x900` target-size項目を supersedeする。fresh target、direct server baseline、actual UI event、network/DOM/visual一致、既存回帰チェックは維持する。
+- 本項目の残件は「固定 exact target」ではなく、人工 resizeで特定サイズへ合わせずに、fresh window sizeで actual confirmationし、合格条件を最終判断することとして更新した。
 
 ## Verification
 
