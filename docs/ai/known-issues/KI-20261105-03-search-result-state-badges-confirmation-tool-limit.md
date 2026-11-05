@@ -35,6 +35,7 @@
 - `S:\Documents\Kilo_Commons\Common_Operations\bin\kilo-fresh-browser.ps1` の browser executable launch pathを削除し、通常実行では Playwright browser tool利用を要求する policy guardへ変更した。
 - CDP target selection limitationは残る。browser executable launchを使わない確認経路では、Playwright browser targetを正典 Playwright toolで測る。
 - `kilo-screen-capture.ps1` fix: target window title指定時、capture前に target window foregroundを確認し、既定では target client rectangleをcaptureする。full virtual screenは `-CaptureFullScreen` の例外モードのみ。
+- 通常スクリーンショットではこの toolは使わない。Playwright browser viewport screenshotだけで確認できる場合は、foreground activationや shell script化は意味がない。
 
 ## 次の対応（段階3）
 
