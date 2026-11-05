@@ -39,7 +39,12 @@
 
 - `docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md` の「`image_min_interval_ms`: 125 ms を維持」の点のみ supersede。同 decision の data lane 100 ms・search page 定数・block 系は維持
 
+## 確認実施（2026-11-05 17:38-17:44 UTC）
+
+- 正典 server `8731` は確認前停止済み。canonical exe で persistent 起動し、pid `29880`・process id `bgp_1accd83940016U9c6J3606X3z7` で `60 ms` config を反映。
+- bounded TN 実測（12 本 × 2 burst・burst 間 5 s・canonical server 8731）: `image` calls 24・`gate_wait_ms` delta `7877 ms`、期待 `7920 ms`（`60 ms × sum(0..11) × 2`）と一致。`retry_sleep_ms=0`・block-like HTTP 0・`cf-mitigated` 0・politeness 1000 ms 退避未発動。
+- `60 ms` で持続窓の block signal 未発動を確認。TN throughput 15〜16 rps は上流 TN 不安定（`no_tn`）でこの窓では確認不能。
+
 ## 未確認点
 
-- 100 ms 未満の持続呼出し（本実測は 660 ms 分の burst）での block 挙動。次回は長い窓で確認する
-- 上流 TN の不安定（`x-cache: no_tn`・502）は appside 表示（proxy は上流 status を透過しない）であり、rate 起因とは分離できない
+- TN throughput 15〜16 rps。上流 TN の `no_tn` 不安定（`x-cache: no_tn`・502）は appside 表示（proxy は上流 status を透過しない）であり、rate 起因とは分離できない

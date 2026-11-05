@@ -3,7 +3,7 @@
 **Status**: 完了
 **Date**: 2026-11-06
 **Backlog**: P3 #10 関連（案A）
-**Next Action**: 値の承認（推奨 60 ms。63.75 ms で prefetch 経路が UI 上限に当たるため 50 ms は効果頭打ち）。承認後の実装: defaultHitomiConfig 1 値 + config.example.json + decision entry + docs sample。健康な上流窓で bounded 持続実測（block 未発生・gate_wait 60 ms・TN 15〜16 rps）
+**Next Action**: なし（正典 server restart・bounded TN gate確認実施済み）
 
 ## 意図 / 背景
 
@@ -82,6 +82,23 @@
 - CLI download 実 gallery 4301695（scratch root・`--limit 2`）: `attempted=2` == `written=2`・`skipped=0`
 - 未確認: 100 ms 未満の**持続**呼出しでの block 挙動（本実測は 660 ms 分の burst）。上流 TN 不安定（`no_tn` 502）は appside 表示で rate 起因と分離不能
 - deployed 注意: 稼働中の正典 server（8731）は起動時の config を読む。60 ms を反映するには正典 server 再起動が必要（本実測は scratch instance で実施し、正典 cache を汚染していない）
+
+## 確認実施（正典 server restart・bounded sustained・2026-11-05 17:38-17:44 UTC）
+
+- 確認前: `Test-NetConnection -ComputerName 127.0.0.1 -Port 8731` は `TcpTestSucceeded: False`。正典 server は停止済み。
+- 正典 server を canonical exe で persistent で起動:
+  - process id `bgp_1accd83940016U9c6J3606X3z7`
+  - pid `29880`
+  - command: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh --port 8731`
+  - readiness: `viewer: http://127.0.0.1:8731`
+- data-dir に `config.json` はなし。`loadConfig` の fallback `config.example.json` が `image_min_interval_ms = 60`。
+- bounded TN 実測: `python docs\ai\tmp\tn60_confirm.py`、12 本 × 2 burst・burst 間 5 s・canonical server 8731。`image` metrics delta: `calls=24`・`gate_wait_ms=7877`・`network_ms=5176`・`retry_sleep_ms=0`。
+  - 期待値: `60 ms × sum(0..11) = 3960 ms` × 2 burst = `7920 ms`。実測 `7877 ms` は rounding/scheduling 差で 60 ms 動作一致。
+  - `retry_sleep_ms=0` かつ effective interval が 60 ms のまま。block signal による 1000 ms politeness 退避は未発動。
+- HTTP block-like response count は 0、`cf-mitigated` header は 0。proxy は upstream block status を透過しないため、block なしの判定は metrics（`retry_sleep_ms=0`・cool down 未発動・interval 60 ms）に基づく。
+- TN response: actual `tn` fetch が 1（`x-cache: tn`・56,648 B）。TN failure は app-side `writeNoTN` 経路（`app/viewer.go:900-905`）で `x-cache: no_tn`。spot check: `GET /api/thumb/5269b5c6...dfed6c58?format=webp&gallery=4301695&variant=bigtn` → `502`・`X-Cache: no_tn`。
+  - `docs/ai/tmp/tn60_confirm.json` の `x_cache_counts` は測定期に `X-Cache` header case 起因で failed response を null と記録した。script は後で header case 対応を修正済み。
+- 未確認のまま: TN throughput 15〜16 rps は上流 TN の `no_tn` 不安定でこの窓では確認不能。60 ms gate と block signal 未発動は確認できた。
 
 ## 完了時 Memory Bank 操作
 
