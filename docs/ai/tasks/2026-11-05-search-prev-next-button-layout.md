@@ -208,6 +208,8 @@ DOM（`form#search` 内・DOM 順 = 視覚読み順）:
 - スクリーンショット（Playwright browser 画面画像・通常スクリーンショット正典。OS foreground capture 不使用）: `docs/ai/tmp/search-prev-next-layout-after-20261105.png`（fresh target page 1。3 行構成・`前` disabled dim・focus ring・status 行右）。filters 行 checkbox 描画の証拠（element screenshot）: `docs/ai/tmp/search-prev-next-filter-row-20261105.png`。
 - Drive task folder `I:\マイドライブ\kilo\2026-11-05-search-prev-next-button-layout` へ copy 済み。SHA256 一致で保存確認: `1298FB8D542E88E80905679590B3E1FF65D2F20155632B2E296278488106F42A`（local == Drive の `search-prev-next-layout-after-20261105.png`）。filter row 証拠 `14248E912D1B9BE9593B87D8923FE172E80F6FEF427CF03F95C472C31593C655`。
 - 正典 `kilo-drive-confirm.ps1` 確認 record（承認内容どおりの content 文・合格条件は上の実測で充足）: `I:\マイドライブ\kilo\2026-11-05\search-prev-next-button-layout-confirmation-2026-11-05.txt`。
+- commit（本項目分単独・Memory Bank 含む）: `49cd64e`（push 済み。remote tip `66dbad6` 上。push 時に父の未 push docs commit `5b04864`/`f12d482`/`2098918`/`6de71b6` も同時に transmit された。commit 内容 = `app/search.html` + `docs/ai/current-task.tsv` + この task record + re-anchor decision。この hash 行は commit 後の追記）。
+- 異常記録: canonical server の tracked background entry（`bgp_1ac036155001t9crTLr9F0JiTQ`）の pid 記録 `28056` は stop 時点で `kilo.exe`（PID 再利用）を指していた。stop で child tree が停止し、実 listener であった hub.exe（PID `26460`・pre-change exe）も停止した。canonical server 停止という意図どおりの結果だが、pid 記録の不一致は異常として記録する。停止後、新 exe で正典 server を PID `31028`（persistent・port 8731）で起動。
 
 段階3 持ち帰り（この項目で解決していない判断）:
 
