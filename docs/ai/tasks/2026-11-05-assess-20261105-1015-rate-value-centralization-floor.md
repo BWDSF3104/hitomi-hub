@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 項目1（値の一元化＋下限ガード）を子へフォアグラウンド委譲
+**Next Action**: 項目1 合格（結果セクション記録済み)・残項目2〜4は親の統括で次委譲
 
 ## 意図 / 背景
 
@@ -47,9 +47,35 @@
 ## 委譲サイクル記録
 
 - 項目1 委譲前状態: HEAD `73507d1`、`git status` clean（2026-11-05 10:16 UTC）。
+- 項目1 着手時: HEAD `0b00053`（上記チェックポイントコミット）、`git status` clean（2026-11-05 10:19 UTC 実測）。
+
+### 項目1 実装確定（子・実装前・2026-11-05 10:20 UTC）
+
+- 記録との差異（要確認点だったが実測で閉じた）: 項目1行は「`gateLane` 下限ガード」と記載。実際のコードと正典照合すると、設定値が確定する箇所は `loadConfig`（`app/main.go` 163-172 行）で、承認範囲（子への指示）も `loadConfig` ガード。実際のコードは承認範囲と一致しているため、ガードは `loadConfig` に実装する（`gateLane` は変更しない）。この差異は記録に残す。
+- 修正方法:
+  1. `app/hitomi.go` `defaultHitomiConfig()`（223 行）: `BgGraceMS: 300` リテラルを廃止し正典 `const defaultBgGraceMS`（350 行）を参照。単一出力元化（`UnmarshalJSON` は既に正典 const 参照・変更なし）。
+  2. `config.example.json`: `hitomi` へ `"gg_force_min_interval_ms": 60000` と `"bg_grace_ms": 300` をコード既定値どおり追加（KI-20261105-07 対応。example 側数値写しのポインタ化は項目4・本項目外）。
+  3. 下限ガード（`app/main.go` `loadConfig`）: `min_interval_ms` / `image_min_interval_ms` に対し、0 は従来どおり「0＝未指定＝既定値」フォールバック（変更なし）、負値は未指定として既定値フォールバック（「0＝未指定＝既定値」の挙動を負値にも適用）、1〜49 ms はキー名を含む明示的な設定エラーで拒否、50 ms 以上は受理。下限は `const minHitomiRateFloorMS = 50`。
+- 影響範囲: `app/main.go`（loadConfig と下限 const）、`app/hitomi.go`（1 行）、`config.example.json`、`app/main_test.go`（新規テストのみ。既存テストリテラル `hitomi_test.go:865`・`:948`、`main_test.go` の 1000/250 アサートは変更しない）。テストの直接 cfg override（`MinIntervalMS = 1` 等）は `loadConfig` を経由しないためガードの影響なし。`test_scan.py` は example の `limits` のみ使用（hitomi 追加キーは影響なし）。
+- 客観的合格条件:
+  - `app` で `go vet . && go test -count=1 -timeout 300s .` すべて合格（Commit Checklist により `python -m pytest tests/ -v` も合格）
+  - 新規テストで実測証明: (a) 1〜49 ms 拒否（エラーメッセージにキー名）、(b) 0→既定フォールバック維持（負値→既定）、(c) 50 ms 以上受理、(d) example の新 2 キー存在と 60000/300 一致、(e) `defaultHitomiConfig().BgGraceMS == defaultBgGraceMS`（単一出力元）
+  - 本項目分だけを単独コミットし push まで
+- 検証方法: 上記コマンド実行。コマンド・結果・経過時間を Verification に記録。UI 変更なし（画面確認該当なし）。
 - 注意: 本タスクは closed 後に reopen したため `current-task.tsv` の参照行が無い（正典 `update` は行を再作成しない・edit 直接編集は不可）。close 時に正典 `end` で行削除相当の確認を行う。
 
 （機械的確認結果は委譲後に追記）
+
+## 項目1 結果（子・実装と検証完了 2026-11-05 10:25 UTC）
+
+- 合否: 合格（項目1の合格条件をすべて実測で確認）
+- 変更内容（承認範囲どおり・項目2〜4は未変更）:
+  1. `app/hitomi.go` `defaultHitomiConfig()`: `BgGraceMS: 300` リテラル → `BgGraceMS: defaultBgGraceMS`（単一出力元化）
+  2. `config.example.json`: `hitomi` へ `"gg_force_min_interval_ms": 60000`・`"bg_grace_ms": 300` 追加（コード既定値と一致）
+  3. `app/main.go`: `const minHitomiRateFloorMS = 50` 追加・`loadConfig` で `min_interval_ms`/`image_min_interval_ms` の下限ガード（0＝従来どおり既定フォールバック・負値は未指定として既定フォールバック・1〜49 ms はキー名を含む明示エラーで拒否・50 ms 以上受理）
+  4. `app/main_test.go`: 回帰テスト5件追加（新規のみ。既存テストリテラル `hitomi_test.go:865`・`:948`・`main_test.go` の 1000/250 アサートは未変更。`encoding/json` import 追加）
+- 採用した判断（段階1）: 下限ガードの配置は「gateLane」記載に対し承認範囲（loadConfig）へ実装。実測で `loadConfig`（163-172 行）が設定値確定箇所であり、gateLane を変更せずとも config 経由値が guard されることをテストで確認。記録の記載と実コードは一致（不一致による持ちら帰なし）。
+- 未解決: KI-20261105-07 は本項目で解決（Status 更新済み）。`known-issues/archive/` への移動・`task_manager.py end` はタスク全体の close 操作（親・全項目完了後）に委譲。`current-task.tsv` の参照行は欠落（edit 直接編集禁止のため作成せず・close 時確認）。
 
 ## Verification
 
@@ -57,6 +83,14 @@
 - `python docs\ai\tmp\rate_probe_20261105_image.py` → `docs/ai/tmp/rate_probe_20261105_image_results.json`（live gg・submit().result() で並行化が実質逐次だったため下項目で再測）
 - `python docs\ai\tmp\rate_probe_20261105_conc.py` → `docs/ai/tmp/rate_probe_20261105_conc_results.json`（真の並行 4/8/12・handshake 分離計測）
 - コード変更なし → 本プロジェクトの検証コマンド該当なし（docs のみ）
+
+### 項目1（実装・2026-11-05 10:22-10:25 UTC・実測）
+
+- `app` で `go vet . && go test -count=1 -timeout 300s .` → 合格: `ok hitomi-hub/app 17.728s`（vet+test 合計経過 17.7 s）
+  - 最初の実行で新規テストの型アサート誤り（`raw["hitomi"]` が既に `map[string]any`）を vet が検出 → 原因分析して修正（`raw` を `map[string]any` に）→ 再実行で合格（単発・反復なし）
+- 新規テスト個別実測（`go test -count=1 -v -run` 5件・全 PASS）: 1〜49 ms 拒否（25 ms・49 ms・エラーメッセージにキー名）、負値→既定フォールバック（-1→1000・-5→250）、0→既定フォールバック維持、50・125 ms 受理、`config.example.json` の新2キー存在と 60000/300 一致＋loadConfig 経由で example の hitomi 全体が `defaultHitomiConfig()` と一致、`defaultHitomiConfig().BgGraceMS == defaultBgGraceMS`（単一出力元）
+- Commit Checklist: `python -m pytest tests/ -v` → 53 passed（10.27 s・`test_canonical_build_freshness.py` 含む）
+- UI 変更なし → 画面確認該当なし（保存先・ファイル名なし）
 
 ## 完了時 Memory Bank 操作
 

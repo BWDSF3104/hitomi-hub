@@ -145,6 +145,10 @@ func (l *Limits) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// assess-20261105-1015 項目1: レート interval の下限ガード。0 は従来どおり「未指定＝既定値」。
+// 1〜49 ms は設定エラーで拒否、50 ms 以上は受理。
+const minHitomiRateFloorMS = 50
+
 func loadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -161,11 +165,15 @@ func loadConfig(path string) (Config, error) {
 		cfg.VirusTotal.MaxDaily = 500
 	}
 	defs := defaultHitomiConfig()
-	if cfg.Hitomi.MinIntervalMS == 0 {
+	if cfg.Hitomi.MinIntervalMS <= 0 {
 		cfg.Hitomi.MinIntervalMS = defs.MinIntervalMS
+	} else if cfg.Hitomi.MinIntervalMS < minHitomiRateFloorMS {
+		return Config{}, fmt.Errorf("config error: hitomi.min_interval_ms must be 0 (unspecified, use default) or >= %d ms, got %d", minHitomiRateFloorMS, cfg.Hitomi.MinIntervalMS)
 	}
-	if cfg.Hitomi.ImageMinIntervalMS == 0 {
+	if cfg.Hitomi.ImageMinIntervalMS <= 0 {
 		cfg.Hitomi.ImageMinIntervalMS = defs.ImageMinIntervalMS
+	} else if cfg.Hitomi.ImageMinIntervalMS < minHitomiRateFloorMS {
+		return Config{}, fmt.Errorf("config error: hitomi.image_min_interval_ms must be 0 (unspecified, use default) or >= %d ms, got %d", minHitomiRateFloorMS, cfg.Hitomi.ImageMinIntervalMS)
 	}
 	if cfg.Hitomi.GGForceMinIntervalMS == 0 {
 		cfg.Hitomi.GGForceMinIntervalMS = defs.GGForceMinIntervalMS

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1016,6 +1017,98 @@ func TestLoadConfigLimitsPreservesExplicitZeroAndDefaultsOmittedFields(t *testin
 		cfg.Limits.YrTimeoutSec != defs.YrTimeoutSec || cfg.Limits.YrCpuLimit != defs.YrCpuLimit ||
 		cfg.Limits.YrSkipLarger != defs.YrSkipLarger || cfg.Limits.YrFastScan != defs.YrFastScan {
 		t.Errorf("omitted limits fields should use defaults: got %+v", cfg.Limits)
+	}
+}
+
+// assess-20261105-1015 項目1 回帰テスト（下限ガード・example 一致・単一出力元）。
+
+func TestLoadConfigRejectsHitomiRateIntervalBelowFloor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":25}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadConfig(path)
+	if err == nil {
+		t.Fatal("min_interval_ms 25ms (below floor 50) should be rejected")
+	}
+	if !strings.Contains(err.Error(), "hitomi.min_interval_ms") {
+		t.Errorf("rejection error should name the key: got %v", err)
+	}
+
+	path = filepath.Join(t.TempDir(), "config-image.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"image_min_interval_ms":49}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = loadConfig(path)
+	if err == nil {
+		t.Fatal("image_min_interval_ms 49ms (below floor 50) should be rejected")
+	}
+	if !strings.Contains(err.Error(), "hitomi.image_min_interval_ms") {
+		t.Errorf("rejection error should name the key: got %v", err)
+	}
+}
+
+func TestLoadConfigHitomiRateFloorAcceptsFiftyAndAbove(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":50,"image_min_interval_ms":125}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("50ms and above should be accepted: got %v", err)
+	}
+	if cfg.Hitomi.MinIntervalMS != 50 || cfg.Hitomi.ImageMinIntervalMS != 125 {
+		t.Errorf("explicit values at or above floor should survive: got %+v", cfg.Hitomi)
+	}
+}
+
+func TestLoadConfigHitomiRateFloorZeroAndNegativeUseDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"hitomi":{"min_interval_ms":-1,"image_min_interval_ms":0}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("negative should fall back to default (unspecified), not error: got %v", err)
+	}
+	defs := defaultHitomiConfig()
+	if cfg.Hitomi.MinIntervalMS != defs.MinIntervalMS || cfg.Hitomi.ImageMinIntervalMS != defs.ImageMinIntervalMS {
+		t.Errorf("zero/negative should use defaults: got %+v", cfg.Hitomi)
+	}
+}
+
+func TestConfigExampleHitomiKeysMatchCodeDefaults(t *testing.T) {
+	path := filepath.Join(dataRoot(), "config.example.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	hitomi, ok := raw["hitomi"].(map[string]any)
+	if !ok {
+		t.Fatal("config.example.json missing hitomi object")
+	}
+	if got, ok := hitomi["gg_force_min_interval_ms"]; !ok || got != float64(60000) {
+		t.Errorf("config.example.json hitomi.gg_force_min_interval_ms: got %v want 60000", got)
+	}
+	if got, ok := hitomi["bg_grace_ms"]; !ok || got != float64(300) {
+		t.Errorf("config.example.json hitomi.bg_grace_ms: got %v want 300", got)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hitomi != defaultHitomiConfig() {
+		t.Errorf("config.example.json hitomi values should match code defaults: got %+v", cfg.Hitomi)
+	}
+}
+
+func TestDefaultHitomiConfigUsesCanonicalBgGraceConst(t *testing.T) {
+	if defaultHitomiConfig().BgGraceMS != defaultBgGraceMS {
+		t.Errorf("defaultHitomiConfig BgGraceMS should output canonical const: got %d want %d", defaultHitomiConfig().BgGraceMS, defaultBgGraceMS)
 	}
 }
 

@@ -220,7 +220,7 @@ func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry)
 
 func defaultHitomiConfig() HitomiConfig {
 	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
-		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: 300}
+		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: defaultBgGraceMS}
 }
 
 func negativeNoFullKey(hash, format string, gg GG) string {
