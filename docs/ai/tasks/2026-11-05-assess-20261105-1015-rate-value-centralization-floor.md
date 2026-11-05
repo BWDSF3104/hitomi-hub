@@ -52,7 +52,9 @@
 
 - 項目2（block 検出）委譲前状態（子の記録）: HEAD `3885ee1`、`git status` clean（2026-11-05 10:27 UTC）。
 - 項目2 機械的確認（親・2026-11-05 10:43 UTC）: `git log` に項目2コミット `7ee82bf` 存在（push 済み）。`git status` clean（委譲前 `d1f2e5b` から悪化なし・項目2分のコミットのみ）。個別タスク記録の項目2結果（合格）と Next Action は子の報告と一致。→ 項目2 合格。項目3の前提（block 検出）充足。
-- 項目3（値変更・テスト re-anchor）委譲前状態: HEAD `7ee82bf`、`git status` clean（2026-11-05 10:43 UTC）。
+- 項目3 機械的確認（親・2026-11-05 11:12 UTC）: `git log` に項目3コミット `3b460c0`（記録 `e394595`）存在（push 済み）。`git status` clean（委譲前 `d30f3fe` から悪化なし）。個別タスク記録の項目3結果（合格・実測値・Drive 保存先）は子の報告と一致。
+- 段階3 carry-over の仕分け（親）: `app/hitomi_test.go:1538` の assert（`politenessDefaultIntervalMS == defaultHitomiConfig().MinIntervalMS`）は新的 data 既定 250 と両立不能。正典 decision `2026-11-05-rate-values-and-concurrency-change-approved.md` は politeness（1000 ms）を block 時の退避先として維持する旨＝段階1の推奨案（正典根拠あり）。よって子の最小 re-anchor（politeness = 1000 のまま・data 既定より大きいことを実証）を**親が採用**し、項目3の承認範囲内の処置として閉じる（残件ではない）。項目2のクールダウンテストは変更なしで合格継続（1000 > 250・1000 > 125）。
+- 項目4（docs ポインタ化・p3-10 re-anchor）委譲前状態: HEAD `e394595`、`git status` clean（2026-11-05 11:12 UTC）。
 - 項目3 委譲前状態（子・実測 2026-11-05 10:47 UTC）: HEAD `d30f3fe`、`git status` clean（`git rev-parse HEAD`・`git status --porcelain` 実測）。正典 decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md` 照合済み（項目1 `0d5dbdf`・項目2 `7ee82bf` 合格済み）。
 
 ### 項目1 実装確定（子・実装前・2026-11-05 10:20 UTC）
