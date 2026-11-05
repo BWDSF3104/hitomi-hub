@@ -1,5 +1,7 @@
 # 2026-11-05 — 検索表示高速化（推奨案）の実装承認
 
+Superseded by（部分・2026-11-06）: `docs/ai/decisions/2026-11-06-tn-image-lane-60ms-approved.md`（本 entry の「image lane 125 ms を維持」の点のみ。data lane 100 ms・search page 定数・block 系は有効）
+
 **実行固有ID**: `assess-20261105-1210`
 **Status**: 承認済み（ユーザー 2026-11-05 12:09 UTC。質問選択で「推奨案: data100ms + worker8」）
 

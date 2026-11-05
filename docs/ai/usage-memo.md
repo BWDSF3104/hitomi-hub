@@ -2,7 +2,7 @@
 
 正典はこのファイル。完成フォルダの `使い方メモ.md` はここから写したコピー（`output/` は追跡外）。
 
-更新: 2026-11-05（rate gate・並行度の数値写しを正典参照へ変更。正典単一出力元は `app/hitomi.go` `defaultHitomiConfig()`（`bg_grace_ms` は `const defaultBgGraceMS`）と `app/main.go` / `app/viewer.html` の該当箇所。方針は decision `docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md`（現行 data・search page worker/prefetch）および `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`（block signal・`Retry-After`・retries・backoff・image lane・CLI download））
+更新: 2026-11-06（image lane 60 ms・data lane 100 ms。正典単一出力元は `app/hitomi.go` `defaultHitomiConfig()`（`bg_grace_ms` は `const defaultBgGraceMS`）と `app/main.go` / `app/viewer.html` の該当箇所。方針は decision `docs/ai/decisions/2026-11-06-tn-image-lane-60ms-approved.md`（image lane 現値）、`docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md`（data lane・search page worker/prefetch）、`docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`（block signal・`Retry-After`・retries・backoff・CLI download））
 
 ## フォルダの形
 
@@ -166,8 +166,8 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
     "max_daily_requests": 500
   },
   "hitomi": {
-    "min_interval_ms": 250,
-    "image_min_interval_ms": 125,
+    "min_interval_ms": 100,
+    "image_min_interval_ms": 60,
     "gg_force_min_interval_ms": 60000,
     "bg_grace_ms": 300,
     "max_retries": 3,

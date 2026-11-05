@@ -235,7 +235,7 @@ func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry)
 }
 
 func defaultHitomiConfig() HitomiConfig {
-	return HitomiConfig{MinIntervalMS: 100, ImageMinIntervalMS: 125, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
+	return HitomiConfig{MinIntervalMS: 100, ImageMinIntervalMS: 60, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: defaultBgGraceMS}
 }
 

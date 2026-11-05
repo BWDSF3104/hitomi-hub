@@ -946,8 +946,8 @@ func TestImageGateUsesLowerImageIntervalSeparately(t *testing.T) {
 	if !c.dataGate.last.IsZero() {
 		t.Error("image gate should not use normal gate last time")
 	}
-	if defaultHitomiConfig().ImageMinIntervalMS != 125 {
-		t.Errorf("image gate default: got %d (decision 2026-11-05)", defaultHitomiConfig().ImageMinIntervalMS)
+	if defaultHitomiConfig().ImageMinIntervalMS != 60 {
+		t.Errorf("image gate default: got %d (decision 2026-11-06)", defaultHitomiConfig().ImageMinIntervalMS)
 	}
 }
 
@@ -1403,7 +1403,7 @@ func TestReadStateFavoriteAndQuery(t *testing.T) {
 }
 
 // 項目2（assess-20261105-1015・block 検出・Retry-After 尊重・クールダウン）。
-// Go テストは mock/httptest を使う（外部 API 呼出しなし）。既存テストリテラルは data `100`、image `125`、
+// Go テストは mock/httptest を使う（外部 API 呼出しなし）。既存テストリテラルは data `100`、image `60`、
 // politeness退避 `1000` を固定し、metrics kind 分離・FIFO・共有 last 連鎖・A-06 意味は変更しない。
 
 func TestBlockSignal403CFMitigatedRetriedWithRetryAfterRespected(t *testing.T) {

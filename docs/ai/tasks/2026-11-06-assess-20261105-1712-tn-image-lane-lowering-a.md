@@ -1,6 +1,6 @@
 # TN 取得間隔の単純下げ（案A）の検討
 
-**Status**: 進行中（検討完了・値の判断保留）
+**Status**: 完了
 **Date**: 2026-11-06
 **Backlog**: P3 #10 関連（案A）
 **Next Action**: 値の承認（推奨 60 ms。63.75 ms で prefetch 経路が UI 上限に当たるため 50 ms は効果頭打ち）。承認後の実装: defaultHitomiConfig 1 値 + config.example.json + decision entry + docs sample。健康な上流窓で bounded 持続実測（block 未発生・gate_wait 60 ms・TN 15〜16 rps）
@@ -59,13 +59,29 @@
 - 値: **60 ms（推奨）** / 80 ms（100 ms 実測帯に近く保守的）/ 50 ms（下限・効果頭打ちで推薦根拠なし）
 - 上流回復後の持続実測（100 呼出し未満・bounded）で block 未発生を確認してから正典化
 
+## 実装反映（承認 2026-11-05 17:16 UTC「承認」）
+
+- `app/hitomi.go` `defaultHitomiConfig()`: `ImageMinIntervalMS` 125 → 60
+- `config.example.json`: `image_min_interval_ms` 125 → 60（`min_interval_ms` は正典値 100 との矛盾を閉じるため sample を 100 へ是正。本項目の sample 更新として記録）
+- `app/hitomi_test.go`: 正典値アサート 125 → 60（`TestImageGateUsesLowerImageIntervalSeparately`・949 行）、コメントリテラル（1406 行）image `125` → `60`
+- `docs/ai/usage-memo.md`: sample 数値を正典値へ、decision ポインタ更新
+- decision entry: `docs/ai/decisions/2026-11-06-tn-image-lane-60ms-approved.md`（`2026-11-05-search-speedup-recommended-approved.md` の image lane 維持行のみ supersede pointer 追加）
+- 作業前チェック（フル画像・viewer・download 接触）: `2026-11-01-root-and-tn-display-correction-policy.md`・`2026-11-01-fast-nonblocking-viewer-policy.md`・`2026-11-01-ggset-generation-and-drift.md` を読了
+- `main_test.go`（50/125 fixture）は明示値テストで `loadConfig` 下限ガード経路。正典既定値ではないため非接触
+
 ## Verification
 
-未実行（検討段階）。実装・実測実施後にコマンド・結果・経過時間を記録する。
-
-## 並行タスク
-
-`docs/ai/tasks/2026-11-05-saved-status-definition.md` が進行中（実装開始指示未受領）。本検討は docs のみで並行継続。
+- `go vet .`（app）: clean。`go test -count=1 -timeout 300s .`（app）: **pass 25.171 s**（re-anchor 後の `TestImageGateUsesLowerImageIntervalSeparately` 含む）
+- ルート `python -m pytest tests/ -v`: **53 passed 11.94 s**（`test_canonical_build_freshness.py`・`TestConfigExampleHitomiKeysMatchCodeDefaults` 含む。search prefetch 固定テスト無変更）
+- canonical build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` 成功
+- gate 実測（scratch instance 8742・正典 runtime cache 非汚染・17:26 UTC・TN 12 本並列・外部呼出し 23）:
+  - `image` kind: calls 12・`gate_wait_ms` 合計 **3973**（算術 60×66 = 3960 と一致 → **60 ms で動作確認**）・network 合計 5188（mean 432 ms）・`retry_sleep_ms` 0
+  - 内訳 TN 200 = 9（17,270〜55,320 B・`x-cache: tn`）、失敗 3（`x-cache: no_tn`・アプリ側 502）。403・`cf-mitigated`・503・522 なし・クールダウン未発動
+  - wall 1015 ms（12 本）。steady-state ceiling は枠 16.7 rps（実測 burst は 12 本/660 ms 枠分）
+- viewer 実機: `/api/image/c05d79ed…e37d8c63?format=webp` → 200・`x-cache: miss`・**300,986 B**（`no_full` でない）
+- CLI download 実 gallery 4301695（scratch root・`--limit 2`）: `attempted=2` == `written=2`・`skipped=0`
+- 未確認: 100 ms 未満の**持続**呼出しでの block 挙動（本実測は 660 ms 分の burst）。上流 TN 不安定（`no_tn` 502）は appside 表示で rate 起因と分離不能
+- deployed 注意: 稼働中の正典 server（8731）は起動時の config を読む。60 ms を反映するには正典 server 再起動が必要（本実測は scratch instance で実施し、正典 cache を汚染していない）
 
 ## 完了時 Memory Bank 操作
 
