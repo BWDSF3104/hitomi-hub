@@ -2,7 +2,7 @@
 
 **Status**: 完了
 **Date**: 2026-11-05
-**Next Action**: C remains unconfirmed. Live TN construction correct; known hash is upstream TN absence. Wait for C re-measurement; no code change.
+**Next Action**: C round5 cold TN re-measurement passed (3 valid samples, median full gate 0ms); TN display-source condition PASS; no implementation change.
 
 ## 意図 / 背景
 
