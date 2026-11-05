@@ -1,6 +1,6 @@
 # 正典 CDP/click tool が本項目の実測で #search-submit を確定できない
 
-**Status**: 未解決（本項目で記録のみ・正典 tool 変更承認外）
+**Status**: 部分解決（Edge executable launchは正典 scriptで禁止化。CDP target selection limitationは残る）
 
 ## 実測
 
@@ -28,6 +28,12 @@
 - `kilo-cdp-measure.ps1` は evaluate 専用で `Input.dispatchMouseEvent` を送れない。fresh target の actual UI events は existing tool range の CDP trusted input click で確認した: `#search-submit`、`#lists-refresh`、`li[data-search-id="4305205"] button[data-reset="viewed"]`、`#saved-search button`。
 - `Input.dispatchKeyEvent` for saved-search key was not received from existing tool target; canonical key delivery also did not fire saved-search submit.
 - `kilo-fresh-browser.ps1 --window-size=1280,900` の actual outer window は `1280x900` だったが、actual content viewport は `innerWidth=1259`、`innerHeight=810` で、strict criteria の exact inner target `1280x900` は確認できなかった。プロジェクト policy が canonical window-size を target viewport と明示的に判定する場合は measured values は pass。
+
+## 正典 script fix
+
+- 本プロジェクトルール `docs/ai/rules/normal-screenshot-rule.md` により、Edge executable launchを禁止。
+- `S:\Documents\Kilo_Commons\Common_Operations\bin\kilo-fresh-browser.ps1` は `msedge.exe` / `chrome.exe` launch pathを削除し、通常実行では Playwright browser tool利用を要求する policy guardへ変更した。
+- CDP target selection limitationは残る。Edgeを起動しない確認経路では、Playwright browser targetを正典 Playwright toolで測る。
 
 ## 次の対応（段階3）
 
