@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: canonical fresh target の exact inner target viewport（1280x900）確認は tool limitation のため未確定。outer target 判定を明示的に確定するか、exact inner を測れる正典 tool を承認してから close する。
+**Next Action**: 通常スクリーンショットは Playwright browser画面画像を基準にする。initial display確認を Playwright で再取得し、OS full-screen は browser画面で確認できない例外時のみ
 
 ## 意図 / 背景
 
@@ -103,6 +103,11 @@
 - known issues：
   - `docs/ai/known-issues/KI-20261105-03-search-result-state-badges-confirmation-tool-limit.md`
   - `docs/ai/known-issues/KI-20261105-04-search-prefetch-worker-undefined-entry-race.md`
+
+- 本プロジェクトルール：`docs/ai/rules/normal-screenshot-rule.md`
+  - 通常スクリーンショットの被写体は Playwright browser画面の画像。
+  - `canonical_initial_display_fresh_target_clean.png` の full virtual screen capture は、例外理由がない通常 visual confirmation evidence として無効。
+  - 2026-11-05 06:27 に `taskkill /IM msedge.exe /F /T` を実行し、起動中 Edge を停止した。
 
 ### visual confirmation
 

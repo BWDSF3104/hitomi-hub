@@ -14,6 +14,12 @@
 - `#search-submit` click、`#reader` focus後 `r` key、`ArrowRight` final page key、`#lists-refresh` click、`data-reset="read"` click、`data-reset="viewed"` clickは `kilo-playwright_browser_click` / `kilo-playwright_browser_press_key` の CDP input event。
 - `kilo-screen-capture.ps1` 正典 capture と `kilo-drive-confirm.ps1` 正典 confirmation record を使用。visual layout は capture + CDP visual layout measurement（`document.elementFromPoint(700, 110)`、`.text`/`.badge`/`.meta` bounding box、`#lists-refresh` visible）で一致。
 
+## ルール適用（2026-11-05 06:29）
+
+- 本プロジェクトルール `docs/ai/rules/normal-screenshot-rule.md` に従い、通常スクリーンショットの被写体は Playwright browser画面の画像とする。
+- `kilo-screen-capture.ps1` の full virtual screen capture は通常 visual confirmation evidence として使用しない。Playwright browser画面内の画像だけでは確認できない例外事項の場合のみ例外的 OS full-screen 確認として扱う。
+- 正典 `bin/kilo-fresh-browser.ps1` は通常スクリーンショット確認のために呼び出さない。2026-11-05 06:27 に `taskkill /IM msedge.exe /F /T` で起動中 Edge を停止した。
+
 ## 正典 fresh target re-measurement observations（2026-11-05 05:34-05:51）
 
 - `kilo-cdp-measure.ps1` を `pwsh` で直接呼ぶと `"SendAsync" と引数の数 "4" に対して、複数のあいまいなオーバーロードが見つかりました。` で失敗した。
