@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-05-search-result-state-badges.md	進行中（案検討・計画のみ。実装未開始）	判断点1回答（route 入力時点・クリックフラグは不採用案）・2確定。3・4の推奨への承認 → 実装開始指示待ち
+docs/ai/tasks/2026-11-05-search-result-state-badges.md	進行中（案検討・計画のみ。実装未開始）	設計判断4点確定（decision 記録済み）→ 実装開始指示待ち（実装未開始）

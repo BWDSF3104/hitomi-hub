@@ -2,7 +2,7 @@
 
 **Status**: 進行中（案検討・計画のみ。実装未開始）
 **Date**: 2026-11-05
-**Next Action**: 判断点1回答（route 入力時点・クリックフラグは不採用案）・2確定。3・4の推奨への承認 → 実装開始指示待ち
+**Next Action**: 設計判断4点確定（decision 記録済み）→ 実装開始指示待ち（実装未開始）
 
 ## 意図 / 背景
 
@@ -93,6 +93,8 @@ C1 の残る定義点（要承認）: 最終 page に「到達」だけで良い
    - card height contract（130px）維持、`.side` 480px、既存回帰（TN cover・generation guard・no-store fetch・full image path・reader nav・favorite/unread）
 
 ## 判断保留（ユーザー承認が必要）
+
+**確定（ユーザー承認 2026-11-05 03:29）** → 正典: `docs/ai/decisions/2026-11-05-search-result-state-badges-approved.md`
 
 1. 表示済みの記録時点: route 入力 or 初回描画到達（失敗開封の扱い）
 2. 既読の auto 判定（最終 page 到達のみ）を許容するか、手動「読み完了」のみとするか
