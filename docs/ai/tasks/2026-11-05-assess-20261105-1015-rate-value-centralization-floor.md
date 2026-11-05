@@ -1,8 +1,8 @@
 # レート値の集約状況確認と短縮可能域の実測（floor 探索）
 
-**Status**: 完了
+**Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 集約状況と latency/gate 支配点を実測し、実務上の下限域を提示
+**Next Action**: 項目1（値の一元化＋下限ガード）を子へフォアグラウンド委譲
 
 ## 意図 / 背景
 
@@ -33,6 +33,23 @@
 - data lane: 250 ms が妥当（逐次検索の実効改善が大きい。100 ms までは実測で通過confirmed、ただし block リスクは未検証域）。
 - image lane: 250 ms のまま、あるいは 125–150 ms に短縮し並行度を 8 へ（並行度を上げないなら短縮の効果が薄い）。
 - 429 以外の block 形態（403/Cloudflare challenge）は現状リトライ対象外（`app/hitomi.go:532` は 429/5xx のみ）→ interval を下げるなら block 検出の追加が必要。
+
+## 実装実行（assess-20261105-1015・2026-11-05 10:16 UTC）
+
+- goal 開始失敗（2回）→ goal 未使用。コマンド正典 `C:\Users\fujim\.config\kilo\command\implement-items.md` 本文に従い、親は統括のみ・実作業は子へフォアグラウンド委譲（逐次1件）。
+- 承認行「直前の内容について承認する。」はメッセージに含まれず。規則どおり直近の assess ID を対象とした（`assess-20261105-1015`＝本タスク）。承認範囲＝本タスク文書に記録済みの「実務上の推奨域」（下記項目1〜4）のみ。
+- 項目と優先順位（依存は本記録の記載どおり: 項目3は項目2が前提）:
+  1. 値の一元化＋下限ガード（`app/hitomi.go:222` 単一出力元化・`config.example.json` 欠落2キー・`gateLane` 下限ガード）— 対応: `known-issues/KI-20261105-07-config-example-missing-rate-keys.md`
+  2. block 検出（403/Cloudflare challenge のクールダウン・`Retry-After` 尊重）— 項目3の前提
+  3. 値変更（data 250 ms・image 125 ms・prefetch/download 並行度 8）＋テストリテラル re-anchor（`app/hitomi_test.go:865`・`:948`）
+  4. docs ポインタ化（`api-rate-limits.md`・`usage-memo.md` の数値写しを正典参照へ）
+
+## 委譲サイクル記録
+
+- 項目1 委譲前状態: HEAD `73507d1`、`git status` clean（2026-11-05 10:16 UTC）。
+- 注意: 本タスクは closed 後に reopen したため `current-task.tsv` の参照行が無い（正典 `update` は行を再作成しない・edit 直接編集は不可）。close 時に正典 `end` で行削除相当の確認を行う。
+
+（機械的確認結果は委譲後に追記）
 
 ## Verification
 
