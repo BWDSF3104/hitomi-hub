@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-05-saved-status-definition.md	進行中	完成後ファイル削除の扱い確認（時点記録 vs state 再計算）。実装開始指示未受領
+docs/ai/tasks/2026-11-05-saved-status-definition.md	進行中	assess-20261106-0326: 完成後削除の扱いの選択（推奨A=event列 saved_at / 推奨B=現行state再計算維持）はユーザー承認を要る。実装開始指示未受領
