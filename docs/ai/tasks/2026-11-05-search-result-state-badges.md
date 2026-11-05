@@ -2,7 +2,7 @@
 
 **Status**: 進行中（案検討・計画のみ。実装未開始）
 **Date**: 2026-11-05
-**Next Action**: 判断点2確定（既読 auto 判定を許容）。1・3・4の推奨への承認 → 実装開始指示待ち
+**Next Action**: 判断点1回答（route 入力時点・クリックフラグは不採用案）・2確定。3・4の推奨への承認 → 実装開始指示待ち
 
 ## 意図 / 背景
 
@@ -104,10 +104,22 @@ C1 の残る定義点（要承認）: 最終 page に「到達」だけで良い
 - **2 は確定**: 既読の auto 判定（最終 page 到達）を許容。手動「読み完了」button は override として維持。
 - 1・3・4 は本計画の推奨を提示（承認待ち）。
 
-#### 1 の推奨
+#### 1 の推奨（新規タブ条件を受けて更新 2026-11-05 03:28）
 
-初回描画到達時点。`openGallery()` で gallery data を解決し initial page を描画したときに `viewed=1`（`viewed_at` は初回のみ）を記録し、fetch 失敗開封は viewed にしない。
-理由: route 入力基準だと URL を開いただけ・galleryinfo 失敗まで「表示済み」になる。正典 read_state semantics（ページ到達で更新・`docs/ai/usage-memo.md:49`）と揃う。書き込み口は `POST /api/viewed`、display path を await しない（fast-nonblocking・generation guard 維持）。
+**新規タブ開封で問題はない**。search card の link は `viewerLink()` が `/#/g/<id>` へ absolute 向け、`targetAttr()` で新タブが開く（`app/search.html:121-128`）。viewed の書き込みは閲覧側 document（viewer page）が `POST` で行うため、新タブでも同一事件として記録される。search page 側は表示 refresh を待つだけ（ページ間同期機構は第1版なし・正典決定1、手動 refresh 許容）。
+
+採用する基準: **`openGallery()` の route 入力時点**（`app/viewer.html:1113` — await 前に `history.replaceState` で route を入れる）。
+- 新規タブ・同一タブ・route 復元 reload のすべてで event が捕まる。
+- 描画到達基準だと、galleryinfo fetch 失敗や `page out of range`（`app/viewer.html:1087-1090` — `runBackgroundRead` 前に return）で**開いたのに記録されない**。ユーザー定義「一度でも閲覧画面を開いていれば」に忠実なのは route 入力基準。
+- 同一 gallery の reopen は idempotent（`viewed_at` は初回のみ、`viewed=1` の再写入のみ）。
+- 書き込み口は `POST /api/viewed`、display path を await しない（fast-nonblocking・generation guard 維持）。
+
+**リンククリック済みフラグ（`clicked`）は新設しない。**
+新設が不要な理由: 新タブ開封は viewer document の load 事件として route 入力で捕まるため、click flag の優位性がない。click flag が拾えるのは「クリックしたが viewer page が load されなかった」ケース（popup blocker・背景タブを開いて即閉じる・right-click open）だけで、これは「閲覧画面を開いた」とは言い難い。新設する場合は false positive 源を明示する必要がある:
+- `li.card` 内 link 以外（同名日本語版 anchor `app/search.html:175`、sidebar favorites/unread link）も click になる
+- 中ボタン・右クリック・keyboard link activation
+- search page 側が viewer 定義の状態を書くことになり、一覧所有ページの分離（正典決定1）の ownership が混ざる
+`clicked` を採るなら `viewed`（viewer document 事件）と分離し、badge は `viewed` を優先・`clicked` は「開封試行」として別表示に限る。
 
 #### 3 の推奨
 
