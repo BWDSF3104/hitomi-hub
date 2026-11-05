@@ -1,6 +1,6 @@
 # 検索画面のprev/nextボタン位置の清書（レイアウト検討）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-05
 **Next Action**: 段階3 判断待ち: filters 行 checkbox の min-height 31px 適用（実測 13x31 縦長描画・行 h=38）を承認規則どおり許容するか input[type=checkbox] を除外かのユーザー承認。3 行契約・DOM 順（前->page->次）・focus ring・disabled visual state・Drive 確認は実測合格（code 分は単独 commit）
 
@@ -211,12 +211,30 @@ DOM（`form#search` 内・DOM 順 = 視覚読み順）:
 - commit（本項目分単独・Memory Bank 含む）: `49cd64e`（push 済み。remote tip `66dbad6` 上。push 時に父の未 push docs commit `5b04864`/`f12d482`/`2098918`/`6de71b6` も同時に transmit された。commit 内容 = `app/search.html` + `docs/ai/current-task.tsv` + この task record + re-anchor decision。この hash 行は commit 後の追記）。
 - 異常記録: canonical server の tracked background entry（`bgp_1ac036155001t9crTLr9F0JiTQ`）の pid 記録 `28056` は stop 時点で `kilo.exe`（PID 再利用）を指していた。stop で child tree が停止し、実 listener であった hub.exe（PID `26460`・pre-change exe）も停止した。canonical server 停止という意図どおりの結果だが、pid 記録の不一致は異常として記録する。停止後、新 exe で正典 server を PID `31028`（persistent・port 8731）で起動。
 
-段階3 持ち帰り（この項目で解決していない判断）:
+段階3 持ち帰り → 解決（親の判断採用 2026-11-05 14:59）
 
-- 承認された制御規則 `input, button { box-sizing: border-box; min-height: 31px; }` を text input・button へ適用すると、filters 行の `input[type=checkbox]` が `13x31` の縦長 box として描画される（filters 行 `h=38`）。承認 mock（`docs/ai/tmp/search-prev-next-layout-mock-proposed.png`）は filters 行高さ `20px`・checkbox は通常の四角で、視覚上食い違う。checkbox を `min-height` 適用から除外するか現状を許容するかが判断未確定。実測（上）と記録確認では確定できず、ユーザーに見える操作感の変更（段階3）として持ち帰る。この項目の code は承認規則どおり（checkbox 除外なし）で commit 済み。
+- 採用（親の判断 2026-11-05 14:59・「より良い方」）: checkbox だけ `min-height: 31px` 規則から外し、`form#search input[type="checkbox"] { min-height: auto; }` を追加して通常四角表示へ戻す。U6 の趣旨は同一レイヤの control 寸法・baseline 統一であり、checkbox を 31px へ引き延ばすことではない。記録: `docs/ai/decisions/2026-11-05-search-checkbox-min-height-exception-approved.md`。例外後の実測（fresh target・人工 resize 不使用）: checkbox `13x13`（例外前 `13x31`）・filters 行 `h=22px`（mock 想定 `20px` へ寄る）・`form#search` height `100px`。3 行契約・必要幅 ≤ `465px`・wrap なし・pager 単独 flex item（`flex-shrink: 0`）・pager 内 DOM 順 `前 -> #page -> 次`・`#search-page-status` pager 行右・`:focus-visible` ring（`#page` → `#search-next` → `#status-viewed`）・page 1 の `#search-prev` `opacity .5` / `cursor not-allowed` / `transform none`・tab order = visual order を維持。text input・button の `min-height: 31px`（実測 `h=31`）は維持。
+
+checkbox 例外後の実測確認（2026-11-05 15:06・fresh target・人工 resize 不使用）:
+
+- `go vet .` clean、`go test -count=1 -timeout 300s .`（`app`）= `ok hitomi-hub/app 25.669s`（`TestEmbeddedUIHasSearchPrevNextButtons`・`TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit` 合格。既存 test ファイル無変更・test 追加なし）
+- `python -m pytest tests/ -v`（hitomi-hub root）= 53 passed（`test_canonical_build_freshness.py` 2 passed 含む。`test_search_prefetch.py`・`test_search_visible_priority.py`・`test_read_lists_debounce.py`・`test_strip_rebuild.py` 影響なし）
+- 正典 build で canonical exe を更新。pre-change exe の正典 server（PID `31028`）を stop し、新 exe で正典 command を再起動: PID `2396`・lifetime persistent・port `8731` listening（`viewer: http://127.0.0.1:8731`）
+- direct server baseline（先行）: `GET http://127.0.0.1:8731/api/search?query=furry&lang=all&page=1&limit=25` → `200`・`Cache-Control: no-store`・`X-Search-Timing: search=1659;record=31;json=1`・`Date: Thu, 05 Nov 2026 15:05:20 GMT`・`Content-Length: 691`（stale shape `84` でない）・`total=32918`・`ids.length=25`。page 2 baseline: `200`・`Content-Length: 975`・`X-Search-Timing` あり・`ids.length=25`
+- actual UI event（fresh target `http://127.0.0.1:8731/search`）: `#search-next` click → `#page` `2`・hash `#/q/furry/page/2`・foreground fetch `/api/search?query=furry&lang=all&page=2&limit=25`（`priority=background` なし）・`#results` card 数 `25` = `ids.length` `25`・`#count` `32918 件・page 2`・`#search-page-status` `page 2 / 1317・total 32918`。`#search-prev` click → `page` `1` へ復帰（`setSearchPage` 非破壊）。console error `0`
+- 行契約（actual window size outer `1678x1025`・content viewport inner `1665x932`・dpr 2。`.side` `480px`・`clientWidth` `465px`・scrollbar `15px`）:
+  - search 行 `y=119` `h=31`・必要幅 `465px` ≤ `465px`（`#query` `307`・`#lang` `96`・`#search-submit` `46`・gap `8`×2）
+  - pager 行 `y=158`（`<span class="pager">` `w=165`・`flex-shrink: 0`・`flex-wrap: nowrap`・`前` `x=16..56`・`#page` `x=64..133`・`次` `x=141..181`・gap `8px`）＋ `#search-page-status` `167px`（`x=314..481`・同じ視覚行の右）→ pager 行必要幅 `340px` ≤ `465px`
+  - filters 行 `y=197` `h=22px`・必要幅 `329px`（content `305` + gap `24`）≤ `465px`・行内 wrap なし
+  - `form#search` height `100px`（`31 + 31 + 22 + gap 8×2`）。re-anchor 後の 3 行契約で合格
+  - pager 内 DOM 順 `search-prev` → `page` → `search-next`。form children 順 `search-row` → `pager` → `search-page-status` → `filter-row` = 視覚読み順（tab order = visual order）
+- 状態維持確認: checkbox `13x13`・computed `min-height: 0px`（auto）。text input・button は `min-height: 31px`・実測 `h=31`。`:focus-visible`（keyboard Tab）= `outline rgb(138,180,248) solid 2px`・`outline-offset 2px`（`#page` → `#search-next` → `#status-viewed` の順で確認。disabled の `#search-prev` は sequential focus で skip）。`:disabled`（page 1）= `opacity 0.5`・`cursor not-allowed`・`transform none`
+- スクリーンショット（Playwright browser 画面画像・通常スクリーンショット正典。OS foreground capture 不使用）: `docs/ai/tmp/search-prev-next-layout-checkbox-exception-after-20261105.png`（`form#search` 3 行。checkbox 通常四角・`前` disabled dim・focus ring・status 行右）
+- Drive task folder: `I:\マイドライブ\kilo\2026-11-05-search-prev-next-button-layout\search-prev-next-layout-checkbox-exception-after-20261105.png`。SHA256 一致で保存確認: `2E70B7014784F9E64D4062B8A33207BDFB6B3D4F01717BCBC43A540168610D6B`（local == Drive）
+- 正典 `kilo-drive-confirm.ps1` 確認 record（実測値・判定・変更内容・検証コマンド）: `I:\マイドライブ\kilo\2026-11-05\search-prev-next-button-layout-checkbox-exception-confirmation-2026-11-05.txt`
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（正典 `task_manager.py end` で削除済み）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし。`KI-20261105-08` は本項目の範囲外・別項目のまま）
+- [x] `backlog.md` の完了項目を削除（該当なし。本項目は backlog 項目の未実装分ではなく、実装済み p3-13 のレイアウト清書。`backlog.md` に本項目該当項目なし）
