@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 案A/B選択と form#search 行契約 re-anchor の承認待ち（実装開始指示未受領）
+**Next Action**: 案B refined（pager 行独立・単独 flex item）＋U1-U3 の CSS 追加の承認待ち。行契約 re-anchor・境界色・focus ring・gap 8px の判断保留9項目
 
 ## 意図 / 背景
 
@@ -74,13 +74,55 @@
 - 行単位の fit を「必要幅 ≤ `.side` 可用幅（465px）」として記録（案B の設計値を正典化）。正典 criteria の `form#search`「単一行・wrap なし」項目は案B の行契約（search 行・pager 行・filters 行）へ re-anchor が必要（同 criteria の observed drift と 2026-11-03 review の記録 drift と整合させる）。
 - スクリーンショットは Playwright browser 画面画像（通常スクリーンショット正典）、Drive のタスク別フォルダへ copy。
 
+### 再検討（ui-ux-pro-maxスキル・2026-11-05 13:58）
+
+スキル検索（Query Contract に従い 1 intent = 1 query、追加 domain/stack）:
+- `pagination pager control alignment prev next --domain ux`
+- `disabled control state clarity not tappable --domain ux`
+- `inline form field group hierarchy spacing --domain ux`
+- `compact control group nowrap single row flex wrap --stack html-tailwind`（実装 stack は Tailwind ではない。flex/shrink 指針として参照）
+- `visible focus dark mode state contrast parity --domain ux`
+
+適用できたルールと本アプリ実測（canonical exe・port 8731・fresh tab・actual window inner `1920x897`）:
+
+| # | ルール（skill） | 本アプリ現状（実測） | 是正 |
+|---|---|---|---|
+| U1 | Disabled state: 透明度低下 + cursor 変更。enabled と同一見た目は不可 | `button { cursor: pointer }` が disabled にも効く。`:disabled` 規則なし → page 1 の `前` が enabled と区別不可（disabled 属性は正しいが視覚表現なし） | `button:disabled { opacity: .5; cursor: not-allowed; }`。disabled 時の文字 contrast `3.89:1`（opacity .5）で状態差は知覚可（1.4.11 の exempt 範囲だが状態差の表示として妥当） |
+| U2 | Focus indicator ≥2px 周長・3:1 state contrast | 実測 computed outline = `rgb(16,16,16) auto 1px` → button surface `#2f343b` に対し `1.52:1`（1px）→ 基準未達 | `button:focus-visible, input:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }` → `5.95:1`（button surface 比）/ `8.59:1`（page 比） |
+| U3 | 非テキスト UI 境界 ≥3:1 | control 境界 `#2f343b` = `1.44:1`、input surface `#1d2126` = `1.12:1` → 境界は情報を持たず text contrast（`10.40:1`）で判別 | 境界を識別子にするなら `#6b7280`（`3.75:1`）または `#606a73`（`3.28:1`）。現状の border-less button 見た目を維持し focus ring で補完する選択も可（要判断） |
+| U4 | Tab order は visual order と一致 | 現行 DOM order `query → lang → page → prev → next → submit` は現行 visual order（前が行1末・次が行2頭）と一致 | `#page` を `前`/`次` の間へ移す場合は DOM 順を視覚行順どおりに書く（`前 → page → 次`）。行 wrapper 導入後も DOM 順＝読み順を維持 |
+| U5 | 隣接 control gap ≥8px（spacing rhythm 4/8） | `form { gap: .4rem }` = `6.4px`（`card` は `.5rem` = 8px を使用 → rhythm 不一致） | 制御行 gap を `8px`（`.5rem`）へ統一。mock 実測で 3 行すべて fit（row1 `465px` flex fill / row2 `465px` flex fill / row3 必要幅 `306px` ≤ `465px`） |
+| U6 | 同一レイヤの control 寸法・baseline 統一 | input height `29px`・button `31px`（`align-items: center` でも 1px drift） | `input, button { box-sizing: border-box; min-height: 31px; }` |
+| U7 | 単一 group は shrink-0（分割されない）、collection は flex-wrap | `#search-prev`/`#search-next` が兄弟 flex item で個別に break 可 | pager を単独 flex item（`<span class="pager">`, `flex-shrink: 0`）化。実測 group 幅 `164.7px`（min-width 40px の `前`/`次` + `#page` 69px + gap 16px）。これにより前・次の隣接が構造で保証される |
+| U8 | 現在位置の視覚表示 | `#search-page-status`（`page 6 / 1317・total 32918`）は form 外の meta 行 | pager 行と同じ行に置くとページ番号と操作が同一読み域になる（status 必要幅 `167px` ≤ `465px`） |
+| U9 | 状態変化は layout bounds を動かさない（opacity/color で表現） | 現状 animation なし | disabled は opacity 変更のみ（transform 不使用）で周囲の jitter なし |
+| U10 | Inputs に label（placeholder-only 不可） | `#query` は placeholder のみ、`#lang`/`#page` に accessible name なし（`labels` なし・`aria-label` なし） | 範囲外（本項目のレイアウト変更では解決しない）。記録のみ: `docs/ai/known-issues/KI-20261105-08-search-form-controls-missing-accessible-names.md` |
+
+Scope note: skill の tap-target（≥44pt iOS / ≥48dp Android）と safe-area は App UI 限定。本アプリは desktop web（dark のみ）なので、touch-target 規則は適用せず、8px gap を spacing rhythm として適用。light/dark parity は単一 dark theme のみ実測（`#e8eaed` on `#14161a` = `15.03:1`、meta `#9aa0a6` = `6.86:1`、status `#8ab4f8` = `8.59:1`）。
+
+### 再検討後の推奨（案B refined）
+
+- 行1: `#query`（`flex: 1 1 160px; min-width: 0`）+ `#lang` + `#search-submit`
+- 行2（pager 行）: `<span class="pager">`（`前` `#page` `次`・単独 flex item・`flex-shrink: 0`・`前`/`次` `min-width: 40px`）+ `#search-page-status`
+- 行3（filters 行）: 4 checkboxes
+- 制御: `gap: 8px`、`min-height: 31px`、`:focus-visible` ring（U2）、`:disabled { opacity: .5; cursor: not-allowed; }`（U1）、境界色は U3 の判断に従う
+- mock 実測: form 全体 `102px`（mock 容器 `117px`・padding 8px 含む）、pager group `164.7px`、`前`/`次` `40px`・`#page` `69px`・`#search-submit` `48px`、status `167px`（切り詰めなし）
+- mock スクリーンショット（Playwright browser 画面・案の mock であり実装確認ではない）: `docs/ai/tmp/search-prev-next-layout-mock-proposed.png`
+- 現行（is Before）: `docs/ai/tmp/search-prev-next-layout-current.png`
+
+テスト影響（refined 案）: `TestEmbeddedUIEnterImplicitSubmitIsFixedToSearchSubmit` の「form 内 button 3個」照合は pager を form 内 wrapper に置けば合格。`TestEmbeddedUIHasSearchPrevNextButtons`（id・`setSearchPage` 本文）は無影響。新固定テスト案: pager wrapper の単独 flex item 性（`class="pager"` と DOM 順 `前 → page → 次`）＋ U1/U2 の CSS 規則存在。`:focus-visible`/`:disabled` 追加は既存 harness（`search_prefetch_harness.mjs` L23 exact string）へ影響なし。
+
 ### 判断保留（ユーザー承認が必要）
 
-1. 案A（単一 control 行＋filters 行）か案B（pager 行独立）か。案B は form height が 68px → 87px になり、正典 criteria の `form#search` 単一行項目の re-anchor を要る。
-2. `#page` を `前`/`次` の間に置く DOM 順変更（viewer nav と揃える）。現行順は `page → 前 → 次`。
-3. pager を form 内の単独 flex item（`<span class="pager">`）化するか（隣接の構造保証のため推奨）。form 外へ移す場合は button 3個照合の re-anchor が発生。
-4. disabled ボタンの視覚化（opacity）を追加するか。
-5. `←` / `→` による検索ページのページ送りを追加するか（任意・範囲外）。
+1. 案A（単一 control 行＋filters 行）か案B（pager 行独立）か。案B refined は form height が 68px → 約102px になり、正典 criteria の `form#search` 単一行項目の re-anchor を要る（案A は `57px` で数値基準側が動く）。
+2. `#page` を `前`/`次` の間に置く DOM 順変更（viewer nav と揃える）。現行順は `page → 前 → 次`。U4（tab order = visual order）の観点では、変更後も DOM 順＝読み順で書くことが必須。
+3. pager を form 内の単独 flex item（`<span class="pager">`・`flex-shrink: 0`）化するか（隣接の構造保証のため推奨）。form 外へ移す場合は button 3個照合の re-anchor が発生。
+4. disabled の視覚化（U1: `opacity: .5` + `cursor: not-allowed`）を追加するか。現行は `button { cursor: pointer }` が disabled にも適用され、見た目が enabled と同一。
+5. focus indicator（U2）を正典 CSS に明記するか。UA既定 ring は実測 `1px`・`1.52:1` で skill 基準（≥2px・3:1）未達。`#8ab4f8` 2px + offset 2px へ。
+6. control 境界（U3）を識別子として 3:1 に引き上げるか（`#6b7280` = `3.75:1`）。現状の border-less button 見た目を変えるため、見た目の変更承認が別途必要。境界を変えず focus ring で補完する案も可。
+7. 制御行 gap を 8px（`.5rem`）へ統一し、`min-height: 31px`（U5・U6）で input/button の寸法を揃えるか。
+8. `←` / `→` による検索ページのページ送りを追加するか（任意・範囲外）。
+9. 範囲外として記録した U10（`#query`/`#lang`/`#page` の accessible name 欠如）を本項目で扱うか、KI-record のまま別項目にするか。
 
 ## Verification
 
@@ -91,6 +133,16 @@
 - スクリーンショット（通常スクリーンショット正典・Playwright browser 画面）: `docs/ai/tmp/search-prev-next-layout-current.png`（現行の分割位置を記録）。
 - direct server baseline: `GET /api/search?query=furry&lang=all&page=1&limit=25` → `200`、`X-Search-Timing: search=1751;record=36;json=1`、ids 25。
 - console error は `favicon.ico` 404 のみ（本項目と無関係）。
+
+再検討（2026-11-05 13:58・ui-ux-pro-max）で追加実測:
+
+- server: 正典 exe のまま。session-scoped process が session 切り替えで消えたため正典 command で再起動（PID `28056`・lifetime persistent・port 8731 listening 確認）。canonical build freshness 正典の byte 照合は `python -m pytest tests/test_canonical_build_freshness.py -v` = 2 passed。
+- focus indicator: `#search-next` focus 時 computed outline `rgb(16, 16, 16) auto 1px`、`boxShadow: none`（規則なし＝UA既定）。`#101010` vs button surface `#2f343b` = `1.52:1`（scratch `docs/ai/tmp/prev_next_contrast3.py`）。`button { cursor: pointer }` は disabled に適用され `cursor: not-allowed` 相当がない（`button:disabled` 規則なし）。
+- control 境界 contrast（scratch `docs/ai/tmp/prev_next_contrast.py`・`prev_next_contrast2.py`）: `#2f343b` `1.44:1`、input surface `#1d2126` `1.12:1`、text `#e8eaed` on `#14161a` `15.03:1`、on `#2f343b` `10.40:1`。3:1 を満たす境界は `#6b7280`（`3.75:1`）/ `#606a73`（`3.28:1`）。focus ring `#8ab4f8` は `8.59:1`（page 比）・`5.95:1`（button surface 比）。disabled（opacity .5）は境界 `1.45:1`・text `3.89:1`。
+- tab order 照合: DOM order `query, lang, page, search-prev, search-next, search-submit, status-viewed, status-read, status-saved, status-favorite`。現行 visual order（行1 = query/lang/page/前、行2 = 次/検索/labels）と一致。
+- mock（measurement のみ・ファイル変更なし・測定後に DOM から除去）: 3 行 + gap 8px + min-height 31px + pager 単独 item で、row1 `465px`（query 305px flex fill）・row2 `465px`（pager group `164.7px` + status `292px`）・row3 `306px` ≤ `465px`、form 全体 `102px`。`前`/`次` `40px`、`#page` `69px`、`#search-submit` `48px`。
+- mock スクリーンショット: `docs/ai/tmp/search-prev-next-layout-mock-proposed.png`（案の mock。実装確認ではないので screen confirmation 合格条件は未適用）。
+- accessible name 欠如（U10）は範囲外 problem として `docs/ai/known-issues/KI-20261105-08-search-form-controls-missing-accessible-names.md` に記録。
 
 実装は未着手（実装開始指示未受領）。
 
