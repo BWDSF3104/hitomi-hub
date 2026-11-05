@@ -135,6 +135,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /search", v.serveSearchPage)
 	mux.HandleFunc("GET /api/lists", v.lists)
 	mux.HandleFunc("GET /api/search", v.search)
+	mux.HandleFunc("GET /api/search-first-status", v.searchFirstStatus)
 	mux.HandleFunc("GET /api/search-card/{id}", v.searchCard)
 	mux.HandleFunc("GET /api/gallery/{id}", v.gallery)
 	mux.HandleFunc("GET /api/gallery/{id}/page/{page}", v.pageSource)

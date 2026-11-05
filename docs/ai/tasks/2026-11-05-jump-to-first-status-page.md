@@ -1,6 +1,6 @@
 # 現在の検索条件で表示済み等のステータス付き作品が最初に見つかるページへ移動する機能の検討
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-05
 **Next Action**: 子へ委譲（Phase 1-4 実装・検証）
 
@@ -90,7 +90,14 @@ default 案として追加確認済みの挙動（個別承認不要ならこの
 
 ## Verification
 
-（記入）
+- app 変更後: `go vet .` → clean（1.36s）・`go test -count=1 -timeout 300s .` → `ok hitomi-hub/app 18.335s`（2026-11-05 実行・合計約21.3s）。既存 `searchhtml_test.go` は変更なしで合格
+- 正典 build 実機 UI 確認（rule pointer `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md`・normal screenshot rule）。正典 exe 再build（`go build`→`output\hitomi-hub\hub.exe`）後の canonical server（runtime root `S:\Documents\Kilo_Commons\Common_Operations\scratch\hitomi-usage`・port 8731・PID 10228）で Playwright browser tool（直接 target 使用・browser executable launch なし・OS foreground 不要）で確認。実測 window size 1920x1040・content viewport inner 1920x953・content `.main` 1377x844（固定 size 不使用）
+- 確認シナリオ: query `female:yuri language:polish`（total 59・page 2 = 25 items）。initial load の runSearch（network #6）→ idle prefetch page 2（#49 background dataset + #50-74 background cards）→ 以降 jump click（実操作）
+  1. 該当なし: status 絞り込みなし・未マーク時 click → `GET /api/search-first-status`（#82）hit null → status 行「該当なし」、page input 1 のまま・hash 変更なし・追加 fetch なし。スクリーンショット `2026-11-05-jump-first-status-page-1-nomatch.png`
+  2. jump 移動 + highlight: 準備として rank 25（page 2 先頭）の gallery `2299308` を既存 `POST /api/viewed`（正典 write path・runtime scratch DB）で表示済み化 → click → status 行「jump: page 2・rank 25・#2299308・表示済み」、page input 2、hash `#/q/female%3Ayuri%20language%3Apolish/page/2`（既存 hashchange → runSearch 経路）、hit card `li[data-search-id='2299308']` class `card has-status highlight` + scrollIntoView（top 93px・viewport 内）、badge「表示済み」は既存 card 応答 maps。スクリーンショット `2026-11-05-jump-first-status-page-2-jump-highlight.png`
+  3. prefetch 済み page の重複 fetch なし（cache hit）: jump 後の dataset #85 `x-search-timing: search=0`（cache hit・remote refetch なし）、card #86-116 は prefetch 済み ids の再 request が `x-cache: cache`（perf 表示 `cache cache=28 miss=22`・2 round 目 full cache hit）、target=current click（#118）は status API のみで card/dataset fetch 増なし。JSON 形状 API 正典と一致: `{"hit":{"flags":{"favorite":0,"read":0,"saved":0,"viewed":1},"gallery_id":2299308,"page":2,"rank":25},"lang":"all","query":"female:yuri language:polish","status_mask":15,"total":59}`
+  4. random disabled: query 入力欄に `female:yuri language:polish orderby:random` を実入力（input listener → `updateJumpButton`）→ button `disabled=true`、network 追加なし。スクリーンショット `2026-11-05-jump-first-status-page-3-random-disabled.png`
+- スクリーンショット3枚は Playwright browser 画面画像で `I:\マイドライブ\kilo` 保存（filename に task ID 含む）。OS full-screen 例外は不使用（Playwright browser 画面で確認可）
 
 ## 完了時 Memory Bank 操作
 

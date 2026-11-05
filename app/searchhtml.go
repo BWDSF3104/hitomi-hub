@@ -268,17 +268,19 @@ func searchPageSlice(ids []int, page, limit int) []int {
 	return out
 }
 
-// SearchHTML は hitomi の results.js 相当。plain term は galleriesindex の 1 term hash exact、
-// colon term は nozomi。`language:` は state の language を変え、最初の term fetch へ反映する（C-04）。
-// 前置 term で fetch 済みの同じ area/tag を新 language で再 fetch しない。
-// `search.html?furry` は部分一致ではなく、index に exact key がある term だけ返す。
-func (c *Client) SearchHTML(query, lang string, page, limit int, background bool) ([]int, int, error) {
-	terms := []string{}
-	for _, rawTerm := range strings.Fields(query) {
-		terms = append(terms, normalizeSearchTerm(rawTerm))
-	}
+// searchTermGroups は buildSearchState の term 分類結果（Phase 1 refactor・挙動無変更）。
+type searchTermGroups struct {
+	positive []string
+	negative []string
+	orGroups [][]string
+}
+
+// buildSearchState は SearchHTML から抽出した term 分類と state 構築（Phase 1 refactor・挙動無変更）。
+// order term の処理は parse loop 内（正典 results.js）。orderbykey 既定確定（D-09・results.js 89-95）は
+// fetch 前・term parse 後で維持する。
+func buildSearchState(terms []string, lang string, background bool) (*searchState, *searchTermGroups, error) {
 	if len(terms) == 0 {
-		return nil, 0, errors.New("query has no searchable term")
+		return nil, nil, errors.New("query has no searchable term")
 	}
 
 	state := searchState{area: "", tag: "index", language: orDefault(lang, "all"), orderby: "date", orderbydir: "desc", background: background}
@@ -315,7 +317,7 @@ func (c *Client) SearchHTML(query, lang string, page, limit int, background bool
 	orGroups = filterNonEmptyOrGroups(orGroups)
 
 	if len(positive) == 0 && len(orGroups) == 0 {
-		return nil, 0, errors.New("query has no positive term")
+		return nil, nil, errors.New("query has no positive term")
 	}
 
 	// D-09（results.js 89-95 mirror）: orderbykey 既定確定を fetch 前に行う（popular → 'year'、else 'added'）。
@@ -337,10 +339,29 @@ func (c *Client) SearchHTML(query, lang string, page, limit int, background bool
 		return false
 	})
 
+	return &state, &searchTermGroups{positive: positive, negative: negative, orGroups: orGroups}, nil
+}
+
+// searchAllIDs は hitomi の results.js 相当の full ordered ID list を返す（Phase 1 refactor）。
+// plain term は galleriesindex の 1 term hash exact、colon term は nozomi。`language:` は state の
+// language を変え、最初の term fetch へ反映する（C-04）。前置 term で fetch 済みの同じ area/tag を
+// 新 language で再 fetch しない。`search.html?furry` は部分一致ではなく、index に exact key が
+// ある term だけ返す。cache は searchCache 単一路径・copyInts で immutable（複数 caller 共有で
+// 順序が壊れない）。
+func (c *Client) searchAllIDs(query, lang string, background bool) ([]int, error) {
+	terms := []string{}
+	for _, rawTerm := range strings.Fields(query) {
+		terms = append(terms, normalizeSearchTerm(rawTerm))
+	}
+	state, groups, err := buildSearchState(terms, lang, background)
+	if err != nil {
+		return nil, err
+	}
+
 	// C-04: language term を fetch 前に pre-scan し、state.language を最初の term fetch
 	// へ反映する。同じ tag の language 違い fetch を 1 回に固定する（実 data の
 	// language-scoped dataset は all dataset の subset なので intersection 結果は不変）。
-	for _, term := range positive {
+	for _, term := range groups.positive {
 		if isLanguageTerm(term) {
 			if right := term[strings.Index(term, ":")+1:]; right != "" {
 				state.language = right
@@ -352,46 +373,46 @@ func (c *Client) SearchHTML(query, lang string, page, limit int, background bool
 	var results []int
 	orGroupOffset := 0
 	positiveStart := 1
-	if len(positive) > 0 {
+	if len(groups.positive) > 0 {
 		// D-09（results.js 114 mirror・正典実測）: 最初の positive term が plain で
 		// orderbykey != 'added' のとき集合順序の起点は order dataset。term membership は
 		// 後段の positive filter で intersection（順序保持）なので positive[0] は loop 側で処理する。
-		if !strings.Contains(positive[0], ":") && state.orderbykey != "added" {
+		if !strings.Contains(groups.positive[0], ":") && state.orderbykey != "added" {
 			positiveStart = 0
-			ids, err := c.SearchNozomiParts(&state)
+			ids, err := c.SearchNozomiParts(state)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			results = ids
-			applyOrderForInitial(results, &state)
+			applyOrderForInitial(results, state)
 		} else {
-			ids, err := c.termIDs(&state, positive[0])
+			ids, err := c.termIDs(state, groups.positive[0])
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			results = ids
-			applyOrderForInitial(results, &state)
+			applyOrderForInitial(results, state)
 		}
 	} else {
 		var groupIDs [][]int
-		for _, term := range orGroups[0] {
-			ids, err := c.termIDs(&state, term)
+		for _, term := range groups.orGroups[0] {
+			ids, err := c.termIDs(state, term)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			groupIDs = append(groupIDs, ids)
 		}
 		results = unionIDs(groupIDs)
-		applySearchOrder(results, &state)
+		applySearchOrder(results, state)
 		orGroupOffset = 1
 	}
 
-	for _, group := range orGroups[orGroupOffset:] {
+	for _, group := range groups.orGroups[orGroupOffset:] {
 		set := map[int]bool{}
 		for _, term := range group {
-			ids, err := c.termIDs(&state, term)
+			ids, err := c.termIDs(state, term)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			for _, id := range ids {
 				set[id] = true
@@ -406,36 +427,44 @@ func (c *Client) SearchHTML(query, lang string, page, limit int, background bool
 		results = next
 	}
 
-	if len(positive) > positiveStart {
-		for _, term := range positive[positiveStart:] {
+	if len(groups.positive) > positiveStart {
+		for _, term := range groups.positive[positiveStart:] {
 			if isLanguageTerm(term) {
 				// C-04: pre-scan で state.language は fetch 済み。この term の dataset は
 				// fetch 済みの language-scoped dataset と同一（subset 保証で intersection no-op）なので
 				// 同じ area/tag を再 fetch しない。
 				continue
 			}
-			ids, err := c.termIDs(&state, term)
+			ids, err := c.termIDs(state, term)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			results = intersectIDs(results, ids)
 			if len(results) == 0 {
-				return nil, 0, nil
+				return nil, nil
 			}
 		}
 	}
 
-	for _, term := range negative {
-		ids, err := c.termIDs(&state, term)
+	for _, term := range groups.negative {
+		ids, err := c.termIDs(state, term)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		results = excludeIDs(results, ids)
 	}
 
-	applySearchOrder(results, &state)
-	total := len(results)
-	return searchPageSlice(results, page, limit), total, nil
+	applySearchOrder(results, state)
+	return results, nil
+}
+
+// SearchHTML = searchAllIDs + searchPageSlice（Phase 1 refactor・挙動無変更）。
+func (c *Client) SearchHTML(query, lang string, page, limit int, background bool) ([]int, int, error) {
+	ids, err := c.searchAllIDs(query, lang, background)
+	if err != nil {
+		return nil, 0, err
+	}
+	return searchPageSlice(ids, page, limit), len(ids), nil
 }
 
 func applyOrderForInitial(ids []int, state *searchState) {

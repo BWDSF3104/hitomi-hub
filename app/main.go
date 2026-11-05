@@ -860,6 +860,8 @@ type flags struct {
 	clearComplete bool
 	resetViewed   bool
 	resetRead     bool
+	firstStatus   bool
+	status        string
 }
 
 func main() {
@@ -892,6 +894,8 @@ func main() {
 	fsFlags.StringVar(&f.format, "format", "cbz", "export format: cbz | pdf")
 	fsFlags.StringVar(&f.out, "out", "", "export output file (default Galleries/<id>.<format>)")
 	fsFlags.StringVar(&f.config, "config", "", "config JSON path (default <data-dir>/config.json, fallback config.example.json if missing)")
+	fsFlags.BoolVar(&f.firstStatus, "first-status", false, "report the first page containing a status-flagged gallery (read-only)")
+	fsFlags.StringVar(&f.status, "status", "", "status filter for --first-status: viewed|read|saved|favorite (comma separated, default any)")
 	_ = fsFlags.Parse(args)
 
 	if dataDir == "" {
@@ -951,6 +955,23 @@ func main() {
 		}
 		printJSON(summary)
 	case "search":
+		if f.firstStatus {
+			// jump-to-first-status-page（decision 2026-11-05）: read-only。DB 書込みは
+			// target page 描画時の既存 recordDiscoveredBatch のみで、CLI 計算では書かない。
+			mask, err := parseStatusMask(f.status)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "search: "+err.Error())
+				os.Exit(1)
+			}
+			v := newViewer(db, cfg, root)
+			res, err := v.firstStatus(f.term, f.lang, mask)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "search: "+err.Error())
+				os.Exit(1)
+			}
+			printJSON(firstStatusJSON(f.term, f.lang, mask, res))
+			return
+		}
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
 		mode := "html"
@@ -1171,6 +1192,7 @@ var valueFlags = map[string]bool{
 	"root": true, "gallery-dir": true, "data-dir": true, "term": true, "lang": true,
 	"title": true, "page": true, "id": true, "url": true, "limit": true, "name": true, "query": true,
 	"list": true, "port": true, "format": true, "out": true, "config": true,
+	"status": true,
 }
 
 // findCommand はサブコマンドを許容位置で拾い、残りをフラグ引数として返す

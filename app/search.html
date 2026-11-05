@@ -32,6 +32,7 @@
   .card .badge .flag-saved { color: #ff8a65; }
   .card .badge .flag-favorite { color: #c77dff; }
   .card.has-status { background-color: #252a31; box-shadow: inset 0 0 0 2px #8ab4f8; border-radius: 6px; }
+  .card.highlight { outline: 2px solid #ffd166; border-radius: 6px; }
   .search-card-cover { object-fit: cover; background: #1d2126; }
   .search-card-cover { width: 130px; height: 130px; }
   .card a { font-weight: 600; }
@@ -48,7 +49,7 @@
 </head>
 <body>
 <h1>hitomi hub search（検索ページ）</h1>
-<nav class="page-nav"><a href="/">閲覧</a></nav>
+<nav class="page-nav"><a href="/">閲覧</a> <button id="jump-first-status" type="button">最初のステータス付きページへ</button></nav>
 <div class="cols">
   <div class="side">
     <section>
@@ -60,6 +61,10 @@
         <button id="search-prev" type="button">前</button>
         <button id="search-next" type="button">次</button>
         <button id="search-submit" type="submit">検索</button>
+        <label><input type="checkbox" id="status-viewed" value="viewed">表示済み</label>
+        <label><input type="checkbox" id="status-read" value="read">既読</label>
+        <label><input type="checkbox" id="status-saved" value="saved">保存済み</label>
+        <label><input type="checkbox" id="status-favorite" value="favorite">お気に入り</label>
       </form>
       <div id="search-page-status" class="meta"></div>
       <div id="perf-status" class="meta"></div>
@@ -113,6 +118,7 @@ const readListsDebounceMs = 250;
 let listsDebounceTimer = null;
 let listsWaiters = [];
 let listsFetchPending = null;
+let pendingHighlightId = null;
 const readStateByGallery = new Map();
 const favoriteByGallery = new Map();
 const savedByGallery = new Map();
@@ -334,6 +340,16 @@ function placeholderElement(results, id) {
   return results.querySelector("[data-search-id='" + id + "']");
 }
 
+// jump-to-first-status-page highlight (decision 2026-11-05 design approved). The card height contract is unchanged.
+function highlightCard(id) {
+  const results = document.getElementById("results");
+  if (!results) return;
+  const el = placeholderElement(results, id);
+  if (!el) return;
+  el.classList.add("highlight");
+  el.scrollIntoView({ block: "center" });
+}
+
 function distanceToVisibleArea(id, visibleIds, results, visibleRoot) {
   if (visibleIds.has(id)) return 0;
   const el = placeholderElement(results, id);
@@ -536,6 +552,10 @@ async function runSearch() {
     searchCardsCompleted = true;
     armPrefetchIdle();
     await showLists(searchGen);
+    if (pendingHighlightId && ids.includes(pendingHighlightId)) {
+      highlightCard(pendingHighlightId);
+      pendingHighlightId = null;
+    }
     setStatus(status, "検索完了・カード表示済み " + ids.length + "件");
   } catch (err) {
     if (searchGen !== searchGeneration) return;
@@ -683,6 +703,67 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) interruptPrefetch();
 });
 
+// jump-to-first-status-page (decision 2026-11-05): status checkboxes default = any (all 4).
+// Click is a user-originated foreground request: interrupt the running prefetch first. The route
+// change goes through the existing hashchange → runSearch path (route-derived prefetchEligible=false).
+const STATUS_FLAG_NAMES = { viewed: "表示済み", read: "既読", saved: "保存済み", favorite: "お気に入り" };
+function checkedStatusNames() {
+  const names = [];
+  for (const cb of document.querySelectorAll("#search input[type=checkbox]")) {
+    if (cb.checked) names.push(cb.value);
+  }
+  return names.join(",");
+}
+// random order is disabled here (decision 2026-11-05-jump-first-status-page-random-order-disabled).
+function queryHasRandomOrder(query) {
+  for (const raw of String(query || "").split(/\s+/)) {
+    const term = raw.toLowerCase().replace(/_/g, " ");
+    if (term === "orderby:random" || term === "sortby:random") return true;
+  }
+  return false;
+}
+function updateJumpButton() {
+  const jump = document.getElementById("jump-first-status");
+  if (jump) jump.disabled = queryHasRandomOrder(document.getElementById("query").value);
+}
+function flagNamesText(flags) {
+  return Object.keys(STATUS_FLAG_NAMES).filter((k) => Number(flags && flags[k]) === 1).map((k) => STATUS_FLAG_NAMES[k]).join(" ");
+}
+document.getElementById("query").addEventListener("input", updateJumpButton);
+document.getElementById("jump-first-status").addEventListener("click", async () => {
+  const jump = document.getElementById("jump-first-status");
+  if (jump.disabled) return;
+  interruptPrefetch();
+  const status = document.getElementById("search-status");
+  const query = document.getElementById("query").value.trim();
+  const lang = document.getElementById("lang").value.trim() || "all";
+  const currentPage = Number(document.getElementById("page").value || "1");
+  try {
+    const data = await api("/api/search-first-status?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&status=" + encodeURIComponent(checkedStatusNames()));
+    const hit = data.hit;
+    if (!hit) {
+      setStatus(status, "該当なし");
+      return;
+    }
+    const target = Number(hit.page || 1);
+    const flagText = flagNamesText(hit.flags);
+    setStatus(status, "jump: page " + target + "・rank " + hit.rank + "・#" + hit.gallery_id + (flagText ? "・" + flagText : ""));
+    if (target === currentPage) {
+      highlightCard(hit.gallery_id);
+      return;
+    }
+    pendingHighlightId = hit.gallery_id;
+    const route = searchRoute(query, target);
+    if (window.location.hash === route) {
+      await runSearch();
+    } else {
+      window.location.hash = route;
+    }
+  } catch (err) {
+    setStatus(status, "jump error: " + err.message, true);
+  }
+});
+
 window.addEventListener("hashchange", async () => {
   const search = parseSearchHash(window.location.hash);
   if (search) {
@@ -708,6 +789,7 @@ if (initialSearch) {
   restoreSearchState();
   runSearch();
 }
+updateJumpButton();
 </script>
 </body>
 </html>
