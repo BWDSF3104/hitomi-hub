@@ -1,6 +1,6 @@
 # 正典 `task_manager.py` の PATH 起動失敗（pwsh）
 
-**Status**: 未解決（記録のみ・本項目での修復は行わない）
+**Status**: 解決済み（2026-11-05: `bin\` に `.cmd` shim を全 Python ツール分追加。PATHEXT 解決・実行確認済み）
 
 ## 症状
 
