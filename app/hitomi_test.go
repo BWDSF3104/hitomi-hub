@@ -1401,6 +1401,223 @@ func TestReadStateFavoriteAndQuery(t *testing.T) {
 	}
 }
 
+// 項目2（assess-20261105-1015・block 検出・Retry-After 尊重・クールダウン）。
+// Go テストは mock/httptest を使う（外部 API 呼出しなし）。既存テストリテラル（`:865`・`:948` の
+// 1000/250 アサート）と metrics kind 分離・FIFO・共有 last 連鎖・A-06 意味は変更しない。
+
+func TestBlockSignal403CFMitigatedRetriedWithRetryAfterRespected(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 1
+	var requests int32
+	var firstAt time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&requests, 1) == 1 {
+			firstAt = time.Now()
+			w.Header().Set("cf-mitigated", "challenge")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(403)
+			return
+		}
+		gap := time.Since(firstAt)
+		if gap < 1000*time.Millisecond || gap >= 1500*time.Millisecond {
+			t.Errorf("Retry-After gap between attempts: got %s (expected ~1000 ms・not static 2000 ms backoff)", gap)
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	c.http = srv.Client()
+	body, err := c.fetchRemoteWithGate(context.Background(), srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.dataGate, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "ok" {
+		t.Errorf("body after retry: got %q", string(body))
+	}
+	if requests != 2 {
+		t.Fatalf("requests: got %d (block must be retried)", requests)
+	}
+	metric, ok := c.metricsSnapshot()["data"].(map[string]int64)
+	if !ok {
+		t.Fatalf("metrics data missing: %v", c.metricsSnapshot())
+	}
+	if metric["retry_sleep_ms"] != 1000 {
+		t.Errorf("retry_sleep_ms: got %d (expected 1000 from Retry-After, not 2000 static)", metric["retry_sleep_ms"])
+	}
+	if c.blockCooldownUntil.IsZero() {
+		t.Fatal("block signal did not engage cooldown")
+	}
+	d := c.blockCooldownUntil.Sub(firstAt)
+	if d < blockCooldownDuration-100*time.Millisecond || d > blockCooldownDuration+100*time.Millisecond {
+		t.Errorf("cooldown duration: got %s (expected blockCooldownDuration %s・canonical convention negativeNoFullCacheTTL)", d, blockCooldownDuration)
+	}
+}
+
+func TestBlockStatusesRetriedWithExistingBackoffAndEngageCooldown(t *testing.T) {
+	for _, status := range []int{403, 503, 522} {
+		c := &Client{cfg: defaultHitomiConfig()}
+		c.testGateIntervalMS = 1
+		c.cfg.MaxRetries = 1
+		c.cfg.RetryBackoffMS = 20
+		var requests int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if atomic.AddInt32(&requests, 1) == 1 {
+				w.WriteHeader(status)
+				return
+			}
+			w.Write([]byte("ok"))
+		}))
+		c.http = srv.Client()
+		body, err := c.fetchRemoteWithGate(context.Background(), srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.dataGate, false)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("status %d: %v", status, err)
+		}
+		if string(body) != "ok" {
+			t.Errorf("status %d body: got %q", status, string(body))
+		}
+		if requests != 2 {
+			t.Errorf("status %d requests: got %d (block must be retried・403 was immediate return before item 2)", status, requests)
+		}
+		metric, ok := c.metricsSnapshot()["data"].(map[string]int64)
+		if !ok {
+			t.Fatalf("status %d metrics missing: %v", status, c.metricsSnapshot())
+		}
+		if metric["retry_sleep_ms"] != 20 {
+			t.Errorf("status %d retry_sleep_ms: got %d (expected existing backoff formula 20 ms・no Retry-After)", status, metric["retry_sleep_ms"])
+		}
+		if c.blockCooldownUntil.IsZero() || !c.blockCooldownUntil.After(time.Now()) {
+			t.Errorf("status %d: cooldown not engaged", status)
+		}
+	}
+}
+
+func Test429WithoutRetryAfterKeepsExistingBackoffAndNoCooldown(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 1
+	c.cfg.MaxRetries = 1
+	c.cfg.RetryBackoffMS = 100
+	var requests int32
+	var firstAt time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&requests, 1) == 1 {
+			firstAt = time.Now()
+			w.WriteHeader(429)
+			return
+		}
+		gap := time.Since(firstAt)
+		if gap < 100*time.Millisecond || gap >= 200*time.Millisecond {
+			t.Errorf("429 static backoff gap: got %s (expected ~100 ms existing formula)", gap)
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	c.http = srv.Client()
+	_, err := c.fetchRemoteWithGate(context.Background(), srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.dataGate, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests: got %d", requests)
+	}
+	metric, ok := c.metricsSnapshot()["data"].(map[string]int64)
+	if !ok {
+		t.Fatalf("metrics data missing: %v", c.metricsSnapshot())
+	}
+	if metric["retry_sleep_ms"] != 100 {
+		t.Errorf("retry_sleep_ms: got %d (expected existing 100 ms formula)", metric["retry_sleep_ms"])
+	}
+	if !c.blockCooldownUntil.IsZero() {
+		t.Errorf("429 alone must not engage block cooldown: got %v", c.blockCooldownUntil)
+	}
+}
+
+func TestParseRetryAfterRespectsValueAndCapsAtCanonicalConvention(t *testing.T) {
+	if blockCooldownDuration != negativeNoFullCacheTTL {
+		t.Fatal("cooldown duration must remain the existing canonical convention (no invented number)")
+	}
+	if politenessDefaultIntervalMS != defaultHitomiConfig().MinIntervalMS {
+		t.Errorf("politeness default must equal canonical data lane default: got %d", politenessDefaultIntervalMS)
+	}
+	cases := []struct {
+		value   string
+		want    time.Duration
+		ok      bool
+	}{
+		{"1", 1 * time.Second, true},
+		{"300", 300 * time.Second, true},
+		{"600", blockCooldownDuration, true}, // unreasonable over cap → clamp to 5 min
+		{"-5", 0, false},
+		{"not-a-number", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := parseRetryAfter(tc.value)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("parseRetryAfter %q: got (%v, %v), want (%v, %v)", tc.value, got, ok, tc.want, tc.ok)
+		}
+	}
+	future := time.Now().UTC().Add(2 * time.Second).Format(http.TimeFormat)
+	d, ok := parseRetryAfter(future)
+	if !ok || d < 0 || d > 2*time.Second {
+		t.Errorf("parseRetryAfter HTTP-date %q: got (%v, %v), want 0..2 s", future, d, ok)
+	}
+	past := time.Now().UTC().Add(-10 * time.Second).Format(http.TimeFormat)
+	d, ok = parseRetryAfter(past)
+	if !ok || d != 0 {
+		t.Errorf("parseRetryAfter past HTTP-date %q: got (%v, %v), want (0, true)", past, d, ok)
+	}
+}
+
+func TestBlockCooldownRetreatsBothLanesToPolitenessDefaultAndRestoresOnExpiry(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.testGateIntervalMS = 1
+	c.cfg.MaxRetries = 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403) // block signal（status のみ・cf-mitigated なしでも block）
+	}))
+	defer srv.Close()
+	c.http = srv.Client()
+	if _, err := c.fetchRemoteWithGate(context.Background(), srv.URL, [2]int64{-1, -1}, c.cfg.MinIntervalMS, &c.dataGate, false); err == nil {
+		t.Fatal("block with MaxRetries 0 must return error")
+	}
+	if c.blockCooldownUntil.IsZero() || !c.blockCooldownUntil.After(time.Now()) {
+		t.Fatal("cooldown not engaged after block")
+	}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte{}, nil
+	}
+	// data lane: block 呼出しの gate が last を記録済み。次呼出しは politeness 既定 1000 ms
+	// の枠まで待機する（退避なしなら inject 1 ms で即時）。
+	start := time.Now()
+	if _, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed < 950*time.Millisecond || elapsed > 1300*time.Millisecond {
+		t.Errorf("data lane gate wait during cooldown: got %s (expected ~1000 ms retreat, not inject 1 ms)", elapsed)
+	}
+	// image lane（既定 250 ms）: FIFO 意味を変えない（lane 初呼出しは即時・last 記録）。
+	// warmup 後の次呼出し wait を実測（250 ms なら ~250 ms・退避なら ~1000 ms）。
+	if _, err := c.getImage(context.Background(), "https://btn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
+		t.Fatal(err) // warmup（lane 初呼出し・即時・last 記録）
+	}
+	start = time.Now()
+	if _, err := c.getImage(context.Background(), "https://btn."+hitomiDomain+"/x", [2]int64{0, 3}, false); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed < 950*time.Millisecond || elapsed > 1300*time.Millisecond {
+		t.Errorf("image lane gate wait during cooldown: got %s (expected ~1000 ms retreat, not 250 ms)", elapsed)
+	}
+	// 満了後は現行 interval（test inject 1 ms）へ復帰
+	c.blockCooldownUntil = time.Now().Add(-1 * time.Second)
+	start = time.Now()
+	if _, err := c.getImage(context.Background(), "https://btn."+hitomiDomain+"/y", [2]int64{0, 3}, false); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Errorf("after cooldown expiry: got %s (expected immediate・restore to current interval)", elapsed)
+	}
+}
+
 func TestClientRecordsFetchMetricsForMockFetch(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig(), fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		if classifyFetchURL(rawurl) != "version" {

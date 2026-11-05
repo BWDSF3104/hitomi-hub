@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 項目1 合格（結果セクション記録済み)・残項目2〜4は親の統括で次委譲
+**Next Action**: 項目2 合格（結果セクション記録済み)・項目3の前提充足・残項目3〜4は親の統括で次委譲
 
 ## 意図 / 背景
 
@@ -69,6 +69,32 @@
 
 （機械的確認結果は委譲後に追記）
 
+### 項目2 実装確定（子・実装前・2026-11-05 10:31 UTC）
+
+- 作業前チェック（AGENTS.md・viewer/download 接触タスク必須条）として以下を事前に読了（ファイル名明記）:
+  - `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`
+  - `docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`
+  - `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`
+  - 加えて正典 build ルールのポインタ先 `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md` と build command 正典 `docs/ai/decisions/2026-11-02-canonical-latest-build-confirmation-rule.md`（canonical build・server コマンドの正典）を参照
+- 記録とコードの照合: §3「429 以外の block 形態（403/Cloudflare challenge）は現状リトライ対象外（`app/hitomi.go:532` は 429/5xx のみ）」→ 実コード 530-544 行と一致。不一致なし（実装可能）。gateLane は FIFO・共有 `last` 連鎖・A-06（sleep 中 ctx cancel 即 return）意味を維持したまま、クールダウン区間の effective interval 適用のみ追加。
+- 修正方法:
+  1. `app/hitomi.go` `fetchRemoteWithGate`: block signal 判定（`isBlockSignal`）追加 = 403 / `cf-mitigated` ヘッダ（Cloudflare challenge）/ 503 / 522。block をリトライ対象化（backoff は既存 `RetryBackoffMS×(attempt+1)` 式を基盤）。403 は従来即時 return → block として backoff 付きリトライへ変更（承認範囲内。403 の backoff 式は既存 429/5xx と同一式を採用）。
+  2. `Retry-After`（429・block 双方）: 存在したら backoff として尊重。秒数（RFC 9110 delay-seconds）と HTTP-date の両形式。負値・解析不能は ok=false → 既存静的 backoff へフォールバック（挙動変更なし）。上限 `maxRetryAfterMS = blockCooldownDuration`（5 分・下記根拠）。
+  3. クールダウン: block signal 検出時 `blockCooldownUntil = now + blockCooldownDuration`（Client 領域・`mu` 保護）。クールダウン中は `gateLane` の effective interval を両 lane（data・image）で `max(現行 interval, politenessDefaultIntervalMS)` へ退避。
+  4. 数値の根拠（推測数値を作らない・段階1 採用判断）:
+     - `blockCooldownDuration = negativeNoFullCacheTTL`（既存正典 convention 5 分・`app/hitomi.go:22`）。UI 側の既存 convention `PREFETCH_COOLDOWN_MS = 300000`（`app/search.html`・`tests/test_search_prefetch.py` が「429 sets a 5 minute cooldown in memory」で assert）と同一値。新たな数値の捏造なし。
+     - `politenessDefaultIntervalMS = 1000`（正典 politeness 既定。`defaultHitomiConfig()` data lane 既定・`api-rate-limits.md`/`usage-memo.md` の data 1000 ms 正典値と一致）。
+     - `Retry-After` 上限 = `blockCooldownDuration`（5 分）。根拠: 正典 convention の penalty window（5 分）を超える server 提示は「不合理に大きい値」として clamp。既存 convention 以外の数字は使わない。
+     - クールダウン退避は「effective interval への max 適用」で実装（既定値の変更ではない → 項目3 の領域外・既存テストリテラル `hitomi_test.go:865`・`:948`（1000/250 アサート）は変更しない）。
+- 影響範囲: `app/hitomi.go`（`fetchRemoteWithGate` 末尾 status 分岐、`gateLane` 冒頭の effective interval、Client へ `blockCooldownUntil` 1 フィールド、const 3・helper 2）、`app/hitomi_test.go`（新規テストのみ）。metrics（kind 分類・`marker.<priority>` 分離）・FIFO・共有 last 連鎖・A-06・既定値・docs は変更しない。UI 変更なし（画面確認該当なし）。
+- 客観的合格条件:
+  1. `app` で `go vet . && go vet && go test -count=1 -timeout 300s .` 全合格
+  2. `python -m pytest tests/ -v` 合格
+  3. 新規テストで実測証明: (a) 403/`cf-mitigated`/503/522 の block 判定とリトライ、(b) `Retry-After`（429・block）尊重（記録 retrySleep の実測・静的 backoff との区別）、(c) 上限 clamp（`parseRetryAfter` 600 s → 5 分）、(d) クールダウン有効中に data・image 両 lane の gate wait が 1000 ms へ退避（実測 elapsed）、クールダウン満了後は現行 interval 復帰、(e) 429 のみ（block なし）はクールダウン不发動（意味維持）
+  4. 正典 build（canonical exe 再 build）で実機確認: CLI download 実在 gallery で attempted == written。viewer `/api/image/<hash>?format=webp` が 200 / `x-cache: miss|cache|local`・`no_full` でないこと（バイト数記録）
+- 検証方法: 上記コマンド実行。外部 API 実呼出しは実機確認のみ（正典 UA・`referer`・現行 rate 1000/250 ms 遵守）。テストは httptest/mock（外部 API 呼出しなし）。コマンド・結果・経過時間を Verification に記録。
+- 項目2 終了判定は本記録の「項目2 結果」セクションで行い、タスク全体 Status は進行中のまま（親が全項目完了後に end）。
+
 ## 項目1 結果（子・実装と検証完了 2026-11-05 10:25 UTC）
 
 - 合否: 合格（項目1の合格条件をすべて実測で確認）
@@ -79,6 +105,19 @@
   4. `app/main_test.go`: 回帰テスト5件追加（新規のみ。既存テストリテラル `hitomi_test.go:865`・`:948`・`main_test.go` の 1000/250 アサートは未変更。`encoding/json` import 追加）
 - 採用した判断（段階1）: 下限ガードの配置は「gateLane」記載に対し承認範囲（loadConfig）へ実装。実測で `loadConfig`（163-172 行）が設定値確定箇所であり、gateLane を変更せずとも config 経由値が guard されることをテストで確認。記録の記載と実コードは一致（不一致による持ちら帰なし）。
 - 未解決: KI-20261105-07 は本項目で解決（Status 更新済み）。`known-issues/archive/` への移動・`task_manager.py end` はタスク全体の close 操作（親・全項目完了後）に委譲。`current-task.tsv` の参照行は欠落（edit 直接編集禁止のため作成せず・close 時確認）。
+
+## 項目2 結果（子・実装と検証完了 2026-11-05 10:41 UTC）
+
+- 合否: 合格（項目2の合格条件をすべて実測で確認）
+- 変更内容（承認範囲どおり・項目3〜4は未変更。metrics・FIFO・共有 last 連鎖・A-06・既定値・既存テストリテラルは未変更）:
+  1. `app/hitomi.go`: `isBlockSignal`（403 / `cf-mitigated` ヘッダ / 503 / 522）追加。`fetchRemoteWithGate` の status 分岐で block をリトライ対象化（既存 429/5xx の 2000 ms×試行式を基盤として維持。403 は同一 backoff 式で block 扱い）
+  2. `Retry-After`（429・block）: `parseRetryAfter`（RFC 9110 delay-seconds・HTTP-date 両形式）。存在時は backoff として尊重。負値・解析不能は静的 backoff フォールバック（挙動不変）。上限 `blockCooldownDuration`（5 分・正典 convention `negativeNoFullCacheTTL`。数字の新規捏造なし）
+  3. クールダウン: block 検出時 `Client.blockCooldownUntil`（`mu` 保護）= 5 分。`gateLane` で有効中は両 lane の effective interval を `politenessDefaultIntervalMS = 1000` ms へ退避（max 適用・既定値変更なし）
+- 採用した判断（段階1・根拠済み）: クールダウン期間 5 分 = 既存正典 convention `negativeNoFullCacheTTL`（`app/hitomi.go:22`）と UI 側 `PREFETCH_COOLDOWN_MS = 300000`（`tests/test_search_prefetch.py` の「429 sets a 5 minute cooldown in memory」assert）の同値。上限の根拠も同一 penalty window convention。politeness 退避は「既定値変更」ではなく effective interval への max 適用として実装（項目3 の領域外を侵犯しない）
+- 実測での修正（反復なし・原因分析済み）:
+  - `http.ParseDate` 不存在（正典は `http.ParseTime`）→ vet が検出・修正（1回）
+  - 新規テスト1件で `c.http` 代入漏れ（nil panic）→ 原因分析・修正（1回）
+  - クールダウンテストの FIFO 意味（lane 初呼出しは即時・last 記録）を反映せず誤アサート → warmup 追加で修正（1回）。FIFO 実装は変更していない（テスト側の測り方の修正）
 
 ## Verification
 
@@ -94,6 +133,21 @@
 - 新規テスト個別実測（`go test -count=1 -v -run` 5件・全 PASS）: 1〜49 ms 拒否（25 ms・49 ms・エラーメッセージにキー名）、負値→既定フォールバック（-1→1000・-5→250）、0→既定フォールバック維持、50・125 ms 受理、`config.example.json` の新2キー存在と 60000/300 一致＋loadConfig 経由で example の hitomi 全体が `defaultHitomiConfig()` と一致、`defaultHitomiConfig().BgGraceMS == defaultBgGraceMS`（単一出力元）
 - Commit Checklist: `python -m pytest tests/ -v` → 53 passed（10.27 s・`test_canonical_build_freshness.py` 含む）
 - UI 変更なし → 画面確認該当なし（保存先・ファイル名なし）
+
+### 項目2（実装・2026-11-05 10:33-10:41 UTC・実測）
+
+- `app` で `go vet . && go vet && go test -count=1 -timeout 300s .` → 合格: `ok hitomi-hub/app 22.971s`（vet+test 合計経過 23.0 s。プロジェクト検証条の `go vet .` と `go vet` の両方実行）
+- 新規テスト5件個別実測（`go test -count=1 -v -run`・全 PASS・合計 6.268 s）:
+  - `TestBlockSignal403CFMitigatedRetriedWithRetryAfterRespected` (1.00 s): `Retry-After: 1` の試行間 gap 実測 ~1000 ms（静的 2000 ms ではない）／metrics `retry_sleep_ms=1000`／requests=2／クールダウン期限 = `blockCooldownDuration`（5 分±100 ms）
+  - `TestBlockStatusesRetriedWithExistingBackoffAndEngageCooldown` (3.00 s): 403・503・522 各 requests=2（block リトライ）・`retry_sleep_ms=20`（既存 backoff 式・Retry-After なし）・クールダウン発動。403 は項目2前では即時 return（リトライ対象外）だった意味変更を実測
+  - `Test429WithoutRetryAfterKeepsExistingBackoffAndNoCooldown` (0.10 s): 429 単独の静的 backoff（100 ms 式）維持・gap 実測 ~100 ms・クールダウン不发動（block signal 定義外）を実測
+  - `TestParseRetryAfterRespectsValueAndCapsAtCanonicalConvention` (0.00 s): `600`→上限 clamp（=5 分 convention）、`300`→300 s 尊重、負値/解析不能→フォールバック、HTTP-date 両方向、`blockCooldownDuration == negativeNoFullCacheTTL`（推測数値なし）
+  - `TestBlockCooldownRetreatsBothLanesToPolitenessDefaultAndRestoresOnExpiry` (2.00 s): block 後 data lane gate wait 実測 ~1000 ms（inject 1 ms ではない）、image lane（既定 250 ms）gate wait 実測 ~1000 ms（退避）、満了後 inject 値へ即時復帰
+- Commit Checklist: `python -m pytest tests/ -v` → 53 passed（10.00 s・`test_canonical_build_freshness.py` 含む）
+- 正典 build（canonical exe 再 build・正典 build command）後、実機確認:
+  - CLI download（正典 exe・実在 gallery 4294614・`--limit 1`）: `attempted=1`・`written=1` 一致（skipped=0）。正典 UA・`referer`・data rate 1000 ms 遵守
+  - viewer（正典 server・正典 server コマンド・port 8731）: `GET /api/image/098fa2e4529e651af3fe594fa57a57053598502d5ead2533edc03726d1f3f2ce?format=webp` → `HTTP/1.1 200`・`X-Cache: miss`・`no_full` でない・response body 20476 bytes（`docs/ai/tmp/item2_viewer_headers.txt`・`item2_viewer_image.webp`）。外部 API 実呼出しは本実機確認の 1 呼出しのみ（image rate 250 ms・gate 内）
+- UI 関連変更なし → 画面操作の確認は該当なし（未検証而非該当。テストは mock/httptest・外部 API 呼出しなし）
 
 ## 完了時 Memory Bank 操作
 

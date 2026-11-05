@@ -21,6 +21,18 @@ const hitomiDomain = "gold-usergeneratedcontent.net"
 const galleriesPerPage = 25
 const negativeNoFullCacheTTL = 5 * time.Minute
 
+// 項目2（assess-20261105-1015・block 検出）: block signal = 403 / `cf-mitigated` ヘッダ
+// （Cloudflare challenge）/ 503 / 522。block 検出時、data・image 両 lane の gate interval を
+// クールダウン期間 politeness 既定へ退避する。数値の根拠（推測数値なし）:
+//   - `blockCooldownDuration = negativeNoFullCacheTTL`（既存正典 convention 5 分）。UI 側の既存
+//     convention `PREFETCH_COOLDOWN_MS = 300000`（`tests/test_search_prefetch.py` の「429 sets a
+//     5 minute cooldown in memory」assert）と同一値
+//   - `politenessDefaultIntervalMS = 1000`（正典 politeness 既定。`defaultHitomiConfig()` data lane
+//     既定と一致。api-rate-limits/usage-memo の data 1000 ms 正典値）
+// `Retry-After`（429・block）の上限も同一 convention（penalty window 5 分）で clamp する。
+const blockCooldownDuration = negativeNoFullCacheTTL
+const politenessDefaultIntervalMS = 1000
+
 // stale-only bounded memory limit（ユーザー承認方針 2026-11-04・
 // decisions/2026-11-04-remaining-residual-approval-split.md）。cap は entry 数だけ。
 // active entry（TTL 内）は protected: cap 超過でも eviction しない（C-08 の TTL 内
@@ -165,6 +177,9 @@ type Client struct {
 	// C-10: testGateIntervalMS はテスト専用 gate interval inject 口（0 = 非 inject、
 	// cfg 値を使用）。本番既定 1000ms と gate semantics は不変。
 	testGateIntervalMS int
+	// 項目2: blockCooldownUntil は block signal クールダウンの期限（zero = 非発動）。
+	// `mu` 保護。有効中、gateLane は両 lane の effective interval を politeness 既定へ退避。
+	blockCooldownUntil time.Time
 	versions       map[string]string
 	versionAt      map[string]time.Time
 	versionForceAt map[string]time.Time
@@ -379,6 +394,16 @@ func (c *Client) gateLane(ctx context.Context, intervalMS int, st *gateLaneState
 	if c.testGateIntervalMS > 0 {
 		intervalMS = c.testGateIntervalMS
 	}
+	// 項目2: block signal クールダウン有効中は両 lane の effective interval を politeness
+	// 既定へ退避（max 適用。既定値そのものは変更しない）。FIFO・共有 last 連鎖・A-06 意味は
+	// 変更なし（interval が長くなるだけ・sleep 中 ctx cancel 即 return は sleepCtx 維持）。
+	// `blockCooldownUntil` は `mu` 保護（fetchRemoteWithGate 側から併記）。
+	c.mu.Lock()
+	inCooldown := !c.blockCooldownUntil.IsZero() && time.Now().Before(c.blockCooldownUntil)
+	c.mu.Unlock()
+	if inCooldown && intervalMS < politenessDefaultIntervalMS {
+		intervalMS = politenessDefaultIntervalMS
+	}
 	if st == nil || intervalMS <= 0 {
 		return nil
 	}
@@ -528,12 +553,22 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 		}
 
 		lastErr = fmt.Errorf("status %d for %s", resp.StatusCode, rawurl)
+		retryable := resp.StatusCode == 429 || resp.StatusCode >= 500
+		block := isBlockSignal(resp)
 		retrySleep := time.Duration(0)
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		if retryable || block {
+			// 既存 429/5xx の backoff 式（2000 ms×試行）を基盤として維持。403（block）も同一式。
 			retrySleep = time.Duration(c.cfg.RetryBackoffMS*(attempt+1)) * time.Millisecond
+			// 項目2: 429・block で Retry-After が存在したらその値を backoff として尊重（上限 clamp）。
+			if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+				retrySleep = d
+			}
+		}
+		if block {
+			c.applyBlockCooldown()
 		}
 		c.recordMetric(kind, gateWait, time.Duration(networkMS)*time.Millisecond, time.Duration(decodeMS)*time.Millisecond, retrySleep)
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		if retryable || block {
 			if attempt < c.cfg.MaxRetries {
 				if err := sleepCtx(ctx, retrySleep); err != nil {
 					return nil, err
@@ -544,6 +579,57 @@ func (c *Client) fetchRemoteWithGate(ctx context.Context, rawurl string, rng [2]
 		return nil, lastErr
 	}
 	return nil, lastErr
+}
+
+// isBlockSignal は項目2（assess-20261105-1015）の block signal 判定: 403、`cf-mitigated`
+// ヘッダ（Cloudflare challenge）、503、522。503/522 は 5xx でもあり、既存 429/5xx リトライ
+// semantics（2000 ms×試行）は維持（追加は Retry-After 尊重とクールダウンのみ）。429 単独は
+// block signal ではない（Retry-After 尊重のみ・クールダウン不发動）。
+func isBlockSignal(resp *http.Response) bool {
+	switch resp.StatusCode {
+	case http.StatusForbidden, http.StatusServiceUnavailable, 522: // 522 は Cloudflare origin error（http const なし）
+		return true
+	}
+	return resp.Header.Get("cf-mitigated") != ""
+}
+
+// parseRetryAfter は RFC 9110 の Retry-After を両形式（delay-seconds・HTTP-date）で解析。
+// 負値・解析不能は ok=false（呼び出し側は既存静的 backoff へフォールバック）。不合理に
+// 大きい値は blockCooldownDuration（正典 convention penalty window 5 分・negativeNoFullCacheTTL）
+// で clamp。数字の新規捏造はしない。
+func parseRetryAfter(value string) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		if secs < 0 {
+			return 0, false
+		}
+		d := time.Duration(secs) * time.Second
+		if d > blockCooldownDuration {
+			d = blockCooldownDuration
+		}
+		return d, true
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		if d > blockCooldownDuration {
+			d = blockCooldownDuration
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+// applyBlockCooldown は block signal 検出時に両 lane 共通のクールダウン期限を設定（mu 保護）。
+func (c *Client) applyBlockCooldown() {
+	c.mu.Lock()
+	c.blockCooldownUntil = time.Now().Add(blockCooldownDuration)
+	c.mu.Unlock()
 }
 
 func readAll(resp *http.Response) ([]byte, error) {
