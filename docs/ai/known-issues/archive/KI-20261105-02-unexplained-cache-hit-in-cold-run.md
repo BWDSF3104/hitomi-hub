@@ -1,6 +1,6 @@
 # KI-20261105-02 — cold run で 1 件 `x-cache: cache`（未解明・observation）
 
-**Status**: 未解明（observation）
+**Status**: クローズ（ルール採用 2026-11-05 18:23・観察自体は未解明のまま rules で恒久化）
 **Date**: 2026-11-05
 
 ## 現象
@@ -17,3 +17,7 @@ strict cold UI 確認の「cold state」 claims を 1 件分弱める。run E co
 - shared localStorage 由来の startup duplicate fetch の有無
 
 再発時: network request 全件 + `cacheDistribution` + root disk cache の突合で追跡すること。
+
+## ルール化提案（2026-11-06）
+
+汚染源（startup duplicate fetch・shared origin・server instance 共有）は手順で防げるため、ルール原稿を作成: `docs/ai/rules/cold-confirmation-hygiene-rule.md`。ユーザー承認 2026-11-05 18:23 により active へ採用し、本KIは観察記録として archive へ移動（観察自体は未解明のまま、規則として恒久化。再発時は rules の3条件のどれが破れていたかを突合して分類）。
