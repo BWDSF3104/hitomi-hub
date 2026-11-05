@@ -1,6 +1,6 @@
 # Phase 4 実装 — サーバー側ゲート優先度化（優先3・条件付き・実施決定）
 
-**Status**: 進行中（C 上流TN 200確認・proxy mapping限定・TN表示源 PASS）
+**Status**: 完了
 **Date**: 2026-11-05
 **Next Action**: C remains unconfirmed. Live TN construction correct; known hash is upstream TN absence. Wait for C re-measurement; no code change.
 
@@ -80,6 +80,17 @@
   - `#thumbs` images: sourceType `objectURL`, TN prefix false
   - UI display-source label observed `cdn/TN（未ダウンロード）` was not treated as image display source; actual `#reader` and `#thumbs` sources were objectURL, so TN display-source prohibition remains PASS.
 - No implementation/code change. TN display-source prohibition, full route order, TN cover-only search-card exception, and TN non-display rule remain unchanged. Result JSON: `docs/ai/tmp/phase4_direct_upstream_check_results.json`, `tn_root_cause_separation` section; copied to Google Drive task folder.
+
+### C round5 re-measurement（cold live UI TN・smalltn TN load・3反復・2026-11-05 09:12）
+
+- Condition: canonical server `8731`, live UI search-card TN hashes from actual UI, TN/full cache cold before measurement. Each hash: one direct attempt to canonical code TN URL, one TN background load (`priority=background`), one full display. Same-failure unlimited repetition was not performed; max 3 valid samples, stop at 3 failures. TN load used `smalltn` as TN load; TN display-source prohibition remains checked and PASS.
+- Valid samples (all valid, median full gate `0ms`):
+  - `14a40fa6cc6104f429e4c23b8f8ce46294315d9ad6a11daf6eabad63df30e786` / gallery `4301900`: direct `200` `492ms` `10752B`; TN load `tn` `453ms` `10752B` gate `0ms`; full `miss` `1515ms` `29794B` gate `0ms`.
+  - `178ef38f4ae5d6714f128372fd6e8f92dfccb025fce65ccbcda94b3f30b73ab7` / gallery `4301713`: direct `200` `439ms` `5296B`; TN load `tn` `146ms` `5296B` gate `0ms`; full `miss` `417ms` `33082B` gate `0ms`.
+  - `5491acb7403604350bb2179ef961594648a5072dd7d4080ade5ad2be8f6f399a` / gallery `4301574`: direct `200` `436ms` `8100B`; TN load `tn` `162ms` `8100B` gate `0ms`; full `miss` `430ms` `82658B` gate `0ms`.
+- TN display-source mechanical condition rechecked on canonical viewer tab `http://127.0.0.1:8731/#/g/3141857/page/1-2`: `statusIsViewerDisplaySource('tn')=false`, `tn-cache=false`, `#reader` and `#thumbs` sourceType `objectURL`, TN prefix false. PASS.
+- Marker/gate: TN load URL contained `priority=background`; full display was foreground and no implementation change was made. Full display gate `0ms` for all three valid samples, median `0ms`, within 1 frame `250ms`.
+- Result JSON: `docs/ai/tmp/phase4_c_remeasure_round5_live_ui_smalltn_cold_results.json`, copied to Drive `I:\マイドライブ\kilo\2026-11-05-phase4-gate-priority-implementation\phase4_c_remeasure_round5_results.json`.
 
 ## 完了時 Memory Bank 操作
 
