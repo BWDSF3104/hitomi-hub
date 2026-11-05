@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: resize 前 target viewport（1280x900）で測れる正典経路で initial display（.side 480px・card height 130px）を再測定し、記録・commit/push する
+**Next Action**: canonical fresh target の exact inner target viewport（1280x900）確認は tool limitation のため未確定。outer target 判定を明示的に確定するか、exact inner を測れる正典 tool を承認してから close する。
 
 ## 意図 / 背景
 
@@ -111,6 +111,46 @@
 - visual read：same target windowで card `Mimi expansion` badge `表示済み・既読・保存済み`, second card `表示済み`, TN cover, `local 8/8`, `#lists-refresh` visible同時。
 - ただし initial display（resize前 target viewport）未検証のため、この visual readは actual badge visual evidenceとして記録するが、strict criteria項目5の initial display確認合格として扱わない。
 
+### Canonical fresh target re-measurement（2026-11-05 05:34-05:51）
+
+- Fresh CDP target launched by canonical `kilo-fresh-browser.ps1` with `--window-size=1280,900`, profile `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\edge-fresh-browser-9344`, port `9344`, URL `http://127.0.0.1:8731/search`.
+- Canonical `kilo-cdp-measure.ps1` direct `pwsh` call failed with `SendAsync` ambiguous overload. Same canonical script via `powershell -NoProfile -File` succeeded and measured the fresh target before any resize.
+- Measured target before resize:
+  - `outerWidth=1280`, `outerHeight=900`.
+  - `innerWidth=1259`, `innerHeight=810`.
+  - `.side` actual `getBoundingClientRect().width=480px`.
+  - `form#search` height `67.7734375px` (`67px`-`70px` range).
+  - `#results` card count `25`.
+  - `.card` computed height `130px`.
+  - `#search-page-status` `page 1 / 1317・total 32916`.
+  - `#count` `32916 件・page 1`.
+  - `#search-status` `検索完了・カード表示済み 25件`.
+  - `#perf-status` `perf: /api/search 301ms・server search=0;record=290;json=1・cards 25 17012ms・cache cache=25`.
+- Direct server baseline after initial measurement:
+  - `curl -s -i "http://127.0.0.1:8731/api/search?query=furry&lang=all&page=1&limit=25"`.
+  - HTTP `200`, `X-Search-Timing: search=0;record=1369;json=1`, `Date: Thu, 05 Nov 2026 05:47:52 GMT`, `Cache-Control: no-store`, `Content-Length: 793`, `total=32916`, `ids.length=25`.
+- Actual `#search-submit` UI event on fresh target: existing tool range CDP trusted input mouse click at `#search-submit` center `x=78`, `y=160`. A new `/api/search?query=furry&lang=all&page=1&limit=25` performance resource entry appeared: HTTP `200`, `decodedBodySize=792`, `initiatorType=fetch`; `#perf-status` showed server timing `search=0;record=311;json=1`. Card count remained `25`, `#count`/`#search-page-status` matched direct baseline.
+- `#lists-refresh` actual UI event: existing tool range CDP trusted input mouse click at `#lists-refresh` center `x=52`, `y=470`. New `GET /api/lists` performance resource entry appeared: HTTP `200`, `decodedBodySize=1313`. `#queries`/`#favorites`/`#unread` lists updated.
+- Badge and reset actual events on fresh target:
+  - Before reset, `li[data-search-id="4305205"] .badge` text `表示済み reset`, `button[data-reset="viewed"]` present.
+  - `4305205` direct SQL before actual `button[data-reset="viewed"]` CDP trusted click: `last_page=2`, `fully_read=0`, `viewed=1`, `viewed_at=2026-11-05T04:20:07Z`.
+  - Direct SQL after actual click: `last_page=0`, `fully_read=0`, `viewed=0`, `viewed_at=2026-11-05T04:20:07Z` preserved.
+  - `4305294` direct SQL during same fresh flow: `last_page=0`, `fully_read=0`, `favorite=0`, `viewed=0`, `viewed_at=2026-11-05T03:57:10Z`. Its badge text was `保存済み`; `data-reset="read"` button was not present because `fully_read=0` at this stage. The prior `4305294` final-pair/reset-read direct SQL evidence remains in this task record.
+- Existing-feature regression checks on fresh target:
+  - `#search-next` CDP trusted click changed `#page` to `2`, hash to `#/q/furry/page/2`, `#search-page-status` to `page 2 / 1317・total 32916`, and card count stayed `25`.
+  - `#search-prev` CDP trusted click returned `#page` to `1`, hash to `#/q/furry/page/1`, `#search-page-status` to `page 1 / 1317・total 32916`.
+  - `form#saved-search` `save` button CDP trusted click fired `form#saved-search` submit; `#queries` added `canonical-initial-click female:furry click`. Performance entries did not record the POST resource, but the list response reflected the save.
+  - `form#query` is not present; `input#query` remains distinct from `form#saved-search`.
+- Visual confirmation on same fresh target:
+  - Canonical capture: `kilo-screen-capture.ps1 -WindowTitle "hitomi hub search" -DriveFolder "I:\マイドライブ\kilo\2026-11-05-search-result-state-badges" -FileName "canonical_initial_display_fresh_target_clean.png" -Root "S:\Documents\Kilo_Commons\hitomi-hub"`.
+  - Local file: `docs/ai/tmp/canonical_initial_display_fresh_target_clean.png`.
+  - Drive file: `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\canonical_initial_display_fresh_target_clean.png`.
+  - Visual read: same fresh target window shows `127.0.0.1:8731/search#/q/furry/page/1`, `#results` TN card covers, `card` backgrounds, `Mimi expansion` badge `保存済み`, `#lists-refresh` visible, `#count` and `#perf-status` agree with actual total/card processing, and `#search-status` shows the actual `reset: #4305205 viewed` event. TN is used only as search-card cover source in `#results`; no TN display fallback was observed.
+- Strict criteria judgment:
+  - Direct baseline, UI response, DOM card count, `#count`, `#search-page-status`, `#search-status`, card height, `.side`, `#lists-refresh`, reset click direct SQL, and visual read are confirmed on the same fresh target.
+  - `#perf-status` `cards 50` after the actual `#search-submit` event is the app's cumulative card-processing counter across the initial search and the actual submit event. The actual card DOM count is `25`, and `#count`/`#search-status` match the direct baseline.
+  - Initial display target viewport remains not confirmed as exact `1280x900` because actual content viewport was `1259x810`; `outerWidth/outerHeight` was `1280x900`. If project policy accepts canonical `--window-size` as target, all measured strict criteria pass. Otherwise exact inner target requires a tool change or policy decision and remains unverified.
+
 ## Verification
 
 - Commands:
@@ -119,7 +159,7 @@
   - `python -m pytest tests/ -v`：`53 passed in 9.30s`
   - `task_manager.py` Memory Bank update：Status `進行中` / Next Action「resize 前 target viewport（1280x900）で測れる正典経路で initial display（`.side` 480px・card height 130px）を再測定し、記録・commit/push する」
 - Direct SQL helper used for row read: `python docs\ai\tmp\badges_db_check.py "S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\hitomi.db" <gallery_id>`
-- initial display：未検証。resize前 target viewportが `1920x953` だった。target `1280x900`測定は resize後。`.side` 480px・card height 130pxは resize後測定。Strict criteria項目5を満たさない。
+- initial display：canonical fresh target re-measurement completed before resize at outer target `1280x900`; actual content viewport `1259x810`; `.side` `480px`, `form#search` `67.7734375px`, card count `25`, `.card` computed height `130px`, `#count`, `#search-page-status`, `#search-status`, `#perf-status`, direct server baseline, actual `#search-submit` CDP trusted click, `#lists-refresh`, reset button, visual read, and Drive confirmation all confirmed. Exact strict inner target `1280x900` remains tool limitation and is not treated as pass until policy/tool explicitly accepts canonical window-size as target.
 
 ## 完了時 Memory Bank 操作
 
