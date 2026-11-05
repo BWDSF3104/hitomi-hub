@@ -2,7 +2,7 @@
 
 **Status**: 完了
 **Date**: 2026-11-05
-**Next Action**: 段階3 判断待ち: filters 行 checkbox の min-height 31px 適用（実測 13x31 縦長描画・行 h=38）を承認規則どおり許容するか input[type=checkbox] を除外かのユーザー承認。3 行契約・DOM 順（前->page->次）・focus ring・disabled visual state・Drive 確認は実測合格（code 分は単独 commit）
+**Next Action**: なし（項目完了。段階3 は checkbox min-height 例外で解決・commit dd71f2e）
 
 ## 意図 / 背景
 
@@ -232,6 +232,7 @@ checkbox 例外後の実測確認（2026-11-05 15:06・fresh target・人工 res
 - スクリーンショット（Playwright browser 画面画像・通常スクリーンショット正典。OS foreground capture 不使用）: `docs/ai/tmp/search-prev-next-layout-checkbox-exception-after-20261105.png`（`form#search` 3 行。checkbox 通常四角・`前` disabled dim・focus ring・status 行右）
 - Drive task folder: `I:\マイドライブ\kilo\2026-11-05-search-prev-next-button-layout\search-prev-next-layout-checkbox-exception-after-20261105.png`。SHA256 一致で保存確認: `2E70B7014784F9E64D4062B8A33207BDFB6B3D4F01717BCBC43A540168610D6B`（local == Drive）
 - 正典 `kilo-drive-confirm.ps1` 確認 record（実測値・判定・変更内容・検証コマンド）: `I:\マイドライブ\kilo\2026-11-05\search-prev-next-button-layout-checkbox-exception-confirmation-2026-11-05.txt`
+- commit（本項目分単独・Memory Bank 含む）: `dd71f2e`（push 済み。`29876cd` の上。commit 内容 = `app/search.html`（checkbox 例外 1 行）+ この task record + decision entry + `current-task.tsv` 参照行削除。hash 行は commit 後の追記）
 
 ## 完了時 Memory Bank 操作
 
