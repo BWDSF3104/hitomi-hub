@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 項目2 合格（結果セクション記録済み)・項目3の前提充足・残項目3〜4は親の統括で次委譲
+**Next Action**: 項目3 完了（コミット 3b460c0・push 済み・記録一致）→ 項目4（docs ポインタ化）は親の統括で次委譲・段階3 carry-over（hitomi_test.go:1538）は項目2既存合格テストへの影響として親確認要
 
 ## 意図 / 背景
 
@@ -158,6 +158,8 @@
   6. `app/main_test.go` の 1000 fixture（895/907/983 付近）は明示値通過アサート → 更新不要（実測照合）
 - 段階3 持ち帰り（承認範囲超過・記録）: `hitomi_test.go:1538` の assert「`politenessDefaultIntervalMS == defaultHitomiConfig().MinIntervalMS`」（項目2合格テスト）は新的 data 既定 250 と両立不能。正典 decision（2026-11-05）は politeness を 1000 の退避先として維持する旨なので、最小 re-anchor として「politeness = 1000 のまま・data 既定（250）より大きいこと」へ変更した。これは項目4列挙ライン外（承認範囲超過）であり、項目2の既存合格テストリテラルへ影響する判断として持ち帰る。項目2クールダウンテスト（退避 1000 ms 実測）は変更なしで合格継続。
 - Drive 保存の矛盾記録: 手順 decision（日付フォルダ）とタスク別フォルダ decision の矛盾は、タスク別フォルダ `I:\マイドライブ\kilo\2026-11-05-assess-20261105-1015-item3\` で解決（採用根拠: タスク別フォルダ decision が後続正典）。
+
+- 単独コミット `3b460c0`（項目3分のみ・7 files・+74/-16・push 済み）。この行と Next Action の記録更新は直後の docs commit で反映
 
 ## Verification
 
