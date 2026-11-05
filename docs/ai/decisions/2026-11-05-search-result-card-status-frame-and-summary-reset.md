@@ -11,8 +11,9 @@
 ## 追加設計
 
 1. 何かしらの status が設定されている card は見た目上はっきり区別できる枠を持つ。
-   - 実装は `.card.has-status { outline: 2px solid #8ab4f8; border-radius: 6px; }` を使う。
-   - card height contract（130px）を壊さないため、layout に影響する `border` や `padding` ではなく `outline` を使う。
+   - 実装は `.card.has-status { background-color: #252a31; box-shadow: inset 0 0 0 2px #8ab4f8; border-radius: 6px; }` を使う。
+   - `outline` は card 外へ出ため、`.main` の overflow と `#results` の edge で左右が切り取られる可能性があった。card height contract（130px）を壊さず、切り取りを避けるため inset shadow を使う。
+   - 視認性のため status card の背景を `#252a31` にする。
 2. リセットは flag ごとの個別 button にしない。badge 行に同一行のまとめ reset button を1つだけ置く。
    - button は `data-reset='all'`。
    - click handler は `POST /api/reset` の `target: "all"` へ送る。

@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 追加要件 actual UI confirmationは exact current Playwright targetで完了。strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要
+**Next Action**: Visual clipping correction actual UI confirmationとGoogle Drive screenshot保存済み。visual correction commit/push。strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要
 
 ## 意図 / 背景
 
@@ -232,16 +232,30 @@
 - Playwright screenshot copied to Google Drive:
   - `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\badge-status-frame-and-summary-reset-2026-11-05.png`
 
+### Visual clipping correction（2026-11-05 07:35）
+
+- 確認した問題: `outline` は card 外へ出るため、`.main` の overflow と `#results` の edge で左右が切り取られる可能性があった。window size 単独の原因ではなく、`outline` の外側描画がクリップされる問題として扱った。
+- `app/search.html` を `.card.has-status { background-color: #252a31; box-shadow: inset 0 0 0 2px #8ab4f8; border-radius: 6px; }` へ変更。card height contract（130px）を壊さないため layout に影響する `border` / `padding` は使わない。
+- `app/viewer_test.go` の exact CSS assertion を同じ new CSS へ変更。
+- Canonical build after visual correction: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` 合格。canonical server pid `22316` で `http://127.0.0.1:8731/` を restart した。
+- Exact current Playwright target: `http://127.0.0.1:8731/search?newtab=1&v=gray-card-20261105#/q/furry/page/1`。fresh target was initially `1920x953`; exact `1280x900` is after explicit `browser_resize`, so this is not a strict initial display pass.
+- Direct server baseline via Playwright fetch before actual UI event: HTTP `200`, `cache-control: no-store`, `x-search-timing: search=0;record=798;json=1`, `total=32916`, `ids.length=25`.
+- Actual UI event `#search-submit` click: UI `/api/search` response HTTP `200`, `cache-control: no-store`, `x-search-timing: search=0;record=41;json=1`, `total=32916`, `ids.length=25`. Direct baseline and UI response match on total/ids/no-store.
+- Same target layout: `.side` width `480px`, `form#search` height `67.7734375px`, `#results` card count `25`, first card computed height `130px`.
+- First status card exact visual properties: `class="card has-status"`, `background-color: rgb(37, 42, 49)`, `box-shadow: rgb(138, 180, 248) 0px 0px 0px 2px inset`, badge `表示済み 既読 保存済み`, summary reset button `data-reset='all'`. `#results` rect left/right was `512px` / `1249px`.
+- Playwright screenshot saved locally: `docs/ai/tmp/gray-status-card-summary-reset-2026-11-05.png`.
+- Google Drive screenshot copied: `I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\gray-status-card-summary-reset-2026-11-05.png`
+
 ## Verification
 
 - Commands:
   - `go vet .`：合格
-  - `go test -count=1 -timeout 300s .`：追加要件変更後に `ok hitomi-hub/app 18.685s`
+  - `go test -count=1 -timeout 300s .`：追加要件変更後に `ok hitomi-hub/app 18.685s`。visual clipping correction後に `ok hitomi-hub/app 18.120s`。
   - `python -m pytest tests/ -v`：追加要件変更後に `53 passed in 10.16s`（canonical build rebuild 後）
   - `task_manager.py` Memory Bank update：Status `進行中` / Next Action「strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要。追加要件 actual UI confirmationは exact current Playwright targetで完了し、canonical build rebuild・server restart・Google Drive screenshot保存済み」
 - Canonical build after visual change:
   - `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`：合格
-  - canonical server pid `29792` を stopし、fresh canonical exe から pid `30388` で `http://127.0.0.1:8731/` を restart した。
+  - canonical server pid `29792` を stopし、fresh canonical exe から pid `30388` で `http://127.0.0.1:8731/` を restart した。visual clipping correction後の canonical serverは pid `22316`。
 - Direct SQL helper used for row read: `python docs\ai\tmp\badges_db_check.py "S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\hitomi.db" <gallery_id>`
 - initial display：canonical fresh target re-measurement completed before resize at outer target `1280x900`; actual content viewport `1259x810`; `.side` `480px`, `form#search` `67.7734375px`, card count `25`, `.card` computed height `130px`, `#count`, `#search-page-status`, `#search-status`, `#perf-status`, direct server baseline, actual `#search-submit` CDP trusted click, `#lists-refresh`, reset button, visual read, and Drive confirmation all confirmed. Exact strict inner target `1280x900` remains tool limitation and is not treated as pass until policy/tool explicitly accepts canonical window-size as target.
 

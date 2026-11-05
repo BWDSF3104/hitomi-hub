@@ -1736,7 +1736,7 @@ search := uiText(t, "search.html")
 		`.card .badge .flag-read { color: #4db6ac; }`,
 		`.card .badge .flag-saved { color: #ff8a65; }`,
 		`.card .badge .flag-favorite { color: #c77dff; }`,
-		`.card.has-status { outline: 2px solid #8ab4f8; border-radius: 6px; }`,
+		`.card.has-status { background-color: #252a31; box-shadow: inset 0 0 0 2px #8ab4f8; border-radius: 6px; }`,
 	} {
 		if !strings.Contains(search, want) {
 			t.Errorf("each state flag must have a distinct color through its class: got %q", search)
