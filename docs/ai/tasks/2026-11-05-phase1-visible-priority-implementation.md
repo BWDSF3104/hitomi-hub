@@ -74,6 +74,26 @@ Additional live confirmation:
 - screen capture: `phase1-visible-priority-page8-midrun-20261105.png` saved to Google Drive task folder.
 - confirmation txt: `phase1-visible-priority-confirmation.txt` saved to Google Drive task folder.
 
+### 最終時点画面確認（2026-11-05 subagent・追加証拠のみ）
+
+- Status / Next Action は変更しない。実装変更なし、記録の追加証拠のみ。
+- 正典 server command: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh --port 8731`。
+- 正典 server pid: `6452`。
+- Direct baseline（UI 計測前）:
+  - `http://127.0.0.1:8731/api/search?q=furry&lang=all&page=19`
+  - `X-Search-Timing: search=0;record=53;json=1`、`Content-Length: 991`、`Cache-Control: no-store`
+  - total `32917`、ids count `25`
+  - ids order: `4250610,4250432,4250419,4250354,4250350,4250333,4250263,4250262,4250137,4250108,4250110,4250107,4250064,4249890,4249838,4249791,4249585,4249060,4249016,4249015,4249009,4249000,4248900,4248750,4248541`
+- Fresh isolated browser、storage clear、actual UI `#query=furry`、`#page=19`、`#search-submit` click。
+- 計測注入: `/api/search-card` fetch-order wrapper、IntersectionObserver stub / visible set、`window.startPrefetchNow = async () => {}`。プロジェクトコード変更なし。
+- UI response `ids` / total direct baseline と一致。UI `X-Search-Timing: search=0;record=41;json=1`、`Content-Length: 991`、`Cache-Control: no-store`。
+- first card cache: `miss`。
+- Midrun status at screenshot: `カード読み込み 21/25: 4248541`。
+- processed first-occurrence order: `4250107,4249890,4250064,4249838,4249791,4249585,4250432,4250354,4250419,4250610,4250350,4250333,4250263,4250262,4250137,4250110,4250108,4249060,4249016,4249015,4249009,4249000,4248900`。
+- pending at midrun: `4248750,4248541`。first processed `4250107` は `ids` index `11` で、pending top `4248750`（index `23`）/ `4248541`（index `24`）より先に処理。
+- Pass: `python -m pytest tests/test_canonical_build_freshness.py -v` → `2 passed`。
+- Google Drive evidence: `final-phase1-page19-20261105.png`、`final-phase1-confirmation-20261105.txt`。スクショは Playwright 画面スクリーンショット代替（許可済み、記録済み）。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

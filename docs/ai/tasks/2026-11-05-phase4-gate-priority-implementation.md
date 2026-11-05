@@ -92,6 +92,19 @@
 - Marker/gate: TN load URL contained `priority=background`; full display was foreground and no implementation change was made. Full display gate `0ms` for all three valid samples, median `0ms`, within 1 frame `250ms`.
 - Result JSON: `docs/ai/tmp/phase4_c_remeasure_round5_live_ui_smalltn_cold_results.json`, copied to Drive `I:\マイドライブ\kilo\2026-11-05-phase4-gate-priority-implementation\phase4_c_remeasure_round5_results.json`.
 
+### 最終時点画面確認（2026-11-05 subagent・追加証拠のみ）
+
+- Status / Next Action は変更しない。実装変更なし、記録の追加証拠のみ。
+- 正典 server: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh --port 8731`。
+- 正典 server pid: `6452`。required decision files: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。
+- Known target: hash `5491acb7403604350bb2179ef961594648a5072dd7d4080ade5ad2be8f6f399a`、gallery `4301574`。
+- Code-derived direct TN URL: `https://atn.gold-usergeneratedcontent.net/webpsmalltn/a/99/5491acb7403604350bb2179ef961594648a5072dd7d4080ade5ad2be8f6f399a.webp`（`app/hitomi.go:611-621`、variant `smalltn`、TN base `webpsmalltn`、hash path `a/99`、live gg current `g=2713`、`var o=1`、`case 2713`、`o=0`、`m=0` → `atn`）。1 direct attempt: `200`、TN bytes `8100`。
+- Exact UI TN load URL: `http://127.0.0.1:8731/api/thumb/5491acb7403604350bb2179ef961594648a5072dd7d4080ade5ad2be8f6f399a?format=webp&gallery=4301574&variant=smalltn&priority=background`。Server actual response: `200`、`X-Cache: tn-cache`、`Content-Length: 8100`。UI TN load URL contains `priority=background`。
+- Full route exact server response to `http://127.0.0.1:8731/api/image/5491acb7403604350bb2179ef961594648a5072dd7d4080ade5ad2be8f6f399a?format=webp`: `200`、`X-Cache: cache`、`Content-Length: 82658`。TN bytes `8100` と full bytes `82658` は distinct。TN bytes を full actual pixels に数えていない。
+- Fresh isolated actual UI viewer `?newtab=1#/g/4301574/page/1` target `#reader`: `statusIsViewerDisplaySource('tn')=false`、`statusIsViewerDisplaySource('tn-cache')=false`、source `objectURL`、TN prefix false、natural size `1713x1631`。Status `actual pixels 17/17 | local direct 0/17 | objectURL cache 17/17 | no full 0/17 | TN display fallback disabled`。
+- Marker: exact UI TN load URL `smalltn` contained `priority=background`。Full display request foreground contained no `priority=background`。Live UI target `4304794` `bigtn` foreground request had no `priority=background` marker；UI background TN requests had `priority=background` markers。
+- Google Drive evidence: `final-phase4-tn-display-20261105.png`、`final-phase4-confirmation-20261105.txt`。スクショは Playwright 画面スクリーンショット代替（許可済み、記録済み）。
+
 ## 完了時 Memory Bank 操作
 
 - [x] `current-task.tsv` の参照行を削除

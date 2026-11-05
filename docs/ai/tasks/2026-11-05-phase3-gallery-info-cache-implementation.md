@@ -53,6 +53,18 @@
   - フル画像ガード従来手順（canonical build 実機・guard 非接触の確認）: gallery `4284639`・`hub.exe download --id 4284639 --limit 3` → attempted=3・written=3（skipped=0）。`/api/image/<hash>?format=webp`: `54a89686…` 200 x-cache cache 137802B（TN 23688B と同一でない）/ `a55d9b2f…` 200 x-cache miss 39230B（TN 10476B と同一でない）/ `f99065e5…` 200 x-cache miss 32610B（TN 側 no_tn 502）。imageProxy の x-cache は miss/cache/local のみ（`tn-cache` なし）。KI-20261105-01 の異常は正典 build で再現せず（C-par2 の exact hash は P4 記録に未記録→同 hash の再照会のみ未完了。推奨対処＝canonical rebuild・正典 server 再起動・再測定は実施）。KI は未解決のまま（archive mv しない）。
   - 画面キャプチャ保存先（タスク別 Google Drive フォルダ・正典 `2026-11-02-google-drive-task-specific-screenshot-folder.md`）: `I:\マイドライブ\kilo\2026-11-05-phase3-gallery-info-cache-implementation\`（`phase3-cards-before-restart-20261105.png`・`phase3-cards-after-restart-20261105.png`・`phase3-gallery-info-cache-confirmation-20261105.txt`）。repository 内スクリーンショットは保存せず（kilo-safe-remove で除去）。
 
+### 最終時点画面確認（2026-11-05 subagent・追加証拠のみ）
+
+- Status / Next Action は変更しない。実装変更なし、記録の追加証拠のみ。
+- 正典 server: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh --port 8731`。
+- 正典 server pid: `6452`。本最終確認では server restart なし。literal no-restart は prior clean-server restart の deviation として記録。
+- Direct baseline（UI 計測前）: `http://127.0.0.1:8731/api/search?q=kemonomimi&lang=all&page=1`、`X-Search-Timing: search=0;record=1226;json=1`、`Cache-Control: no-store`、`Content-Length: 1095`、total `76272`、ids direct match。
+- Fresh isolated `?newtab=1` browser、storage clear、actual UI `#query=kemonomimi`、`#page=1`、`#search-submit` click。duplicate ids `query=1/page=1/submit=1`。
+- UI actual network response: `X-Search-Timing: search=1;record=349;json=1`、`Cache-Control: no-store`、`Content-Length: 1092`、ids direct exact match、total `76272`。Full JSON metrics/timing は direct と byte-identical でない（cache state 差）。
+- Target `4304794`: first card cache `miss`、target card cache `miss`。Disk JSON `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\cache\galleryinfo\4304794.json` content common fields match: title `9月-02`、language `japanese`、type `artistcg`、tags `female:kemonomimi`/`female:sole female`/`male:sole male`、artists `[]`、groups `[]`、characters `hishi miracle`、galleryurl `/cg/9月-02-日本語-4304794.html`、files hash/name/width/height/hasavif、scene_indexes `[]`。
+- Target-specific `metrics delta gallery/image = 0` は `search-card` response に metrics が含まれないため直接観察不能。Disk hit inference と memory cold `miss` は確認済み、target-specific metrics delta は未確認として記録。
+- Google Drive evidence: `final-phase3-kemonomimi-20261105.png`、`final-phase3-confirmation-20261105.txt`。スクショは Playwright 画面スクリーンショット代替（許可済み、記録済み）。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

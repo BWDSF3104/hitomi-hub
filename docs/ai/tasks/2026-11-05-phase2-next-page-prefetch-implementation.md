@@ -64,6 +64,18 @@
 - 総合: conflict first card display 合格条件は実測で閉じた。本項目の commit/push は task record と Common_Operations report 本項目分のみ。`docs/ai/tmp` scratch は commit しない。
 - Actual commit hashes: hitomi-hub task record `30be0e9`・hash記録 commit `4e5dff6`（push済み）、Common_Operations report evidence `dd81189`（push済み）。
 
+### 最終時点画面確認（2026-11-05 subagent・追加証拠のみ）
+
+- Status / Next Action は変更しない。実装変更なし、記録の追加証拠のみ。
+- 正典 server: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe view --data-dir S:\Documents\Kilo_Commons\hitomi-hub --root S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh --port 8731`。
+- 正典 server pid: `6452`。
+- Direct baseline p8（UI 計測前）: `http://127.0.0.1:8731/api/search?q=female:yuri&lang=all&page=8`、`X-Search-Timing: search=0;record=34;json=1`、`Content-Length: 1087`、`Cache-Control: no-store`、ids match。
+- Fresh isolated browser、storage clear、actual UI `#query=female:yuri`、`#page=8`、`#search-submit` click。
+- UI response `X-Search-Timing: search=0;record=27;json=1`、`Content-Length: 1087`、ids direct match。first card cache: `miss`。
+- scheduler idle: last card fetch event `4279780`（`x-cache: miss`）から first background event `41278ms` まで `4840.8ms`。`PREFETCH_IDLE_MS = 800ms` minimum を満たす。first background URL: `http://127.0.0.1:8731/api/search-card/4279565?priority=background`、`x-cache: miss`。
+- p9 background prefetch complete確認後、actual UI `#search-next` click で p9→p10 transition: transition `271.2ms ≤1000ms`、transition response ids direct p10 match、transition 中 background card fetch delta `0`、metrics delta `gallery=0 / image=0`。
+- Google Drive evidence: `final-phase2-cold-p8-20261105.png`、`final-phase2-p10-transition-20261105.png`、`final-phase2-confirmation-20261105.txt`。スクショは Playwright 画面スクリーンショット代替（許可済み、記録済み）。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
