@@ -1,6 +1,6 @@
 # search prefetch worker で undefined entry console error の race
 
-**Status**: 未解決（本項目で記録のみ・本項目の承認範囲外）
+**Status**: クローズ（2026-11-05 18:07 ユーザー判定・現行 HEAD に記載の race 経路なし）
 
 ## 症状
 
@@ -17,3 +17,9 @@
 
 - worker loop の pending snapshot を await 後に再確認し、`pending.indexOf(id) >= 0` を check してから `entry` を参照する形へ修正するか、`processCard()` の guard を race-safeにする。
 - 修正には別の実装承認と test re-anchorが必要。
+
+## クローズ判定（2026-11-05 18:07）
+
+- 現行 HEAD の worker loop（`app/search.html` 486-492）は `takeNextSearchCard()` と `pending.splice()` の間に await がない同期ブロック。記載の race（await 中に sibling worker が pending を drain）は成立しない
+- `currentPriorityDone` は search page から除去済みで、`app/viewer_test.go:2579,2632` が search.html での復活をテスト固定
+- 記載経路は現行ソースに存在しない → 修復対象なし

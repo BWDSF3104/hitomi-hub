@@ -1,6 +1,6 @@
 # 正典 CDP/click tool が本項目の実測で #search-submit を確定できない
 
-**Status**: 部分解決（browser executable launch pathを正典 scriptから除去。CDP target selection limitationは残る）
+**Status**: クローズ（2026-11-05 18:07 ユーザー判定）
 
 ## 実測
 
@@ -41,3 +41,9 @@
 
 - 正典 `bin/kilo-fresh-browser.ps1` の `ClickPercentX` を X 位置へ反映する修正、または正典 CDP trusted input click helper を別途承認して追加する。
 - 現行の実測では合格条件を満たすが、正典 tool の canonical gesture limitation は未解決として残す。
+
+## クローズ判定（2026-11-05 18:07）
+
+- `ClickPercentX` は正典 `bin/kilo-fresh-browser.ps1` から除去済み。launch path は Playwright tool 使用の policy guard へ変更（browser executable launch 禁止）
+- 段階3の「ClickPercentX を X 位置へ反映する修正」は適用対象外。合格判定は Playwright CDP trusted input click 経路で成立
+- 残る CDP target selection limitation は正典確認手順（Playwright browser tool の target を直接測る）で運用解決済み
