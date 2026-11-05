@@ -12,8 +12,8 @@
     "max_daily_requests": 500
   },
   "hitomi": {
-    "min_interval_ms": 1000,
-    "image_min_interval_ms": 250,
+    "min_interval_ms": 250,
+    "image_min_interval_ms": 125,
     "gg_force_min_interval_ms": 60000,
     "bg_grace_ms": 300,
     "max_retries": 3,

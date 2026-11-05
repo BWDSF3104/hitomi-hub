@@ -27,8 +27,9 @@ const negativeNoFullCacheTTL = 5 * time.Minute
 //   - `blockCooldownDuration = negativeNoFullCacheTTL`（既存正典 convention 5 分）。UI 側の既存
 //     convention `PREFETCH_COOLDOWN_MS = 300000`（`tests/test_search_prefetch.py` の「429 sets a
 //     5 minute cooldown in memory」assert）と同一値
-//   - `politenessDefaultIntervalMS = 1000`（正典 politeness 既定。`defaultHitomiConfig()` data lane
-//     既定と一致。api-rate-limits/usage-memo の data 1000 ms 正典値）
+//   - `politenessDefaultIntervalMS = 1000`（正典 politeness 退避先。decision
+//     `2026-11-05-rate-values-and-concurrency-change-approved.md` のクールダウン退避値。
+//     data lane 既定（250）より大きく、退避意味を実測テストで assert）
 // `Retry-After`（429・block）の上限も同一 convention（penalty window 5 分）で clamp する。
 const blockCooldownDuration = negativeNoFullCacheTTL
 const politenessDefaultIntervalMS = 1000
@@ -234,7 +235,7 @@ func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry)
 }
 
 func defaultHitomiConfig() HitomiConfig {
-	return HitomiConfig{MinIntervalMS: 1000, ImageMinIntervalMS: 250, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
+	return HitomiConfig{MinIntervalMS: 250, ImageMinIntervalMS: 125, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: defaultBgGraceMS}
 }
 

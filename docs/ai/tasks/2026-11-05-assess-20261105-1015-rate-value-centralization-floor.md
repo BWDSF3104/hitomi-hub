@@ -53,6 +53,7 @@
 - 項目2（block 検出）委譲前状態（子の記録）: HEAD `3885ee1`、`git status` clean（2026-11-05 10:27 UTC）。
 - 項目2 機械的確認（親・2026-11-05 10:43 UTC）: `git log` に項目2コミット `7ee82bf` 存在（push 済み）。`git status` clean（委譲前 `d1f2e5b` から悪化なし・項目2分のコミットのみ）。個別タスク記録の項目2結果（合格）と Next Action は子の報告と一致。→ 項目2 合格。項目3の前提（block 検出）充足。
 - 項目3（値変更・テスト re-anchor）委譲前状態: HEAD `7ee82bf`、`git status` clean（2026-11-05 10:43 UTC）。
+- 項目3 委譲前状態（子・実測 2026-11-05 10:47 UTC）: HEAD `d30f3fe`、`git status` clean（`git rev-parse HEAD`・`git status --porcelain` 実測）。正典 decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md` 照合済み（項目1 `0d5dbdf`・項目2 `7ee82bf` 合格済み）。
 
 ### 項目1 実装確定（子・実装前・2026-11-05 10:20 UTC）
 
@@ -97,6 +98,30 @@
 - 検証方法: 上記コマンド実行。外部 API 実呼出しは実機確認のみ（正典 UA・`referer`・現行 rate 1000/250 ms 遵守）。テストは httptest/mock（外部 API 呼出しなし）。コマンド・結果・経過時間を Verification に記録。
 - 項目2 終了判定は本記録の「項目2 結果」セクションで行い、タスク全体 Status は進行中のまま（親が全項目完了後に end）。
 
+### 項目3 実装確定（子・実装前・2026-11-05 10:48 UTC）
+
+- 作業前チェック（AGENTS.md・viewer/download 接触タスク必須条）として以下を読了（ファイル名明記）:
+  - `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`
+  - `docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`
+  - `docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`
+  - 正典 build ルールポインタ先 `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md` と正典 build command `docs/ai/decisions/2026-11-02-canonical-latest-build-confirmation-rule.md`、Drive 保存手順 `docs/ai/decisions/2026-11-02-google-drive-confirmation-storage-procedure.md`・`docs/ai/decisions/2026-11-02-google-drive-task-specific-screenshot-folder.md`、通常スクショルール `docs/ai/rules/normal-screenshot-rule.md`・`docs/ai/rules/screen-confirmation-size-rule-rule.md`（正: `screen-confirmation-size-rule.md`）、正典 decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`
+- 記録とコードの照合（不一致は実測で確定・1件要判断あり）:
+  - `app/hitomi.go:237` `defaultHitomiConfig()`: `MinIntervalMS: 1000`・`ImageMinIntervalMS: 250` → 250/125 へ。`GGForceMinIntervalMS: 60000`・`BgGraceMS: defaultBgGraceMS`（項目1単一出力元化済み）は変更しない。
+  - `app/main.go:1070`: `downloadFilesParallel(..., 4, ...)` → 8。テスト引数（`hitomi_test.go:1100` 等の `4`）は関数引数 fixture・意味不変（変更しない）。
+  - `app/viewer.html:174`: `const PREFETCH_CONCURRENCY = 4` → 8（viewer UI prefetch）。`app/search.html` の `SEARCH_CARD_CONCURRENCY = 4`（`viewer_test.go:2607`・`tests/search_prefetch_harness.mjs:34` assert）と `PREFETCH_CONCURRENCY = 2`（search 側 scheduler・harness assert）は検索ページ側・承認範囲外 → 変更しない。`AbortController` abort 意味・`prefetch-status` 表示意味は維持（`worker()` ループロジックは定数参照のみ）。
+  - `config.example.json`: `min_interval_ms` 1000→250・`image_min_interval_ms` 250→125。`TestConfigExampleHitomiKeysMatchCodeDefaults`（example==`defaultHitomiConfig()`）で単一出力元と自動一致（リテナル assert 追加なし）。
+  - テスト re-anchor: `app/hitomi_test.go:864-866`（1000→250）・`:948`（250→125）。`:1538` の assert「`politenessDefaultIntervalMS == defaultHitomiConfig().MinIntervalMS`」（項目2・合格済み）は新的 data 既定 250 と両立不能（politeness は decision が 1000 の退避先として維持する旨）。正典矛盾は新しい文書（decision 2026-11-05）優先 → 最小 re-anchor: politeness は decision 値 1000 のまま、かつ data 既定より大きいこと（退避意味の実証）へ。これは項目4の列挙ライン外（承認範囲超過）→ 段階3として結果で持ち帰る。項目2のクールダウンテスト（実測 gate wait 1000 ms・満了後 inject 値復帰）は変更なしで合格継続（1000 > 250・1000 > 125）。
+  - `app/viewer_test.go:1835` の `const PREFETCH_CONCURRENCY = 4;` 文字列 assert（cancellable bounded prefetch）は UI 定数変更の必然帰結 → 8 へ re-anchor（assert 意味「cancellable bounded concurrency」・AbortController・prefetch-status は不変）。段階1判断。
+  - `app/main_test.go`（895/907/983 付近の 1000 fixture）は `loadConfig` の明示値通過値（explicit survives）アサートで、既定変更と無関係 → 更新不要（実測照合）。項目1の下限ガードテスト（1〜49 ms 拒否）は変更しない。
+- 影響範囲: `app/hitomi.go`（既定値2つ＋正典根拠コメント1行）、`app/main.go`（1引数）、`app/viewer.html`（1定数）、`config.example.json`（2値）、`app/hitomi_test.go`（既存アサート4箇所・新規テストなし）、`app/viewer_test.go`（既存 assert 1箇所）。docs（項目4）変更なし。metrics kind 分類・FIFO・共有 last 連鎖・A-06・C-10 inject・Phase 4 2レーン・TN display・full image 経路・generation guard は非接触。
+- 客観的合格条件:
+  1. `app` で `go vet . && go test -count=1 -timeout 300s .` 全合格（re-anchor 後を含む）
+  2. `python -m pytest tests/ -v` 合格（`test_canonical_build_freshness.py` 含む）
+  3. 正典 build（canonical exe 再 build）後実機確認: CLI download 実在 gallery で attempted == written（125 ms image gate）／viewer `/api/image/<hash>?format=webp` が 200・`x-cache: miss|cache|local`・`no_full` でない（バイト数記録）／新 gate（250/125 ms）で bounded full image 10 呼出し程度・data 呼出しを正典 UA・`referer`・gate 遵守で実呼出しし 429/403/challenge 観測なし（コマンド・結果記録）
+  4. UI 画面操作確認（正典 server・fresh tab・actual window size 記録）: viewer prefetch が並行度 8 で動作（in-flight worker 実測 ≤8 かつ 8 に達すること）、`prefetch-status` 表示維持、page/gallery change 時 abort（AbortController）意味維持（中断後 stale 表示なし）。キャプチャを Google Drive（タスク別フォルダ）に保存し、保存先・ファイル名・確認結果を記録
+  5. 本項目分だけを単独コミットし push まで
+- 検証方法: 上記コマンド実行＋Playwright browser tool 画面操作（スクショは `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\` 経由で Drive へ copy）。外部 API 実呼出しは実機確認のみ。コマンド・結果・経過時間を Verification に記録。画面確認できない場合は未検証として扱い不合格。
+
 ## 項目1 結果（子・実装と検証完了 2026-11-05 10:25 UTC）
 
 - 合否: 合格（項目1の合格条件をすべて実測で確認）
@@ -120,6 +145,19 @@
   - `http.ParseDate` 不存在（正典は `http.ParseTime`）→ vet が検出・修正（1回）
   - 新規テスト1件で `c.http` 代入漏れ（nil panic）→ 原因分析・修正（1回）
   - クールダウンテストの FIFO 意味（lane 初呼出しは即時・last 記録）を反映せず誤アサート → warmup 追加で修正（1回）。FIFO 実装は変更していない（テスト側の測り方の修正）
+
+## 項目3 結果（子・実装と検証完了 2026-11-05 11:08 UTC）
+
+- 合否: 合格（項目3の合格条件をすべて実測で確認）
+- 変更内容（承認範囲どおり・項目4 docs 変更なし。metrics・FIFO・共有 last 連鎖・A-06・C-10・Phase 4・TN display・full image 経路・generation guard・search.html 定数は非接触）:
+  1. `app/hitomi.go` `defaultHitomiConfig()`: `MinIntervalMS` 1000→250・`ImageMinIntervalMS` 250→125（`GGForceMinIntervalMS` 60000・`BgGraceMS` 変更なし）
+  2. `app/main.go:1070`: `downloadFilesParallel(..., 4, ...)` → 8
+  3. `app/viewer.html:174`: `const PREFETCH_CONCURRENCY = 4` → 8（abort 意味・`prefetch-status` 意味不変。`app/search.html` の 4/2 は範囲外・未変更）
+  4. `config.example.json`: `min_interval_ms` 250・`image_min_interval_ms` 125（`TestConfigExampleHitomiKeysMatchCodeDefaults` で一致確認）
+  5. テスト re-anchor: `app/hitomi_test.go` :864-866（1000→250）・:885（message）・:948（250→125）＋ :1538（段階1判断・下記）、`app/viewer_test.go:1835`（`= 4`→`= 8`）
+  6. `app/main_test.go` の 1000 fixture（895/907/983 付近）は明示値通過アサート → 更新不要（実測照合）
+- 段階3 持ち帰り（承認範囲超過・記録）: `hitomi_test.go:1538` の assert「`politenessDefaultIntervalMS == defaultHitomiConfig().MinIntervalMS`」（項目2合格テスト）は新的 data 既定 250 と両立不能。正典 decision（2026-11-05）は politeness を 1000 の退避先として維持する旨なので、最小 re-anchor として「politeness = 1000 のまま・data 既定（250）より大きいこと」へ変更した。これは項目4列挙ライン外（承認範囲超過）であり、項目2の既存合格テストリテラルへ影響する判断として持ち帰る。項目2クールダウンテスト（退避 1000 ms 実測）は変更なしで合格継続。
+- Drive 保存の矛盾記録: 手順 decision（日付フォルダ）とタスク別フォルダ decision の矛盾は、タスク別フォルダ `I:\マイドライブ\kilo\2026-11-05-assess-20261105-1015-item3\` で解決（採用根拠: タスク別フォルダ decision が後続正典）。
 
 ## Verification
 
@@ -150,6 +188,21 @@
   - CLI download（正典 exe・実在 gallery 4294614・`--limit 1`）: `attempted=1`・`written=1` 一致（skipped=0）。正典 UA・`referer`・data rate 1000 ms 遵守
   - viewer（正典 server・正典 server コマンド・port 8731）: `GET /api/image/098fa2e4529e651af3fe594fa57a57053598502d5ead2533edc03726d1f3f2ce?format=webp` → `HTTP/1.1 200`・`X-Cache: miss`・`no_full` でない・response body 20476 bytes（`docs/ai/tmp/item2_viewer_headers.txt`・`item2_viewer_image.webp`）。外部 API 実呼出しは本実機確認の 1 呼出しのみ（image rate 250 ms・gate 内）
 - UI 関連変更なし → 画面操作の確認は該当なし（未検証而非該当。テストは mock/httptest・外部 API 呼出しなし）
+
+### 項目3（実装・2026-11-05 10:48-11:08 UTC・実測）
+
+- `app` で `go vet . && go test -count=1 -timeout 300s .` → 合格: `ok hitomi-hub/app 24.157s`（vet+test 合計経過 24.2 s。re-anchor 後）
+- Commit Checklist: `python -m pytest tests/ -v` → 53 passed（8.72 s・`test_canonical_build_freshness.py` 含む。正典 exe 再 build 前は freshness FAILED → 再 build 後合格）
+- 正典 build（`go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`）後、正典 server（port 8731・root `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh`）で実機確認:
+  - CLI download（正典 exe・実在 gallery 4294614・22 files・`--limit 10`）: `attempted=10`・`written=10`・`skipped=0` 一致（10:55:26–10:55:32 UTC・125 ms image gate・429/403 なし）
+  - bounded probe（正典 UA・`referer`・gate 遵守・`docs/ai/tmp/item3_gate_probe_20261105.py` → `item3_gate_probe_20261105_results.json`）: data lane 10 呼出し 250 ms gate 全 206（wall 4302 ms）、image full 10 呼出し 125 ms gate 全 200（wall 9509 ms）。429/403/Cloudflare challenge 観測なし。gg は live parse（`var o = 1`・case 内 `o = 0`・bucket `b: '1793872802/'`）
+  - viewer API: `GET /api/image/2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89?format=webp`（10:58:01 UTC） → `HTTP 200`・`X-Cache: miss`・210784 bytes・`no_full` でない（`docs/ai/tmp/item3_viewer_headers.txt`・`item3_viewer_image.webp`）
+- UI 画面操作確認（fresh tab・actual window size 1920x953・devicePixelRatio 2・正典 server）:
+  - 並行度 8: gallery 4306063（475 files・cache miss）で prefetch 中 in-flight fetch `active = 8` を実測（変更前は 4）。fetch instrument probe（`window.__probe`）
+  - `prefetch-status`: gallery 4294614「actual pixels 22/22 | local direct 0/22 | objectURL cache 22/22 | no full 0/22 | TN display fallback disabled」・gallery 1727103（96/96）表示確認。reader blob `naturalWidth 1280`（full pixels）確認
+  - abort（AbortController）意味維持: gallery 4306230 prefetch 中 active=8 のまま gallery 4294614（warm cache）へ切替 → `aborted` 8（1回目）・切替直後 active=8 の再切替で 7 追加（計 15）。切替後 status は新 gallery の counts のみ（stale 表示なし・title 追随）
+  - Console errors: 1 件のみ（malformed probe URL による 502）。AbortError の console error なし
+  - 保存先 `I:\マイドライブ\kilo\2026-11-05-assess-20261105-1015-item3\`: `item3-ui-concurrency8-active-2026-11-05.png`（active=8）、`item3-ui-abort-after-switch-2026-11-05.png`（切替後・stale なし）、`item3-ui-prefetch-status-midrun-2026-11-05.png`、`item3-ui-reader-fullpixels-2026-11-05.png`、手順 `item3-confirmation-2026-11-05.txt`
 
 ## 完了時 Memory Bank 操作
 

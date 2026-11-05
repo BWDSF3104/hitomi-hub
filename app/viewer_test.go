@@ -1832,7 +1832,7 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `id="prefetch-status"`) {
 		t.Errorf("ui should show background prefetch status: got %q", s)
 	}
-	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 4;`) {
+	if !strings.Contains(s, `let prefetchAbort = null;`) || !strings.Contains(s, `const PREFETCH_CONCURRENCY = 8;`) {
 		t.Errorf("ui should use cancellable bounded prefetch concurrency: got %q", s)
 	}
 	if !strings.Contains(s, `function ensureBackgroundPrefetch(displayed) {`) || !strings.Contains(s, `AbortController`) || !strings.Contains(s, "fetch(fullSrc, { cache: \"no-store\", signal })") {

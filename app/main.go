@@ -1067,7 +1067,7 @@ func main() {
 			limit = f.limit
 		}
 
-		results := downloadFilesParallel(client, target, info.Files[:limit], format, 4, recordedSizes(db, root, info.ID))
+		results := downloadFilesParallel(client, target, info.Files[:limit], format, 8, recordedSizes(db, root, info.ID))
 		written := 0
 		skipped := 0
 		for _, result := range results {

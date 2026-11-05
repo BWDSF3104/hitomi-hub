@@ -858,11 +858,12 @@ func TestRateGatePerRequest(t *testing.T) {
 }
 
 // A-06: gate 中の ctx キャンセルで呼出が直ちに return すること。
-// 本番 gate interval（1000ms）は変更せず、mocked fetch（cancel 後は呼ばれない）で確認する。
+// 本番 gate interval は re-anchor 済み（250 ms・decision 2026-11-05）。mocked fetch
+// （cancel 後は呼ばれない）で確認する。
 func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}
-	if c.cfg.MinIntervalMS != 1000 {
-		t.Fatalf("production gate interval must remain 1000ms: got %d", c.cfg.MinIntervalMS)
+	if c.cfg.MinIntervalMS != 250 {
+		t.Fatalf("production gate interval must remain 250ms (decision 2026-11-05): got %d", c.cfg.MinIntervalMS)
 	}
 	calls := 0
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
@@ -882,7 +883,7 @@ func TestRateGateReturnsImmediatelyOnContextCancellation(t *testing.T) {
 		t.Fatalf("cancellation error: got %v", err)
 	}
 	if elapsed >= 250*time.Millisecond {
-		t.Errorf("gate elapsed: got %s, expected immediate return despite 1000ms interval", elapsed)
+		t.Errorf("gate elapsed: got %s, expected immediate return despite 250ms interval", elapsed)
 	}
 	if calls != beforeCancel {
 		t.Errorf("fetch calls after cancellation: got %d (expected no call beyond %d)", calls, beforeCancel)
@@ -945,8 +946,8 @@ func TestImageGateUsesLowerImageIntervalSeparately(t *testing.T) {
 	if !c.dataGate.last.IsZero() {
 		t.Error("image gate should not use normal gate last time")
 	}
-	if defaultHitomiConfig().ImageMinIntervalMS != 250 {
-		t.Errorf("image gate default: got %d", defaultHitomiConfig().ImageMinIntervalMS)
+	if defaultHitomiConfig().ImageMinIntervalMS != 125 {
+		t.Errorf("image gate default: got %d (decision 2026-11-05)", defaultHitomiConfig().ImageMinIntervalMS)
 	}
 }
 
@@ -1535,8 +1536,11 @@ func TestParseRetryAfterRespectsValueAndCapsAtCanonicalConvention(t *testing.T) 
 	if blockCooldownDuration != negativeNoFullCacheTTL {
 		t.Fatal("cooldown duration must remain the existing canonical convention (no invented number)")
 	}
-	if politenessDefaultIntervalMS != defaultHitomiConfig().MinIntervalMS {
-		t.Errorf("politeness default must equal canonical data lane default: got %d", politenessDefaultIntervalMS)
+	if politenessDefaultIntervalMS != 1000 {
+		t.Errorf("politeness retreat target must remain the decision value 1000 (2026-11-05): got %d", politenessDefaultIntervalMS)
+	}
+	if politenessDefaultIntervalMS <= defaultHitomiConfig().MinIntervalMS {
+		t.Errorf("politeness retreat must exceed canonical data lane default (retreat semantics): got %d vs %d", politenessDefaultIntervalMS, defaultHitomiConfig().MinIntervalMS)
 	}
 	cases := []struct {
 		value   string
