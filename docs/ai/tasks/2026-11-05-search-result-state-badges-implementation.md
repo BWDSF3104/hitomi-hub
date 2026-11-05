@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: Visual clipping correction actual UI confirmationとGoogle Drive screenshot保存済み。visual correction commit/push。strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要
+**Next Action**: visual correction commit 1e1df8f push済み。Google Drive screenshot保存済み。strict initial display（fresh isolated tabでresize前 exact 1280x900）は policy/tool決定が必要
 
 ## 意図 / 背景
 
