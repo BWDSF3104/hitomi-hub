@@ -24,7 +24,7 @@
 - Cache bytes may not have passed `processFile()` structural evaluation. If collecting cache, status must be recorded after collection.
 - Moving cache outside runtime root breaks DB `files.path`, `verifyMissing()`, `local` status, and external removal semantics.
 - Browser cannot move client objectURL cache to disk.
-- Uncached fetch still requires hitomi rate gate `250 ms` per image.
+- Uncached fetch still requires hitomi image rate gate `hitomi.image_min_interval_ms` (canonical single source: `defaultHitomiConfig()` in `app/hitomi.go`. Value not restated here. Policy: decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`).
 - Progress and abort are required for large collections.
 
 ## 推奨実装案

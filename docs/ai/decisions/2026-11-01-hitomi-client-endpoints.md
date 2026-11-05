@@ -19,6 +19,7 @@
 ## 呼出し方針（このプロジェクトの運用）
 
 - 呼出し間隔: 最小 1000 ms（`hitomi.min_interval_ms`）。retries 3、backoff 2000 ms × 試行回数、429/5xx のみ再試行
+- Supersede pointer: 上記数値は decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md` により supersede（歴史的事実として本行は維持。このプロジェクト方針＝server 強制ではない旨は維持。現値は同 decision と正典単一出力元 `app/hitomi.go` の `defaultHitomiConfig()` へ参照）
 - UA は明示（`hitomi-hub/0.1 (local hub client)`）、`referer: https://hitomi.la/`
 - hitomi は公式 API を持たず Cloudflare 後。方針変更は版更新としてこのファイルに記録
 - テストは外部 API を呼ばない（`Client.fetch` を注入して mock）。live 確認は handoff 時に 4 呼出し（nozomi 1・gallery js 1・画像 2）で実施

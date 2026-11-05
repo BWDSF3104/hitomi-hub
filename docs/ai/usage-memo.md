@@ -2,7 +2,7 @@
 
 正典はこのファイル。完成フォルダの `使い方メモ.md` はここから写したコピー（`output/` は追跡外）。
 
-更新: 2026-11-01
+更新: 2026-11-05（rate gate・並行度の数値写しを正典参照へ変更。正典単一出力元は `app/hitomi.go` `defaultHitomiConfig()`（`bg_grace_ms` は `const defaultBgGraceMS`）と `app/main.go` / `app/viewer.html` の該当箇所。方針は decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`）
 
 ## フォルダの形
 
@@ -90,7 +90,7 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 - `/api/image/` は main image で local full file > remote full image > TN variant fallback。TN fallback order は `bigtn`, `smallbigtn`, `smalltn`, `smallsmalltn`。`hasavif` entry は `avif` TN を優先し、その TN が無い場合は webp TN を最終 fallback として試す。main image load failure は UI note に出す。（歴史的記述・この時点。正典では TN display fallback 禁止。`/api/image` は display/full image path のみで local full > persistent full cache > remote full（404 時のみ EnsureGG force で 1 回再試行）→ `no_full`。TN は表示源ではない。正典: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`・`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`）
 - `pageSource` は local を config format で確認後、remote source に `hasavif` format を使う。実測 gallery `2648601` page 2 の `hasavif=1` entry では、`pageSource` が `format=avif` を返し、`imageProxy` の TN variant fallback で `200` 表示できた（`bigtn` は 404、`smalltn` が 200）。スクショ: `scratch\hitomi-usage\full_fallback_page2.png`。（歴史的実測・この時点。正典決定（TN display fallback 禁止・`docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`）では TN variant fallback による 200 表示は display path の合格経路ではない。full が無い entry は `no_full` 表示。この実測の fact（`bigtn` 404・`smalltn` 200）は TN path 実測として有効）
 - Search UI は `/api/search` の initial response を ids/total だけ受け取って `search-status` と submit button で実行中表示し、card metadata は `/api/search-card/{id}` で lazy load する。search card cover の TN variant は hitomi と同じ `bigtn`。lazy card lookup selector は `[data-search-id='<id>']`（closing single quote を含む）でなければならない。スクショ: `scratch\hitomi-usage\search_status_executing.png`。
-- `/api/image/` は `local full file > persistent full cache > remote full > TN variant fallback`。server は full storage fetch success bytes を `cache/images/<hash>.<format>` に永続保存し、`x-cache` に `local|cache|miss|tn` を返す。TN fallback は full quality cache として保存しない。TN response の `cache-control` は `no-store`、local/cache/miss response の `cache-control` は `private, max-age=604800`。UI 画面の `prefetch-status` は viewer 画面に入った gallery の残 full images を concurrency `4` で background prefetch する。image proxy remote requests are `250 ms` gated by `hitomi.image_min_interval_ms`; data calls keep `1000 ms`.prefetch は current page を即表示した後、`AbortController` で current gallery/page change に応じて abort され、`full prefetch <done>/<total>` を表示する。スクショ: `scratch\hitomi-usage\image_cache_background_prefetch.png`。
+- `/api/image/` は `local full file > persistent full cache > remote full > TN variant fallback`。server は full storage fetch success bytes を `cache/images/<hash>.<format>` に永続保存し、`x-cache` に `local|cache|miss|tn` を返す。TN fallback は full quality cache として保存しない。TN response の `cache-control` は `no-store`、local/cache/miss response の `cache-control` は `private, max-age=604800`。UI 画面の `prefetch-status` は viewer 画面に入った gallery の残 full images を正典並行度（単一出力元: `app/viewer.html` の `PREFETCH_CONCURRENCY`。このメモでは値を再掲しない）で background prefetch する。image proxy remote requests are gated by `hitomi.image_min_interval_ms`; data calls keep `hitomi.min_interval_ms`（正典単一出力元: `app/hitomi.go` の `defaultHitomiConfig()`。このメモでは値を再掲しない。方針: decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`）。prefetch は current page を即表示した後、`AbortController` で current gallery/page change に応じて abort され、`full prefetch <done>/<total>` を表示する。スクショ: `scratch\hitomi-usage\image_cache_background_prefetch.png`。
 - UI の full-image URL は `current.files[].local_formats` と `hasavif` から作る。background prefetch は `current.files` を base に full image URL だけを fetch し、page JSON per-call を呼ばない。local formats order は `pageSource` と同じ base format first。スクショ: `scratch\hitomi-usage\image_cache_background_prefetch_direct.png`。
 
 ### Operation priority / placeholder policy（2026-11-01）
@@ -149,6 +149,8 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
 
 ## config.json（JSON のみ。TOML は非対応）
 
+`hitomi` の数値はこのメモでは正典定義を持たない。正典単一出力元は `app/hitomi.go` の `defaultHitomiConfig()`（`bg_grace_ms` は `const defaultBgGraceMS`）で、`config.example.json` はその写し。現値と方針は decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md` へ参照。以下は参考 sample copy（写し・正典ではない）:
+
 ```json
 {
   "db": "hitomi.db",
@@ -164,12 +166,15 @@ hitomi-hub/            ← このフォルダだけで完結（絶対パス・%A
     "max_daily_requests": 500
   },
   "hitomi": {
-    "min_interval_ms": 1000,
-    "image_min_interval_ms": 250,
+    "min_interval_ms": 250,
+    "image_min_interval_ms": 125,
+    "gg_force_min_interval_ms": 60000,
+    "bg_grace_ms": 300,
     "max_retries": 3,
     "retry_backoff_ms": 2000,
     "user_agent": "hitomi-hub/0.1 (local hub client)",
-    "image_format": "webp"
+    "image_format": "webp",
+    "use_live_gg": true
   },
   "viewer": {
     "port": 8731,
@@ -230,12 +235,12 @@ SELECT sha256, verdict, engine, threat_name FROM scan_cache;
 
 ### download について
 
-- `download` は fetch/write 部分を `downloadFilesParallel()` の worker pool（既定 `4`）で実行し、`recordPage()` と `processFile()` は results の original page order で sequential に呼ぶ。
+- `download` は fetch/write 部分を `downloadFilesParallel()` の worker pool（正典並行度。単一出力元は `app/main.go` の `downloadFilesParallel()` 呼出箇所。このメモでは値を再掲しない。方針: decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`）で実行し、`recordPage()` と `processFile()` は results の original page order で sequential に呼ぶ。
 - 保存先: `Galleries/<gallery_id>/<hash>.<format>`（完成フォルダ内のみ）
 - shard にあるのは webp / avif ののみ。`files[].name` の ext（例 `001.jpg`）は元の形式なので URL に使わない。実測: 同じ hash の `.jpg` → 404、`.webp` → 200
 - hitomi の `files[].hash` は URL 構築用の内部ハッシュ。DB の `sha256` はローカル計算の SHA256（VT cache はこちらを使う）
 - 画像は `not_evaluated`（構造引擎が画像を持たないため clean を約束しない）
-- `--limit N` は試行数の上限（失敗した分も含む。rate gate 1000 ms/件）
+- `--limit N` は試行数の上限（失敗した分も含む。rate gate は正典参照: `app/hitomi.go` の `defaultHitomiConfig()`（`hitomi.min_interval_ms`）。このメモでは値を再掲しない）
 
 ## 未実装
 

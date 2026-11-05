@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 項目3 完了（コミット 3b460c0・push 済み・記録一致）→ 項目4（docs ポインタ化）は親の統括で次委譲・段階3 carry-over（hitomi_test.go:1538）は項目2既存合格テストへの影響として親確認要
+**Next Action**: 項目1〜3 合格済み（0d5dbdf・7ee82bf・3b460c0）。項目4（docs ポインタ化）合格・単独コミット push 済み（commit hash は項目4結果で父確認手順どおり記録・子報告の hash を参照）。タスク全体 Status は進行中（親が全項目完了後に正典 end）。段階3 carry-over（hitomi_test.go:1538）は項目3仕分け済み・項目4に波及なし
 
 ## 意図 / 背景
 
@@ -55,6 +55,21 @@
 - 項目3 機械的確認（親・2026-11-05 11:12 UTC）: `git log` に項目3コミット `3b460c0`（記録 `e394595`）存在（push 済み）。`git status` clean（委譲前 `d30f3fe` から悪化なし）。個別タスク記録の項目3結果（合格・実測値・Drive 保存先）は子の報告と一致。
 - 段階3 carry-over の仕分け（親）: `app/hitomi_test.go:1538` の assert（`politenessDefaultIntervalMS == defaultHitomiConfig().MinIntervalMS`）は新的 data 既定 250 と両立不能。正典 decision `2026-11-05-rate-values-and-concurrency-change-approved.md` は politeness（1000 ms）を block 時の退避先として維持する旨＝段階1の推奨案（正典根拠あり）。よって子の最小 re-anchor（politeness = 1000 のまま・data 既定より大きいことを実証）を**親が採用**し、項目3の承認範囲内の処置として閉じる（残件ではない）。項目2のクールダウンテストは変更なしで合格継続（1000 > 250・1000 > 125）。
 - 項目4（docs ポインタ化・p3-10 re-anchor）委譲前状態: HEAD `e394595`、`git status` clean（2026-11-05 11:12 UTC）。
+- 項目4 委譲前状態（子・実測 2026-11-05 11:14 UTC）: HEAD `b9d0067`、`git status` clean（`git rev-parse HEAD`・`git status --porcelain` 実測）。
+
+### 項目4 実装確定（子・実装前・2026-11-05 11:15 UTC・docs のみ）
+
+- 正典現値の事前照合（記録とコード一致・不一致なし → 実装可能）: `app/hitomi.go` `defaultHitomiConfig()`（237-240 行）= data 250 ms・image 125 ms・`GGForceMinIntervalMS` 60000・`BgGraceMS: defaultBgGraceMS`（正典 const 366 行 = 300）。`config.example.json`（250/125/60000/300）一致。下限ガード `const minHitomiRateFloorMS = 50`（`app/main.go:150`・loadConfig 170-176 行: 0/負値=既定フォールバック・1〜49 ms 拒否）。block クールダウン `blockCooldownDuration = negativeNoFullCacheTTL` = 5 分（`app/hitomi.go:22`・34 行）、有効中は両 lane を `politenessDefaultIntervalMS = 1000` ms へ退避（35 行・gateLane 405-406 行）、`Retry-After` 両形式尊重・5 分 clamp（597-624 行）。並行度 8（`app/main.go:1070`・`app/viewer.html:174`）。
+- 修正方法（docs のみ・正典参照へ・二重定義回避）:
+  1. `docs/ai/api-rate-limits.md` hitomi 行: 数値写しを削除し正典参照（ポインタ）へ。正典単一出力元 `app/hitomi.go` `defaultHitomiConfig()`（`bg_grace_ms` は `const defaultBgGraceMS`）、方針 decision `2026-11-05-rate-values-and-concurrency-change-approved.md`。server 側 minimum interval 未観測の旨と実測記録へのポインタは維持。
+  2. `docs/ai/usage-memo.md`: 93 行付近の image/data gate 数値写し（250 ms/1000 ms）と prefetch 並行度写し（4）を正典参照へ。config sample（167-168 行）の hitomi 数値は新的正典値へ更新（250/125・example 準拠の 2 キー追加）し、単一出力元へのポインタ明記（本メモは値を定義しない旨）。238 行付近の「rate gate 1000 ms/件」を正典参照へ。整合確認で矛盾する 233 行付近の download worker pool「既定 4」も正典参照へ（数値写しの二重定義回避・項目意味は不变）。
+  3. `docs/ai/backlog-items/p3-10-search-speed-measurement.md:24`: 「cannot be lowered without violating project policy」を server 制約ではなくプロジェクト方針である旨へ是正。2026-11-05 実測（100 ms・12 並行まで 429 なし）と decision `2026-11-05-...`（変更承認済み）へのポインタ。優先順位・項目意味は不变。
+  4. supersede 対象 decision 2件（`2026-11-01-hitomi-client-endpoints.md`、`2026-11-01-image-rate-and-prefetch-concurrency.md`）の該当行に supersede pointer を各1行追加（歴史的事実は消さない・現値は decision 参照とする旨のみ）。
+  5. backlog items の gate 数値記載を正典参照へ: `p3-12`（image gate）・`p3-13`（data gate）・`p3-17`（data gate）。項目意味・優先順位は不变。
+- 影響範囲: docs 8 ファイル（api-rate-limits.md・usage-memo.md・p3-10・p3-12・p3-13・p3-17・decision 2件）＋個別タスク記録のみ。コード・テスト・`config.example.json`・`AGENTS.md`・`.kilo/`・`known-issues/`・decision `2026-11-05-...`（参照のみ・追記なし）は変更しない。UI 変更なし（画面確認該当なし）。
+- 客観的合格条件: 5 範囲の各ファイル更新済みであること。記録とコードの整合確認（`defaultHitomiConfig()` と `config.example.json` 現値 250/125・並行度 8・下限ガード 1〜49 ms 拒否・block クールダウン 5 分＝1000 ms 退避・`Retry-After` 尊重）で docs が矛盾しないこと。docs 変更のみは正典検証の例外（global AGENTS.md）だが整合確認は必須。テスト実行不要。本項目分だけを単独コミットし push。
+- 検証方法: 正典現値の照合（grep/read）＋修正後 docs の残存数値写し点検（grep）。コマンド・結果を Verification に記録。UI 変更なし → 画面確認該当なし。
+- 判断: 段階3 該当なし（supersede は decision `2026-11-05-...` に記録済み。docs のポインタ化はその反映）。正典どうしの解決不能な矛盾发现時は持ち帰る。
 - 項目3 委譲前状態（子・実測 2026-11-05 10:47 UTC）: HEAD `d30f3fe`、`git status` clean（`git rev-parse HEAD`・`git status --porcelain` 実測）。正典 decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md` 照合済み（項目1 `0d5dbdf`・項目2 `7ee82bf` 合格済み）。
 
 ### 項目1 実装確定（子・実装前・2026-11-05 10:20 UTC）
@@ -163,6 +178,20 @@
 
 - 単独コミット `3b460c0`（項目3分のみ・7 files・+74/-16・push 済み）。この行と Next Action の記録更新は直後の docs commit で反映
 
+## 項目4 結果（子・docs 修正と整合検証完了 2026-11-05 11:20 UTC）
+
+- 合否: 合格（5 範囲の各ファイル更新・記録とコードの整合確認で矛盾なしを实測）
+- 変更ファイル（docs のみ・8 ファイル):
+  1. `docs/ai/api-rate-limits.md` hitomi 行: 数値写し削除・正典参照（単一出力元 `app/hitomi.go` `defaultHitomiConfig()`・`bg_grace_ms` は `const defaultBgGraceMS`）＋方針 decision `2026-11-05-...` へ。server 側 minimum interval 未観測の旨・実測記録ポインタ維持
+  2. `docs/ai/usage-memo.md`: 93 行付近の image/data gate 数値（250/1000）と prefetch 並行度（4）を正典参照へ。config sample の hitomi（167-168 行）は正典単一出力元へのポインタ明記＋新的正典値（250/125・example 準拠で gg_force 60000・bg_grace 300・use_live_gg）へ更新（写しである旨明示）。238 行付近の「rate gate 1000 ms/件」を正典参照へ。整合確認で矛盾していた 233 行付近の「worker pool（既定 4）」も正典参照へ（項目意味不変・数値写しの二重定義回避）
+  3. `docs/ai/backlog-items/p3-10-search-speed-measurement.md:24`: 「cannot be lowered without violating project policy」→ server 制約ではなくプロジェクト方針である旨へ是正。2026-11-05 実測（100 ms・12 並行まで 429 なし）と decision `2026-11-05-...`（承認済み）へのポインタ。下限ガード（1〜49 ms 拒否）は設定エラーとして追記。優先順位・項目意味不変
+  4. `docs/ai/decisions/2026-11-01-hitomi-client-endpoints.md`・`docs/ai/decisions/2026-11-01-image-rate-and-prefetch-concurrency.md`: 該当行に supersede pointer 各1行追加（歴史的事実維持・現値は decision/正典単一出力元参照の旨のみ）
+  5. `p3-12`（image gate 250 ms）・`p3-13`（data gate 1000ms）・`p3-17`（data gate 1000ms）: gate 数値を正典参照へ。項目意味・優先順位不変
+- 採用した判断（段階1）: usage-memo の config sample は JSON 内ではポインタ化できないため、新的正典値へ更新し「写し・正典定義を持たない」旨を明示（二重定義回避の形）。JSON sample 内の「既定 4」（233 行）は承認範囲の整合確認で現値 8 と矛盾するため正典参照へ（項目意味不変）
+- 正典どうしの矛盾: 解決不能な矛盾なし（decision `2026-11-05-...` が現値の正典方針・docs のポインタ化はその反映。p3-10 の旧「cannot be lowered」は 2026-11-05 実測で is正済み）
+- 段階3 持ち帰り: なし
+- 単独コミット（項目4分のみ・docs 9 ファイル（タスク記録含む）): commit hash 父確認手順どおり記録（子報告参照）
+
 ## Verification
 
 - `python docs\ai\tmp\rate_probe_20261105_floor.py` → `docs/ai/tmp/rate_probe_20261105_floor_results.json`（data 100/50/25 ms 逐次・image 404 は gg snapshot drift で rate 判定外）
@@ -207,6 +236,18 @@
   - abort（AbortController）意味維持: gallery 4306230 prefetch 中 active=8 のまま gallery 4294614（warm cache）へ切替 → `aborted` 8（1回目）・切替直後 active=8 の再切替で 7 追加（計 15）。切替後 status は新 gallery の counts のみ（stale 表示なし・title 追随）
   - Console errors: 1 件のみ（malformed probe URL による 502）。AbortError の console error なし
   - 保存先 `I:\マイドライブ\kilo\2026-11-05-assess-20261105-1015-item3\`: `item3-ui-concurrency8-active-2026-11-05.png`（active=8）、`item3-ui-abort-after-switch-2026-11-05.png`（切替後・stale なし）、`item3-ui-prefetch-status-midrun-2026-11-05.png`、`item3-ui-reader-fullpixels-2026-11-05.png`、手順 `item3-confirmation-2026-11-05.txt`
+
+### 項目4（docs 修正・整合確認・2026-11-05 11:14-11:20 UTC・実測）
+
+- docs 変更のみ → 正典検証の例外（global AGENTS.md・テスト実行不要）。整合確認以下を実測:
+  - `git rev-parse HEAD` → `b9d0067`・`git status --porcelain` → 空（委譲前 clean・実測 11:14 UTC）
+  - `app/hitomi.go` `defaultHitomiConfig()`（237-240 行）現値: `MinIntervalMS 250`・`ImageMinIntervalMS 125`・`GGForceMinIntervalMS 60000`・`MaxRetries 3`・`RetryBackoffMS 2000`・`BgGraceMS = defaultBgGraceMS`（正典 const 366 行 = 300）
+  - `config.example.json`（15-18 行）: 250/125/60000/300 → `defaultHitomiConfig()` と一致（テスト `TestConfigExampleHitomiKeysMatchCodeDefaults` で一致保証済み・項目1）
+  - 下限ガード: `app/main.go:150` `const minHitomiRateFloorMS = 50`・`loadConfig`（170-176 行）1〜49 ms はキー名を含む設定エラーで拒否・0/負値は既定フォールバック
+  - block: `app/hitomi.go:22` `negativeNoFullCacheTTL = 5 * time.Minute`＝`blockCooldownDuration`（34 行）・`politenessDefaultIntervalMS = 1000`（35 行）・`gateLane`（405-406 行）クールダウン有効中両 lane 退避・`parseRetryAfter`（597-624 行）両形式尊重・5 分 clamp・block signal = 403 / `cf-mitigated` / 503 / 522
+  - 並行度 8: `app/main.go:1070`（downloadFilesParallel 呼出）・`app/viewer.html:174`（PREFETCH_CONCURRENCY）
+  - 修正後 docs 残存数値点検（grep・11:19 UTC）: 本文の gate 数値写しは消去済み。残るのは (1) usage-memo JSON sample（新的正典値 250/125/60000/300・写しである旨明示済み）と (2) 2 decision の歴史的事実（supersede pointer 追加済み・削除しない旨の正典条による）と (3) p3-10 の実測 fact（100 ms・12 並行・記録ポインタ付き）。docs の現値との矛盾なし → 整合確認合格
+- UI 変更なし → 画面確認該当なし（保存先・ファイル名なし）
 
 ## 完了時 Memory Bank 操作
 

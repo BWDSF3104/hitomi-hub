@@ -21,7 +21,7 @@
 
 - External API calls in tests are allowed for `hitomi-hub` by decision `docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md`.
 - Existing mock tests remain useful, but live API measurement tests are allowed when rate limits and API policy are respected.
-- hitomi rate gate `min_interval_ms` is `1000 ms` for nozomi/index/gg. It cannot be lowered without violating project policy.
+- hitomi rate gate `min_interval_ms` applies to nozomi/index/gg calls as project policy, not as a server-side constraint. Values follow the canonical single source `defaultHitomiConfig()` in `app/hitomi.go` (not restated here). 2026-11-05 measurement showed no 429 up to `100 ms` with 12 parallel and no rate headers (`docs/ai/tasks/2026-11-05-assess-20261105-1010-rate-limit-verification.md`); the value change was approved by decision `docs/ai/decisions/2026-11-05-rate-values-and-concurrency-change-approved.md`. Lowering below the canonical floor guard (`minHitomiRateFloorMS` in `app/main.go` / `loadConfig`) is rejected as a config error.
 - Multi-term search may make multiple gate-passed calls.
 - Index search may make depth-based calls.
 - Live CDN/window and retry backoff make wall-clock measurements unstable.

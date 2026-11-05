@@ -18,7 +18,7 @@
 ## 制限事項
 
 - 通常なし。ただし運用上の制約がある。
-- ページ移動は毎回 `runSearch()` 経由の外部検索になる。nozomi 全体取得と rate gate `1000ms` の影響で連続移動は低速になりやすい。
+- ページ移動は毎回 `runSearch()` 経由の外部検索になる。nozomi 全体取得と data lane rate gate（正典参照: `app/hitomi.go` の `defaultHitomiConfig()`（`hitomi.min_interval_ms`）・この項目では値を再掲しない）の影響で連続移動は低速になりやすい。
 - keydown handler は gallery open 状態や `INPUT` を除外するため、検索画面だけでは矢印キーが効かない。
 - `history.replaceState` のためブラウザバックでページ履歴は回復しない。
 - 検索カードの `data-page` は固定で、gallery を開くと route が gallery hash に変わる。

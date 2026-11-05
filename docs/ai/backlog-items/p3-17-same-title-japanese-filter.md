@@ -21,7 +21,7 @@
 - total 表示と実表示件数の乖離。raw ids count と dedup 後の表示 count が意味を失う。
 - 同名別作品の誤分组リスク。
 - DB 主体案は `recordDiscovered` の title/lang NULL 制約に依存する。
-- 全結果の title 揃えは hitomi rate gate `1000ms` で非現実的。nozomi index から title を全取得できるか要確認。
+- 全結果の title 揃えは hitomi data lane rate gate（正典参照: `app/hitomi.go` の `defaultHitomiConfig()`（`hitomi.min_interval_ms`）・この項目では値を再掲しない）で非現実的。nozomi index から title を全取得できるか要確認。
 
 ## 推奨実装案
 
