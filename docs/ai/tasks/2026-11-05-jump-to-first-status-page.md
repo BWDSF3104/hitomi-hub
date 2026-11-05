@@ -119,6 +119,14 @@ default 案として追加確認済みの挙動（個別承認不要ならこの
 - 留意（既知問題化）: page 3 の旧形式 gallery は live galleryinfo が数値フィールド（id・tags 値）で Go parse 失敗 → card error・badge 表示不可（hit card 本文は error 表示）。`docs/ai/known-issues/KI-20261105-06-old-format-galleryinfo-numeric-parse-fail.md`。移動・highlight・status 行の合格条件には影響なし
 - スクリーンショット（タスクフォルダ・Playwright browser 画面・window 1920x1040/inner 1920x953）: `4-out-of-range-before.png`（操作前・page 1） / `4-out-of-range-after.png`（操作後・page 3・highlight・status 行 jump 表示）
 
+### 同条件再確認（ユーザー指示 2026-11-05 09:50・KI-20261105-06 修復後）
+
+- 条件: 正典 build（`test_canonical_build_freshness.py` 2 passed）・runtime root `Common_Operations\scratch\hitomi-usage`・port 8731（server PID 13284）。正典 write path で `#2299308` reset・`#296403` viewed=1（saved 0・項目原文の条件一致）。API hit 確認: page 3・rank 50・`#296403`・viewed・status_mask 15・total 59。window outer 1920x1040・inner（Playwright viewport）1920x1040。
+- 手順: page 1 submit（runSearch・カード25件表示済み）→ idle prefetch page 2 完了（background dataset+cards+cover 102 requests 確認）→ jump click（MutationObserver で status 行捕捉）。
+- 結果: status 行 `jump: page 3・rank 50・#296403・表示済み` ✓（項目原文の記録と一致）。page 3 へ移動・hit card class `card has-status highlight`・top 93px（問題発生時と同一）。**card 本文 error 表示なし・badge「表示済み」+ reset 表示**（KI-20261105-06 修復 commit `8d9ead1` により問題発生時の症状「error 本文・badge 空」が解消。page 3 の9件すべて error 0・badge card 1）。tags 出力 `female:futanari, female:schoolgirl uniform, female:yuri`（`names()` の意味不変確認）。
+- 時間（client 実測・performance.now・条件差: server 再起動後・disk cache あり）: click → status 行表示 **3ms**（問題発生時 66ms）。click → page 3 全 card（9件）表示完了 **14,337ms**（問題発生時 22.7s・TN cover 34 miss・perf row `cache=43・miss=34`）。
+- スクリーンショット（Playwright browser 画面・タスクフォルダ保存）: `4-out-of-range-recheck-before.png`（操作前・page 1） / `4-out-of-range-recheck-jumpstatus.png`（click 後・status 行 jump 表示を observer で捕捉 `jump: page 3・rank 50・#296403・表示済み`・hit card highlight） / `4-out-of-range-recheck-after.png`（9件表示完了・badge 表示）。保存先: `I:\マイドライブ\kilo\2026-11-05-jump-to-first-status-page\`
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
