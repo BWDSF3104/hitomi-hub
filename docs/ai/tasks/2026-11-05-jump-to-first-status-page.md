@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 実装計画確定（Phase 1-4・highlight 付与確定）→ 実装開始指示待ち
+**Next Action**: 子へ委譲（Phase 1-4 実装・検証）
 
 ## 意図 / 背景
 
