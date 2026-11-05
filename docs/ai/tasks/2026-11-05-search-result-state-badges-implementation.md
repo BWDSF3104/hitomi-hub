@@ -1,8 +1,8 @@
 # 検索結果画面の3状態 badge と手動リセットの実装
 
-**Status**: 完了
+**Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: 子へフォアグラウンド委譲（schema 迁移・library・viewer.go・viewer.html・search.html・CLI）。正典 build 実機画面確認まで
+**Next Action**: resize 前 target viewport（1280x900）で測れる正典経路で initial display（.side 480px・card height 130px）を再測定し、記録・commit/push する
 
 ## 意図 / 背景
 
@@ -54,11 +54,72 @@
 - `docs/ai/decisions/2026-11-02-strict-screen-confirmation-criteria.md` 項目2は「`#search-submit` click **または** `form#search` submit must fire」を許容する。OS click が届かない場合は `form#search` の submit 発火を実測で確認する（query input への Enter、または CDP element click）。CDP click は trusted input event として actual UI event を満たす。どちらの機構を使ったかは記録に明記する（fresh tab・resize 前測定・direct server baseline と DOM/network 一致の基準は同じ）。
 - actual submit/click event を実測でも確認できない場合は画面確認を未検証として合格にしない。正典 tool 制限は `known-issues/`（KI-20261105-）へ記録し、画面確認の残件だけ段階3として持ち帰る。Go test・pytest・正典 build・DB direct SQL 照合で取れる証拠は先に集める。
 
-（子の報告から記入）
+### 機械確認差し戻し（2026-11-05 05:32）
+
+- `initial display`（resize 前 target viewport）確認は未検証。
+- existing tool target fresh tab の resize 前測定値は `innerWidth=1920`, `innerHeight=953` だった。その後 `browser_resize` で `1280x900` へ変更した。
+- strict criteria項目5（1280x900 を測ってから resize、resize dependency 禁止）を満たさないため、initial display確認を合格扱いしない。
+- resize後の測定で `.side` width `480px`、card computed height `130px`（bounding rect は padding 込みで `140.59375px`）を観測したが、これは resize後の測定であり、initial display確認の証拠として採用しない。
+
+### 実行・実測
+
+- `go vet .`：合格（output なし）
+- `go test -count=1 -timeout 300s .`（app）：合格 `ok hitomi-hub/app 18.028s`
+- `python -m pytest tests/ -v`：合格 `53 passed in 9.30s`。`tests/test_canonical_build_freshness.py` 含む。
+- canonical build state：正典 server pid `32632` を stop し、`go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` を実行、canonical server pid `29792` を restart した。freshness test は pytest 内 green。
+
+### Direct SQL / schema
+
+- 正典 runtime DB：`S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\hitomi.db`
+- `PRAGMA user_version`：`6`
+- `read_state` columns：`gallery_id`, `last_page`, `fully_read`, `opened_at`, `favorite`, `viewed`, `viewed_at`
+- `4305294` before final pair：`last_page=8`, `fully_read=0`, `viewed=0`, `viewed_at=2026-11-05T03:57:10Z`（既存行保持）
+- actual UI final pair request `#15` body：`{"gallery_id":4305294,"page":8,"complete":true}`
+- `4305294` after final pair before reset：`last_page=8`, `fully_read=1`, `viewed=1`, `viewed_at=2026-11-05T03:57:10Z`
+- actual reset-read after click：`4305294` `last_page=8`, `fully_read=0`, `viewed=1`, `viewed_at=2026-11-05T03:57:10Z`
+- actual reset-viewed after click：`4305294` `last_page=0`, `fully_read=0`, `viewed=0`, `viewed_at=2026-11-05T03:57:10Z`
+- `4305205` existing row preserved：`last_page=2`, `fully_read=0`, `viewed=1`, `viewed_at=2026-11-05T04:20:07Z`
+
+### direct server baseline と UI response
+
+- direct baseline command：`curl -s -i "http://127.0.0.1:8731/api/search?query=furry&lang=all&page=1&limit=25"`
+- direct baseline result：HTTP `200`、`X-Search-Timing: search=0;record=58;json=1`、`Date: Thu, 05 Nov 2026 05:25:11 GMT`、`content-length=791`、`cache-control: no-store`、`total=32916`、`ids.length=25`
+- UI response actual click：`#search-submit` CDP trusted click。request `#195`。
+- UI response result：HTTP `200`、`X-Search-Timing: search=0;record=48;json=1`、`Date: Thu, 05 Nov 2026 05:25:15 GMT`、`cache-control: no-store`、`content-length=791`、`total=32916`、`ids.length=25`。direct baseline と一致。
+- DOM card count after UI response：`25`。status：`検索完了・カード表示済み 25件`。
+
+### badge 3状態 / `#lists-refresh`
+
+- actual UI `#lists-refresh` click：request `#273` `GET /api/lists => 200`。
+- card `4305294` badge：`表示済み・既読・保存済み`、meta `local 8/8`、TN cover source `/api/thumb/...&variant=bigtn`、reset buttons `viewed` / `read`。
+- card `4305205` badge：`表示済み`、reset button `viewed`。
+- actual reset buttons：`li[data-search-id='4305294'] button[data-reset='read']`、`li[data-search-id='4305294'] button[data-reset='viewed']` via existing tool CDP trusted click。Direct SQL 照合済み。
+- reader route actual events：fresh target viewer page、keyboard events via `browser_press_key`。final effective sequenceは `r`で `ltr`、`d`で double、`ArrowRight` ×3で `#/g/4305294/page/7-8`。`openGallery` route input時 `POST /api/viewed` request `#2`。viewer network filter `lists` は none。
+
+### confirmation mechanism / known issues
+
+- existing tool `kilo-playwright_browser_evaluate` で target viewport・`.side`・card height・DOM を read-only measured。actual UI events は existing tool CDP trusted click/keyboard。
+- 正典 `kilo-cdp-measure.ps1` は port `9344` で current targetに connect できなかった。正典 `kilo-fresh-browser.ps1` は fixed center-click で `#search-submit`（x=55）を確定できない。
+- known issues：
+  - `docs/ai/known-issues/KI-20261105-03-search-result-state-badges-confirmation-tool-limit.md`
+  - `docs/ai/known-issues/KI-20261105-04-search-prefetch-worker-undefined-entry-race.md`
+
+### visual confirmation
+
+- capture：`kilo-screen-capture.ps1 -WindowTitle "hitomi hub search" -OutFile "docs\ai\tmp\badge-card-and-lists-refresh.png"`
+- Drive：`I:\マイドライブ\kilo\2026-11-05-search-result-state-badges\2026-11-05\badge-card-and-lists-refresh.png`
+- visual read：same target windowで card `Mimi expansion` badge `表示済み・既読・保存済み`, second card `表示済み`, TN cover, `local 8/8`, `#lists-refresh` visible同時。
+- ただし initial display（resize前 target viewport）未検証のため、この visual readは actual badge visual evidenceとして記録するが、strict criteria項目5の initial display確認合格として扱わない。
 
 ## Verification
 
-（記入）
+- Commands:
+  - `go vet .`：合格
+  - `go test -count=1 -timeout 300s .`：`ok hitomi-hub/app 18.028s`
+  - `python -m pytest tests/ -v`：`53 passed in 9.30s`
+  - `task_manager.py` Memory Bank update：Status `進行中` / Next Action「resize 前 target viewport（1280x900）で測れる正典経路で initial display（`.side` 480px・card height 130px）を再測定し、記録・commit/push する」
+- Direct SQL helper used for row read: `python docs\ai\tmp\badges_db_check.py "S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh\hitomi.db" <gallery_id>`
+- initial display：未検証。resize前 target viewportが `1920x953` だった。target `1280x900`測定は resize後。`.side` 480px・card height 130pxは resize後測定。Strict criteria項目5を満たさない。
 
 ## 完了時 Memory Bank 操作
 
