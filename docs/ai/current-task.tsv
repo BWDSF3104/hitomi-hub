@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-05-saved-status-definition.md	進行中	assess-20261106-0326: 完成後削除の扱いの選択（推奨A=event列 saved_at / 推奨B=現行state再計算維持）はユーザー承認を要る。実装開始指示未受領
+docs/ai/tasks/2026-11-05-saved-status-definition.md	進行中	実装（A・event記録）: saved_at 列の非破壊迁移 6→7、download 完了 hook、card API・firststatus（pre-filter含む）の saved 算出源を event へ。決定記録 2026-11-06-saved-as-event-record-approved.md

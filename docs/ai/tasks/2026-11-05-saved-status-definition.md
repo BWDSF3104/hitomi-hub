@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-05
-**Next Action**: assess-20261106-0326: 完成後削除の扱いの選択（推奨A=event列 saved_at / 推奨B=現行state再計算維持）はユーザー承認を要る。実装開始指示未受領
+**Next Action**: 実装（A・event記録）: saved_at 列の非破壊迁移 6→7、download 完了 hook、card API・firststatus（pre-filter含む）の saved 算出源を event へ。決定記録 2026-11-06-saved-as-event-record-approved.md
 
 ## 意図 / 背景
 
@@ -79,6 +79,14 @@
 画面確認: **未確認**。理由: 対象 instance は起動済みでない（port 8731 は実測で connectable False）かつ既存ルール上に dev server 起動コマンドなし（AGENTS.md Development「dev server・build コマンドは適用なし」）、正典 exe ビルド不在（`tools/` に exe なし）。実データに saved gallery（全 entry disk 揃い）がなく、実 data で saved badge を表示できない。コード経路（badgeText が card.saved を読む）と既存テスト（`app/viewer_test.go:1737`・`1746`・`1765`・`2217-2280`）で確認済み。スクリーンショット保存なし。
 
 正典文書間の矛盾: 検出せず（task 記録と decision `2026-11-05-saved-status-definition-approved` は一致。実装済み badge タスク記録の「実装開始指示未受領」は later 実装タスクで解消済みだが本項目の有効性判定には影響しない）。
+
+### 方針選択（ユーザー承認 2026-11-06 09:14・A）
+
+- 指示原文: 「A」
+- 解決した論点: 完成後ファイル削除時は saved を **保持**（event 記録・sticky）。算出源は `read_state.saved_at`（非破壊迁移・`schemaVersion` 6→7・列追加のみ）、card API（`searchResult`）と firststatus（saved pre-filter を含む）を event 源へ切り替える。
+- 決定記録: `docs/ai/decisions/2026-11-06-saved-as-event-record-approved.md`（`docs/ai/decisions/2026-11-05-search-result-state-badges-approved.md` 第3項の算出源のみ supersede。定義と部分保存の扱いは有効）
+- 実装開始指示: implement-items 起動（2026-11-06 09:04）＋ A 承認（2026-11-06 09:14）
+- 承認範囲（実装）: schema 列追加迁移、download 完了時の event 書き込み hook、card API・firststatus の saved 算出源、関連テスト。badge の定義・部分保存扱い（meta `local N/M`）・フル画像経路・TN display policy・永続 cache は無変更。
 
 ## Verification
 

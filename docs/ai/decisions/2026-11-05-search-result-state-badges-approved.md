@@ -1,5 +1,7 @@
 # 検索結果画面の3状態 badge と手動リセット：設計判断の承認（2026-11-05）
 
+> Superseded by（部分・第3項の算出源のみ）: `docs/ai/decisions/2026-11-06-saved-as-event-record-approved.md`。第3項の定義と部分保存の扱いは有効。
+
 **Status**: 承認済み（ユーザー 2026-11-05 03:29）
 **Date**: 2026-11-05
 **対象タスク**: `docs/ai/tasks/2026-11-05-search-result-state-badges.md`
