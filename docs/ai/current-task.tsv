@@ -1,1 +1,20 @@
 task_file	status	next_action
+docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	実装開始指示待ち。項目ごとに個別タスクへ分割済み（本記録の項目一覧を参照）
+docs/ai/tasks/2026-11-06-r01-bounded-cache-put-overwrite-double-count.md	進行中	実施開始指示待ち。合格条件: 同一 key の再 insert で totalBytes が水増ししない（上書き時は old entrySize を引いてから加算）。記録: 2026-11-06-claude-review-20261106-findings.md R-01
+docs/ai/tasks/2026-11-06-r02-go-ispe-window-parity.md	進行中	実施開始指示待ち。合格条件: e_lfanew >= 64 の実在 PE fixture で mz_without_pe_header 非 hit（Python 版 seek 実装と対称）。記録: R-02
+docs/ai/tasks/2026-11-06-r03-7z-magic-last-byte.md	進行中	実施開始指示待ち。合格条件: 正典 magic 37 41 7A BC AF 27 1C の fixture で detect magic = 7z（Go・Python 両側）。記録: R-03
+docs/ai/tasks/2026-11-06-r04-record-file-missing-flag-reset.md	進行中	実施開始指示待ち。合格条件: external_removal 記録後に同 path 再 record で missing_at_verify = 0 へ戻り、verifyMissing が再度検出。記録: R-04
+docs/ai/tasks/2026-11-06-r05-acquisition-title-collision.md	進行中	方針変更の提案（承認待ち）。B-04 の命名決定（acquisitionTitleName 変更なし）と衝突。gallery id 付与・予約名・末尾 dot・末尾空白・255 文字超過の扱いを判断。記録: R-05
+docs/ai/tasks/2026-11-06-r06-scan-cache-meta-per-path.md	進行中	実施開始指示待ち。合格条件: 同一 sha256 の 2 path（Galleries と acquisition）を 1 scan 後 2 scan で双方 hash 計算 0。key に path を含めるか path 別 meta 表。記録: R-06（A-12 の残存点）
+docs/ai/tasks/2026-11-06-r07-http-transport-idle-conns.md	進行中	実施開始指示待ち。合格条件: 8 並行 prefetch/download で接続Reuseが確認できる（MaxIdleConnsPerHost を 16 程度へ）。gate semantics・fetch 口（テスト inject）非触。記録: R-07
+docs/ai/tasks/2026-11-06-r08-search-card-light-response.md	進行中	実施開始指示待ち。指摘の「files は死荷重」は誤り: local N/M 表示と cover fallback（search.html:408,414）と guard test（TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen）が files を使用。ReadDir 1 回 + 軽量応答の設計承認が必要。記録: R-08
+docs/ai/tasks/2026-11-06-r09-search-card-record-dedup.md	進行中	実施開始指示待ち。合格条件: card 1 ページ 25 件で commit が増えない（search 側 batch と重複排除）。記録: R-09（A-02/C-03 の残存点）
+docs/ai/tasks/2026-11-06-r10-page-result-cache-per-query-lang.md	進行中	実施開始指示待ち。案: (query, lang) 単位で最終結果を短 TTL キャッシュし page移動・prefetch・firstStatus で共有。既存 term 単位 searchCache は維持。記録: R-10
+docs/ai/tasks/2026-11-06-r11-parallel-term-fetch-decision.md	進行中	設計判断待ち（politeness gate の意味変更）。実施開始指示なしに実装しない。記録: R-11
+docs/ai/tasks/2026-11-06-r12-startup-double-search.md	進行中	実施開始指示待ち。合格条件: ページロードで card fetch が 1 回だけ（searchGeneration が restore 分を進めない）。cold 確認の汚染源としても記録。記録: R-12
+docs/ai/tasks/2026-11-06-r13-singleflight-tn-info-nozomi.md	進行中	past A-07b scope 決定により追加 dedup は設計承認が必要。full image だけの既存 dedup と流儀を揃える案。記録: R-13
+docs/ai/tasks/2026-11-06-r14-pdf-raw-rgb-type-switch.md	進行中	実施開始指示待ち。案: *image.NRGBA / *image.YCbCr 型 switch か draw.Draw で RGBA 化。Flate raw RGB の肥大化は format 分岐（DCTDecode）判断を要る。記録: R-14（A-11 の memory 解消後の速度・alpha 点）
+docs/ai/tasks/2026-11-06-r15-viewer-prefetch-window-and-disk-lru.md	進行中	方針判断待ち（strip 先読みは TN 禁止方針の帰結）。案: 先読みを現在ページ ±N へ、disk cache に容量 LRU。client 側 objectURL LRU（B-02）は既存。記録: R-15
+docs/ai/tasks/2026-11-06-r16-atomic-write-tn-download.md	進行中	実施開始指示待ち。full cache の writeImageCacheAtomically（A-07a）を共通化し、TN と downloadFilesParallel（main.go:737）へ適用。合格条件: write/close/rename 失敗で壊れた target が残らない。記録: R-16
+docs/ai/tasks/2026-11-06-r17-stale-findings-on-content-change.md	進行中	実施開始指示待ち。合格条件: 再 scan で現行判定と食い違わない（path 基準で旧 finding を更新/無効化）。D-03 の unique key（path, sha256, rule, detail）は維持し、残存行の扱いを判断。記録: R-17
+docs/ai/tasks/2026-11-06-r18-unread-list-limit.md	進行中	実施開始指示待ち。案: LIMIT、または viewed/saved のみの行を除外。/api/lists と DOM の肥大化に対応。記録: R-18
