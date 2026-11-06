@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: screen confirmation pending (fixed recommended 3 implemented; p95 not support fixed 6)
+**Next Action**: fixed 2 implemented; block window no-block confirmed; translation populated examples pending
 
 ## 意図 / 背景
 
@@ -98,18 +98,18 @@
 - `actualPageUnitMs > 3900 ms` → dynamic default `2`。
 - `actualPageUnitMs > 5200 ms` → dynamic default `1`。
 
-### P1. dynamic実装方針（p95基準）
+### P1. p95 recommendation（実測後）
 
 - dynamic式候補は `min(6, max(1, floor(idleWindowMs / actualPageUnitMs)))`。
-- P0 p95基準で固定推奨値は `3`。
-- ユーザー指示で dynamicは使わず、固定 `3` で実装続行。
+- fresh cold 実測 p95 `5041.1 ms` は `>3900` に該当し、fixed recommendation は `2`。
+- dynamic は実装しない。ユーザー指示で p95 recommended `2` を fixed 実装へ反映。
 
-### P1実装（固定推奨値3）
+### P1実装（p95 recommended fixed 2）
 
-- `app/search.html` の `PREFETCH_AHEAD_PAGES` を固定 `3` に設定。
-- `runPrefetch()` は `offset = 1..3` で page `2..4` を順に取得。
+- `app/search.html` の `PREFETCH_AHEAD_PAGES` を fixed `2` に設定。
+- `runPrefetch()` は `offset = 1..2` で page `2..3` を順に取得。
 - dynamic formula、`prefetchIdleStart`、`PREFETCH_MEASURED_PAGE_UNIT_MS`、`PREFETCH_DYNAMIC_CAP` は本実装から除去。
-- P0 p95基準のdynamic候補は `p50`では6可能だが、`p95`基準では固定`3`が推奨。
+- 固定 `3` は p95実測の推奨ではないため、固定 `2` へ変更。p50 `4545.8 ms` 基準では dynamic `4` の余地はあるが、fixed実装方針では採用しない。
 
 ### P2. realtime patch実装（実装済み）
 
@@ -128,7 +128,7 @@
 ### P4. tests
 
 - harness追加:
-  - fixed value `3`。
+  - fixed value `2`。
   - success patch only。
   - failure not rendered。
   - helper outside schedulerBlock。
@@ -159,7 +159,11 @@
 - baseline 検証: `go vet .`（app）clean、`go test -count=1 -timeout 300s .`（app）pass `24.054s`（変更なし・baseline）
 - `python -m pytest tests/ -q` 53 passed `9.69s`（`tests/test_search_prefetch.py` の固定 behaviors 含む・baseline pass）
 - 実測スクリプト（スクラッチ・コミット対象外）: `docs/ai/tmp/assess-20261106-sametitle-feasibility/analyze_groups2.py`、`analyze_union.py`
-- 未確認点: anchor の可視性（card height contract で clip される事例）の screen confirmation。block 持続窓の挙動。translation entry で `japanese_title` が populated になる事例（本サンプル非日本語 132 件で 0 件）。
+- P3 screen confirmation: canonical exe (`output/hitomi-hub/hub.exe`) を scratch root `docs/ai/tmp/screen-confirmation` で view 起動し、`http://127.0.0.1:8744/search` の `.card .text` に後から追加した `.same-title-anchor` を確認。短 tags 事例と long tags 事例で anchor が `.card .text` の下端内に描画され、clip されないことを screenshot で確認。スクショ: `docs/ai/tmp/screen-confirmation/prefetch-anchor-visibility.png`。
+- block 持続窓の実測（canonical server・fresh scratch root `docs/ai/tmp/block-window-cold`・port `8745`、15 cycles・depth3・data concurrency4・TN 4 workers、sustained `137378.5 ms`）: direct block statuses `0`、direct 429 statuses `0`、final metrics `retry_sleep_ms = 0`。foreground delay p50 `33.5 ms`、p95 `43.4 ms`。actual data page unit p50 `4545.8 ms`、p95 `5041.1 ms`; TN phase p50 `4494.2 ms`、p95 `4654.1 ms`。結果: `docs/ai/tmp/block-window/block_window_cold_output.json`。
+- この実測では block は発生しなかった。p95 `5041.1 ms` は p95公式で `>3900` → fixed recommendation `2`。実測結果を固定実装へ反映済み。
+- fixed `2`実装後の検証: `node tests/search_prefetch_harness.mjs` 42 checks passed; canonical rebuild後 `python -m pytest tests/ -q` 53 passed `9.85s`; `go vet .` clean; `go test -count=1 -timeout 300s .` pass `24.624s`。
+- 未確認点: `japanese_title` populated事例（本サンプル非日本語 132 件で 0 件）。
 
 ## 完了時 Memory Bank 操作
 

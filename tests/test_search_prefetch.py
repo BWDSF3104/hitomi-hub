@@ -18,7 +18,7 @@ def test_search_prefetch_scheduler_fixed_behaviours():
     required = [
         # fixed constants and marker
         "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes",
-        "prefetch ahead page count is fixed at the P0 recommended value 3",
+        "prefetch ahead page count is fixed at the p95 measured recommendation 2",
         "success patch helper is outside schedulerBlock and uses appendChild not innerHTML",
         "prefetch requests carry the background marker as a query param",
         "prefetch requests go through the existing api() helper with the marker",

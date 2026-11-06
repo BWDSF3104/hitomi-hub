@@ -16,7 +16,7 @@ check(
   schedulerBlock.includes("const PREFETCH_IDLE_MS = 800;") && schedulerBlock.includes("const PREFETCH_CONCURRENCY = 4;") && schedulerBlock.includes("const PREFETCH_COOLDOWN_MS = 300000;"),
   "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes"
 );
-check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES = 3;") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is fixed at the P0 recommended value 3");
+check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES = 2;") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is fixed at the p95 measured recommendation 2");
 check(patchHelperBlock.includes("appendChild") && patchHelperBlock.includes("setSearchTitleGroup") && patchHelperBlock.includes("group.language") && patchHelperBlock.includes("Number(group.bestId) === Number(card.id)") && !patchHelperBlock.includes("innerHTML") && schedulerBlock.includes("applyPrefetchCardKnowledge(card, gen)"), "success patch helper is outside schedulerBlock and uses appendChild not innerHTML");
 check(schedulerBlock.includes("\"priority=background\""), "prefetch requests carry the background marker as a query param");
 check(schedulerBlock.includes("api(prefetchMarkerUrl("), "prefetch requests go through the existing api() helper with the marker");
