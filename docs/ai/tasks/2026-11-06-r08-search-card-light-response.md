@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 実施開始指示待ち。指摘の「files は死荷重」は誤り: local N/M 表示と cover fallback（search.html:408,414）と guard test（TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen）が files を使用。ReadDir 1 回 + 軽量応答の設計承認が必要。記録: R-08
+**Next Action**: 設計承認済み（案 A: 1 gallery 1 回の集合判定、保存済み枚数と代表画像の材料は残す）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 

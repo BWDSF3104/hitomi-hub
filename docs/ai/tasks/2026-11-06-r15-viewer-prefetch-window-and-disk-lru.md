@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 方針判断待ち（strip 先読みは TN 禁止方針の帰結）。案: 先読みを現在ページ ±N へ、disk cache に容量 LRU。client 側 objectURL LRU（B-02）は既存。記録: R-15
+**Next Action**: 設計承認済み（案 B: 全体先読み維持 + gallery 単位の保存容量上限、閲覧中と列表示済みは捨てない・利便性優先）。実施開始指示待ち。残設計点: 上限値、上限到達時の通知。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 

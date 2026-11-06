@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: past A-07b scope 決定により追加 dedup は設計承認が必要。full image だけの既存 dedup と流儀を揃える案。記録: R-13
+**Next Action**: 設計承認済み（案 A: 縮小画像・作品情報・nozomi 分割データへ同じ内容 1 回を追加）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 

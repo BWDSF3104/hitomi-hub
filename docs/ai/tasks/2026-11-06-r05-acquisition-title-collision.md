@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 方針変更の提案（承認待ち）。B-04 の命名決定（acquisitionTitleName 変更なし）と衝突。gallery id 付与・予約名・末尾 dot・末尾空白・255 文字超過の扱いを判断。記録: R-05
+**Next Action**: 設計承認済み（案 A: 作品名 + 作品番号、予約名・末尾点・末尾空白・長さ上限を処理、既存フォルダは再命名せず新規保存分から）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 

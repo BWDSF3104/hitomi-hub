@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 実装開始指示待ち。項目ごとに個別タスクへ分割済み（下記の項目一覧）。優先実装候補は R-01・R-04・R-05・R-07・R-08（指摘の 1・3・4・6・7）
+**Next Action**: 設計判断確定（R-05・R-08・R-11・R-13・R-15・R-20）。実施開始指示待ち。R-19 は実例待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 
