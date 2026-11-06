@@ -625,11 +625,48 @@ async function runSearch() {
   }
 }
 
+function applyPrefetchCardKnowledge(card, gen) {
+  if (gen !== searchGeneration) return;
+  if (!card || card.error) return;
+  setSearchTitleGroup(card);
+
+  const key = normalizeTitleKey(card);
+  const group = titleGroups.get(key);
+  if (!key || !group || card.language === "japanese" || group.language !== "japanese" || Number(group.bestId) === Number(card.id)) return;
+
+  const results = document.getElementById("results");
+  if (!results) return;
+  const li = results.querySelector("li[data-search-id=\"" + Number(card.id) + "\"]");
+  if (!li) return;
+
+  const text = li.querySelector(".text");
+  if (!text) return;
+  if (text.querySelector(".same-title-anchor")) return;
+
+  const div = document.createElement("div");
+  div.className = "meta same-title-anchor";
+  div.appendChild(document.createTextNode("同名の日本語版: "));
+
+  const link = document.createElement("a");
+  link.href = viewerLink(group.bestId);
+  if (newTabMode) link.target = "_blank";
+  link.textContent = "#" + group.bestId;
+
+  div.appendChild(link);
+  text.appendChild(div);
+}
+
 const PREFETCH_IDLE_MS = 800;
 const PREFETCH_CONCURRENCY = 4;
 const PREFETCH_COOLDOWN_MS = 300000;
-const PREFETCH_AHEAD_PAGES = 3;
+const PREFETCH_MEASURED_PAGE_UNIT_MS = 3365;
+const PREFETCH_DYNAMIC_CAP = 6;
 
+function dynamicAheadPages(idleMs) {
+  return Math.min(PREFETCH_DYNAMIC_CAP, Math.max(1, Math.floor(idleMs / PREFETCH_MEASURED_PAGE_UNIT_MS)));
+}
+
+let prefetchIdleStart = 0;
 let prefetchCooldownUntil = 0;
 let prefetchInterruptFlag = false;
 let prefetchEligible = true;
@@ -663,6 +700,7 @@ function startPrefetchNow() {
 }
 
 function armPrefetchIdle() {
+  prefetchIdleStart = Date.now();
   prefetchInterruptFlag = false;
   if (prefetchIdleTimer) clearTimeout(prefetchIdleTimer);
   prefetchIdleTimer = setTimeout(() => {
@@ -700,6 +738,7 @@ async function runPrefetch() {
   const lang = document.getElementById("lang").value.trim() || "all";
   const currentPage = Number(document.getElementById("page").value || "1");
   const total = Number(currentSearchTotal || 0);
+  const PREFETCH_AHEAD_PAGES = dynamicAheadPages(Date.now() - prefetchIdleStart);
   const maxAheadPage = Math.min(currentPage + PREFETCH_AHEAD_PAGES, searchTotalPages(total));
   if (!total || currentPage + 1 > maxAheadPage) return;
   prefetchRunning = true;
@@ -713,7 +752,10 @@ async function runPrefetch() {
       const ids = data.ids || (data.results || []).map((r) => r.id);
       if (!ids.length) continue;
       const cards = [];
-      await prefetchQueue(ids.map((id) => "/api/search-card/" + id), gen, (card) => cards.push(card));
+      await prefetchQueue(ids.map((id) => "/api/search-card/" + id), gen, (card) => {
+        cards.push(card);
+        applyPrefetchCardKnowledge(card, gen);
+      });
       if (prefetchInterrupted(gen)) return;
       await prefetchQueue(cards.map((card) => searchCardCoverSource(card)).filter(Boolean), gen);
     }

@@ -5,6 +5,7 @@ const searchHtml = readProjectFile("app", "search.html");
 const { failures, passed, check } = createChecker();
 
 const schedulerBlock = bodyIn(searchHtml, "const PREFETCH_IDLE_MS = 800;", "document.getElementById(\"search\").addEventListener");
+const patchHelperBlock = bodyIn(searchHtml, "function applyPrefetchCardKnowledge(card, gen) {", "const PREFETCH_IDLE_MS = 800;");
 const runSearchBlock = bodyIn(searchHtml, "async function runSearch() {", "const PREFETCH_IDLE_MS = 800;");
 const wiringBlock = searchHtml.slice(searchHtml.indexOf("document.getElementById(\"search\").addEventListener"));
 const totalBlock = bodyIn(searchHtml, "function searchTotalPages(total) {", "function recordPerfCache(value) {");
@@ -15,7 +16,9 @@ check(
   schedulerBlock.includes("const PREFETCH_IDLE_MS = 800;") && schedulerBlock.includes("const PREFETCH_CONCURRENCY = 4;") && schedulerBlock.includes("const PREFETCH_COOLDOWN_MS = 300000;"),
   "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes"
 );
-check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES =") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is variableized as PREFETCH_AHEAD_PAGES");
+check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES = dynamicAheadPages") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is variableized as PREFETCH_AHEAD_PAGES");
+check(schedulerBlock.includes("function dynamicAheadPages(idleMs) {") && schedulerBlock.includes("Math.min(PREFETCH_DYNAMIC_CAP, Math.max(1, Math.floor(idleMs / PREFETCH_MEASURED_PAGE_UNIT_MS)))"), "prefetch dynamic page count is capped to 1..6 from measuredPageUnitMs and idleWindowMs");
+check(patchHelperBlock.includes("appendChild") && patchHelperBlock.includes("setSearchTitleGroup") && patchHelperBlock.includes("group.language") && patchHelperBlock.includes("Number(group.bestId) === Number(card.id)") && !patchHelperBlock.includes("innerHTML") && schedulerBlock.includes("applyPrefetchCardKnowledge(card, gen)"), "success patch helper is outside schedulerBlock and uses appendChild not innerHTML");
 check(schedulerBlock.includes("\"priority=background\""), "prefetch requests carry the background marker as a query param");
 check(schedulerBlock.includes("api(prefetchMarkerUrl("), "prefetch requests go through the existing api() helper with the marker");
 check(searchHtml.includes("const api = (p) => fetch(p, { cache: \"no-store\" })") && searchHtml.includes("err.status = r.status;"), "api stays no-store and exposes the response status for the 429/5xx stop rule");
@@ -46,7 +49,23 @@ let scenarioIds = [];
 const requests = [];
 const timers = [];
 const inputs = { query: "female:yuri", lang: "all", page: "1" };
-const document = { getElementById: (id) => ({ value: inputs[id] || "" }) };
+const resultsElement = { querySelector: () => null };
+const document = {
+  getElementById: (id) => id === "results" ? resultsElement : ({ value: inputs[id] || "" }),
+};
+const titleGroups = new Map();
+let newTabMode = false;
+function normalizeTitleKey(r) {
+  return String(r.title || r.japanese_title || r.id || "").trim().toLowerCase();
+}
+function setSearchTitleGroup(r) {
+  const key = normalizeTitleKey(r);
+  if (!key || r.id === undefined) return;
+  titleGroups.set(key, { bestId: r.id, language: r.language || "", name: r.japanese_title || r.title || String(r.id) });
+}
+function viewerLink(id) {
+  return "/#/g/" + id;
+}
 const Date = { now: () => fakeNow };
 const setTimeout = (cb, ms) => { timers.push({ cb, ms }); return timers.length; };
 const clearTimeout = () => {};
@@ -80,13 +99,17 @@ function resetScenario(gen) {
   searchCardsCompleted = false;
   prefetchIdleTimer = null;
   prefetchRunning = false;
+  prefetchIdleStart = fakeNow;
 }
 `;
 
 const testScript = `
 async function runAll() {
-  const firstAheadPage = 2;
-  const targetPage = 1 + PREFETCH_AHEAD_PAGES;
+  const dynamicFormulaPages = dynamicAheadPages(20193);
+  check(dynamicFormulaPages === 6 && dynamicAheadPages(0) === 1 && dynamicAheadPages(10000) === 2, "prefetch dynamic page count is capped to 1..6 from measuredPageUnitMs and idleWindowMs");
+
+  const dynamicPagesAtStart = dynamicAheadPages(0);
+  const firstAheadPage = 1 + dynamicPagesAtStart;
 
   // scenario a: current page completed plus 800ms idle starts the first-ahead-page prefetch
   resetScenario(1);
@@ -158,7 +181,7 @@ async function runAll() {
   await fireTimers();
   check(requests.length > beforeCooldown, "prefetch may resume after the cooldown expires");
 
-  // scenario d: the target never exceeds the configured ahead-page count
+  // scenario d: the target never exceeds the configured dynamic ahead-page count
   resetScenario(1);
   currentSearchTotal = 25;
   scenarioIds = [201];
@@ -166,12 +189,14 @@ async function runAll() {
   armPrefetchIdle();
   await fireTimers();
   check(requests.length === 0, "prefetch does not start when there is no ahead page beyond the current page");
+
+  const targetPage = 1 + dynamicFormulaPages;
   currentSearchTotal = targetPage * 25;
-  armPrefetchIdle();
-  await fireTimers();
+  prefetchIdleStart = fakeNow - 20193;
+  await startPrefetchNow();
   const searchPages = requests.filter((p) => p.split("?")[0] === "/api/search").map((p) => Number(p.split("page=")[1].split("&")[0]));
-  check(searchPages.every((page) => page > 1 && page <= targetPage) && [firstAheadPage, targetPage].every((page) => searchPages.includes(page)) && !searchPages.includes(targetPage + 1), "the prefetch targets configured ahead pages only, never beyond them");
-  check(searchPages.length === PREFETCH_AHEAD_PAGES, "one prefetch run covers at most the configured ahead-page count");
+  check(searchPages.every((page) => page > 1 && page <= targetPage) && [firstAheadPage, targetPage].every((page) => searchPages.includes(page)) && !searchPages.includes(targetPage + 1), "the prefetch targets configured dynamic ahead pages only, never beyond them");
+  check(searchPages.length === dynamicFormulaPages, "one prefetch run covers at most the configured dynamic ahead-page count");
 
   // scenario e: saved-query startup is not eligible
   resetScenario(1);
@@ -188,7 +213,7 @@ async function runAll() {
 const run = new Function(
   "check",
   "totalBlockUnused",
-  stubs + "\n" + totalBlock + "\n" + coverBlock + "\n" + schedulerBlock + "\n" + testScript + "\n return runAll();"
+  stubs + "\n" + totalBlock + "\n" + coverBlock + "\n" + patchHelperBlock + "\n" + schedulerBlock + "\n" + testScript + "\n return runAll();"
 );
 
 await run(check, null);

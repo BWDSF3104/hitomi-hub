@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: P0実測→dynamic→patch実装→guard re-anchor→screen confirmation
+**Next Action**: screen confirmation pending (P0 cold p95 3365ms, dynamic/helper implemented)
 
 ## 意図 / 背景
 
@@ -72,11 +72,23 @@
 
 ## 計画
 
-### P0. 実測ゲート
+### P0. 実測ゲート（cold scratchで実行）
 
-- `actualPageUnitMs`: 1 search + 25 card meta の p50/p95。正典 data lower bound `100 ms` で最低 `2.6 s`。
-- `idleWindowMs`: 現 page 完了後の実ユーザー待機時間。`PREFETCH_IDLE_MS` は開始判定のみ。
-- foreground delay と block 持続窓を canonical build で確認。
+- canonical exe を `docs\ai\tmp\p0-cold` scratch root で view起動。正典 runtime cache は非汚染。
+- `actualPageUnitMs`（1 search + 25 card meta, concurrency4）:
+  - p50 `2598.7 ms`
+  - p95 `3365.5 ms`
+  - samples `3365.5`, `2664.8`, `2598.7`, `2583.2`, `2579.8` ms
+- card meta latency:
+  - p50 `227.7 ms`
+  - p95 `1144.7 ms`
+- foreground delay sample:
+  - p50 `33.9 ms`
+  - p95 `49.4 ms`
+- block signal observed during cold run? retry_sleep_ms = 0, no 429/5xx block signal. Still not long-window block measurement.
+- P0判定: `actualPageUnitMs <= 2600 ms` p95条件は満たさない。p50だけ満たす。p95基準では `6` は `20.2s`以上待機時だけ。`4`は約`13.5s`以上、`5`は約`16.8s`以上。
+
+### P1. dynamic実装方針（p95基準）
 
 判定:
 
@@ -86,24 +98,21 @@
 - `actualPageUnitMs > 3900 ms` → dynamic default `2`。
 - `actualPageUnitMs > 5200 ms` → dynamic default `1`。
 
-### P1. dynamic実装
+### P1. dynamic実装（実装済み）
 
-- 式候補: `dynamicAheadPages = min(cap, max(1, floor(idleWindowMs / actualPageUnitMs)))`
-- 現コードの `3` fixed は、P0実測で確定するまで維持。
+- `app/search.html` に `PREFETCH_MEASURED_PAGE_UNIT_MS = 3365`、`PREFETCH_DYNAMIC_CAP = 6` を追加。
+- `dynamicAheadPages(idleMs) = min(6, max(1, floor(idleMs / 3365)))` を実装。
+- `runPrefetch()` は `dynamicAheadPages(Date.now() - prefetchIdleStart)` を使う。
+- `armPrefetchIdle()` は `prefetchIdleStart = Date.now()` を記録。
 
-### P2. realtime patch実装
+### P2. realtime patch実装（実装済み）
 
-- schedulerBlockは失敗処理だけ。
-- 成功path helperを schedulerBlock 外へ置く。
-- helper:
-  - current `searchGeneration` のみ。
-  - 表示中 card だけ patch。
-  - group cache は現行 key `title || japanese_title`。
-  - failure path は画面へ書かない。
-  - cooldown memory-only。
-- guard re-anchor:
-  - schedulerBlockに `setStatus(`、`renderSearchCard(`、`innerHTML`、`localStorage` リテラル禁止。
-  - helper側で成功 patch/cache更新を許可。
+- helper `applyPrefetchCardKnowledge(card, gen)` を schedulerBlock 外へ移動。
+- helperは success cardだけ処理。failure pathは画面へ書かない。
+- helperは `appendChild` を使い、schedulerBlock内の `innerHTML` リテラル禁止を維持。
+- helperは `setSearchTitleGroup(card)` と `Number(group.bestId) === Number(card.id)` で同名判定し、表示中 card の `.text` へ anchor を追加。
+- `searchGeneration` guardを維持。
+
 
 ### P3. card height screen confirmation
 
@@ -137,6 +146,8 @@
 ## Verification
 
 - 変数化後の検証: `go vet .` clean、`go test -count=1 -timeout 300s .` pass `22.835s`、`python -m pytest tests/ -q` 53 passed `8.73s`。正典 exe を `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` で再生成し、canonical freshness test を通過。
+- P0 cold scratch測定: `docs/ai/tmp/p0-cold/p0_output.json`。cold actual page unit p50 `2598.7 ms`, p95 `3365.5 ms`; card p95 `1144.7 ms`; foreground delay p95 `49.4 ms`。block signal observed during cold run? retry_sleep_ms=0。長期間block window実測は未確認。
+- P1 dynamic実装・P2 success patch helper実装後の検証: `node tests/search_prefetch_harness.mjs` 44 checks passed; canonical rebuild後 `python -m pytest tests/ -q` 53 passed `10.30s`; `go test -count=1 -timeout 300s .` pass `24.274s`。
 - 推奨値 `3`・ahead-page loop 実装後の検証: `python -m pytest tests/ -q` 53 passed `9.11s`（canonical rebuild 後）、`go vet .` clean、`go test -count=1 -timeout 300s .` pass `22.837s`。canonical exe を同じ正典 build で再生成し、canonical freshness test を通過。
 - baseline 検証: `go vet .`（app）clean、`go test -count=1 -timeout 300s .`（app）pass `24.054s`（変更なし・baseline）
 - `python -m pytest tests/ -q` 53 passed `9.69s`（`tests/test_search_prefetch.py` の固定 behaviors 含む・baseline pass）

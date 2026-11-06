@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-06-assess-20261106-sametitle-prefetch-realtime.md	進行中	P0実測→dynamic→patch実装→guard re-anchor→screen confirmation
+docs/ai/tasks/2026-11-06-assess-20261106-sametitle-prefetch-realtime.md	進行中	screen confirmation pending (P0 cold p95 3365ms, dynamic/helper implemented)
