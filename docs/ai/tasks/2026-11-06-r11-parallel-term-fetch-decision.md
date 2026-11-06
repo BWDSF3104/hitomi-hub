@@ -12,6 +12,7 @@
 ## 調査結果 / 変更内容
 
 - 語ごとに分けて 1 語ずつ取得するのは正典準拠。元サイトは 1 リクエストで複数語をまとめて投げる做法ではなく、語ごとの data を取って共通部分を作る（`app/searchhtml.go` の `searchAllIDs` が正典 `results.js` / `search.js` の `get_galleryids_for_query` の集合演算を mirror。`app/hitomi.go:835` に同じ分区規則の記録）。
+- 補足（2026-11-06 質問）: 語ごとの分割取得は AND 検索そのもの（共通部分）。`or` は group 内 union、`-term` は exclusion。R-11 の指摘は集合の意味ではなく、取得の逐次・同時の話。
 - したがって、集合（出る結果）は元サイトと同じ。並行化は結果を変えず、タイミングだけ変わる。
 - ただし同一性が壊れる条件がある:
   1. 順序の起点を変える（最初の positive term の dataset、または plain term で `orderbykey != 'added'` のとき order dataset を使う分岐・D-09）
