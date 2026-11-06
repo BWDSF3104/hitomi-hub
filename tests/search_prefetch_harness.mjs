@@ -16,8 +16,7 @@ check(
   schedulerBlock.includes("const PREFETCH_IDLE_MS = 800;") && schedulerBlock.includes("const PREFETCH_CONCURRENCY = 4;") && schedulerBlock.includes("const PREFETCH_COOLDOWN_MS = 300000;"),
   "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes"
 );
-check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES = dynamicAheadPages") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is variableized as PREFETCH_AHEAD_PAGES");
-check(schedulerBlock.includes("function dynamicAheadPages(idleMs) {") && schedulerBlock.includes("Math.min(PREFETCH_DYNAMIC_CAP, Math.max(1, Math.floor(idleMs / PREFETCH_MEASURED_PAGE_UNIT_MS)))"), "prefetch dynamic page count is capped to 1..6 from measuredPageUnitMs and idleWindowMs");
+check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES = 3;") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is fixed at the P0 recommended value 3");
 check(patchHelperBlock.includes("appendChild") && patchHelperBlock.includes("setSearchTitleGroup") && patchHelperBlock.includes("group.language") && patchHelperBlock.includes("Number(group.bestId) === Number(card.id)") && !patchHelperBlock.includes("innerHTML") && schedulerBlock.includes("applyPrefetchCardKnowledge(card, gen)"), "success patch helper is outside schedulerBlock and uses appendChild not innerHTML");
 check(schedulerBlock.includes("\"priority=background\""), "prefetch requests carry the background marker as a query param");
 check(schedulerBlock.includes("api(prefetchMarkerUrl("), "prefetch requests go through the existing api() helper with the marker");
@@ -99,17 +98,14 @@ function resetScenario(gen) {
   searchCardsCompleted = false;
   prefetchIdleTimer = null;
   prefetchRunning = false;
-  prefetchIdleStart = fakeNow;
 }
 `;
 
 const testScript = `
 async function runAll() {
-  const dynamicFormulaPages = dynamicAheadPages(20193);
-  check(dynamicFormulaPages === 6 && dynamicAheadPages(0) === 1 && dynamicAheadPages(10000) === 2, "prefetch dynamic page count is capped to 1..6 from measuredPageUnitMs and idleWindowMs");
-
-  const dynamicPagesAtStart = dynamicAheadPages(0);
-  const firstAheadPage = 1 + dynamicPagesAtStart;
+  const fixedPages = PREFETCH_AHEAD_PAGES;
+  const firstAheadPage = 2;
+  const targetPage = 1 + fixedPages;
 
   // scenario a: current page completed plus 800ms idle starts the first-ahead-page prefetch
   resetScenario(1);
@@ -181,7 +177,7 @@ async function runAll() {
   await fireTimers();
   check(requests.length > beforeCooldown, "prefetch may resume after the cooldown expires");
 
-  // scenario d: the target never exceeds the configured dynamic ahead-page count
+  // scenario d: the target never exceeds the configured fixed ahead-page count
   resetScenario(1);
   currentSearchTotal = 25;
   scenarioIds = [201];
@@ -190,13 +186,12 @@ async function runAll() {
   await fireTimers();
   check(requests.length === 0, "prefetch does not start when there is no ahead page beyond the current page");
 
-  const targetPage = 1 + dynamicFormulaPages;
   currentSearchTotal = targetPage * 25;
-  prefetchIdleStart = fakeNow - 20193;
-  await startPrefetchNow();
+  armPrefetchIdle();
+  await fireTimers();
   const searchPages = requests.filter((p) => p.split("?")[0] === "/api/search").map((p) => Number(p.split("page=")[1].split("&")[0]));
-  check(searchPages.every((page) => page > 1 && page <= targetPage) && [firstAheadPage, targetPage].every((page) => searchPages.includes(page)) && !searchPages.includes(targetPage + 1), "the prefetch targets configured dynamic ahead pages only, never beyond them");
-  check(searchPages.length === dynamicFormulaPages, "one prefetch run covers at most the configured dynamic ahead-page count");
+  check(searchPages.every((page) => page > 1 && page <= targetPage) && [firstAheadPage, targetPage].every((page) => searchPages.includes(page)) && !searchPages.includes(targetPage + 1), "the prefetch targets configured fixed ahead pages only, never beyond them");
+  check(searchPages.length === fixedPages, "one prefetch run covers at most the configured fixed ahead-page count");
 
   // scenario e: saved-query startup is not eligible
   resetScenario(1);

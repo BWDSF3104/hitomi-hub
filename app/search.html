@@ -659,14 +659,7 @@ function applyPrefetchCardKnowledge(card, gen) {
 const PREFETCH_IDLE_MS = 800;
 const PREFETCH_CONCURRENCY = 4;
 const PREFETCH_COOLDOWN_MS = 300000;
-const PREFETCH_MEASURED_PAGE_UNIT_MS = 3365;
-const PREFETCH_DYNAMIC_CAP = 6;
-
-function dynamicAheadPages(idleMs) {
-  return Math.min(PREFETCH_DYNAMIC_CAP, Math.max(1, Math.floor(idleMs / PREFETCH_MEASURED_PAGE_UNIT_MS)));
-}
-
-let prefetchIdleStart = 0;
+const PREFETCH_AHEAD_PAGES = 3;
 let prefetchCooldownUntil = 0;
 let prefetchInterruptFlag = false;
 let prefetchEligible = true;
@@ -700,7 +693,6 @@ function startPrefetchNow() {
 }
 
 function armPrefetchIdle() {
-  prefetchIdleStart = Date.now();
   prefetchInterruptFlag = false;
   if (prefetchIdleTimer) clearTimeout(prefetchIdleTimer);
   prefetchIdleTimer = setTimeout(() => {
@@ -738,7 +730,6 @@ async function runPrefetch() {
   const lang = document.getElementById("lang").value.trim() || "all";
   const currentPage = Number(document.getElementById("page").value || "1");
   const total = Number(currentSearchTotal || 0);
-  const PREFETCH_AHEAD_PAGES = dynamicAheadPages(Date.now() - prefetchIdleStart);
   const maxAheadPage = Math.min(currentPage + PREFETCH_AHEAD_PAGES, searchTotalPages(total));
   if (!total || currentPage + 1 > maxAheadPage) return;
   prefetchRunning = true;

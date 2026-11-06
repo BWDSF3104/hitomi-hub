@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: screen confirmation pending (P0 cold p95 3365ms, dynamic/helper implemented)
+**Next Action**: screen confirmation pending (fixed recommended 3 implemented; p95 not support fixed 6)
 
 ## 意図 / 背景
 
@@ -88,7 +88,7 @@
 - block signal observed during cold run? retry_sleep_ms = 0, no 429/5xx block signal. Still not long-window block measurement.
 - P0判定: `actualPageUnitMs <= 2600 ms` p95条件は満たさない。p50だけ満たす。p95基準では `6` は `20.2s`以上待機時だけ。`4`は約`13.5s`以上、`5`は約`16.8s`以上。
 
-### P1. dynamic実装方針（p95基準）
+### P0 p95判定
 
 判定:
 
@@ -98,12 +98,18 @@
 - `actualPageUnitMs > 3900 ms` → dynamic default `2`。
 - `actualPageUnitMs > 5200 ms` → dynamic default `1`。
 
-### P1. dynamic実装（実装済み）
+### P1. dynamic実装方針（p95基準）
 
-- `app/search.html` に `PREFETCH_MEASURED_PAGE_UNIT_MS = 3365`、`PREFETCH_DYNAMIC_CAP = 6` を追加。
-- `dynamicAheadPages(idleMs) = min(6, max(1, floor(idleMs / 3365)))` を実装。
-- `runPrefetch()` は `dynamicAheadPages(Date.now() - prefetchIdleStart)` を使う。
-- `armPrefetchIdle()` は `prefetchIdleStart = Date.now()` を記録。
+- dynamic式候補は `min(6, max(1, floor(idleWindowMs / actualPageUnitMs)))`。
+- P0 p95基準で固定推奨値は `3`。
+- ユーザー指示で dynamicは使わず、固定 `3` で実装続行。
+
+### P1実装（固定推奨値3）
+
+- `app/search.html` の `PREFETCH_AHEAD_PAGES` を固定 `3` に設定。
+- `runPrefetch()` は `offset = 1..3` で page `2..4` を順に取得。
+- dynamic formula、`prefetchIdleStart`、`PREFETCH_MEASURED_PAGE_UNIT_MS`、`PREFETCH_DYNAMIC_CAP` は本実装から除去。
+- P0 p95基準のdynamic候補は `p50`では6可能だが、`p95`基準では固定`3`が推奨。
 
 ### P2. realtime patch実装（実装済み）
 
@@ -122,7 +128,7 @@
 ### P4. tests
 
 - harness追加:
-  - dynamic formula。
+  - fixed value `3`。
   - success patch only。
   - failure not rendered。
   - helper outside schedulerBlock。
@@ -147,6 +153,7 @@
 
 - 変数化後の検証: `go vet .` clean、`go test -count=1 -timeout 300s .` pass `22.835s`、`python -m pytest tests/ -q` 53 passed `8.73s`。正典 exe を `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` で再生成し、canonical freshness test を通過。
 - P0 cold scratch測定: `docs/ai/tmp/p0-cold/p0_output.json`。cold actual page unit p50 `2598.7 ms`, p95 `3365.5 ms`; card p95 `1144.7 ms`; foreground delay p95 `49.4 ms`。block signal observed during cold run? retry_sleep_ms=0。長期間block window実測は未確認。
+- 固定推奨値 `3`実装・P2 success patch helper実装後の検証: `node tests/search_prefetch_harness.mjs` 42 checks passed; canonical rebuild後 `python -m pytest tests/ -q` 53 passed `9.76s`; `go test -count=1 -timeout 300s .` pass `24.874s`。
 - P1 dynamic実装・P2 success patch helper実装後の検証: `node tests/search_prefetch_harness.mjs` 44 checks passed; canonical rebuild後 `python -m pytest tests/ -q` 53 passed `10.30s`; `go test -count=1 -timeout 300s .` pass `24.274s`。
 - 推奨値 `3`・ahead-page loop 実装後の検証: `python -m pytest tests/ -q` 53 passed `9.11s`（canonical rebuild 後）、`go vet .` clean、`go test -count=1 -timeout 300s .` pass `22.837s`。canonical exe を同じ正典 build で再生成し、canonical freshness test を通過。
 - baseline 検証: `go vet .`（app）clean、`go test -count=1 -timeout 300s .`（app）pass `24.054s`（変更なし・baseline）
