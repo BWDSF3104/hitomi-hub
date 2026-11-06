@@ -24,6 +24,11 @@
   - warm（同一語の dataset が 1 時間 TTL の `searchCache` にある）は network 0 回だが、呼出每次に共通部分の map を作り直す（R-10）。
   - どの部分が支配かは実測で分ける。P3 #10（`docs/ai/backlog-items/p3-10-search-speed-measurement.md`）で「gate wait と network を分離して測る」が採用済み。この実測が終わるまで、並行化は採用しない。
   - 実測で cold latency が予算（例: 1.5 s）を超える場合の候補: data lane の interval は守ったまま、in-flight の直列化だけを外す案。これは A-05 の FIFO・grace 意味を変えるため、実測後に別の承認が要る。
+- 間隔短縮の方向（2026-11-06 10:43・ユーザー承認）。値は未確定。
+  - 今の正典値: data lane `min_interval_ms` 100 ms（`docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md`）。image lane 60 ms（`docs/ai/decisions/2026-11-06-tn-image-lane-60ms-approved.md`）。設定の下限 guard は 50 ms（`app/main.go:149-176`・`minHitomiRateFloorMS`）。
+  - 1000 ms は別物。block クールダウン中の politeness 退避先（`app/hitomi.go:30-35`・`politenessDefaultIntervalMS`）で、語ごとの通常 interval ではない。ここを短縮すると「作法」の意味が変わる。
+  - 候補: 50 ms（下限 guard 内・2026-11-05 実測で 429 なしを観測した範囲。単発実測のみで、持続呼出しと累計規模は未測）。25 ms（下限 guard 変更が必要。block 挙動未測）。現状 100 ms 維持。
+  - 推奨: 50 ms へ。ただし P3 #10 の実測（gate wait と network を分離）で、interval 短縮が効く部分と network 支配の部分を分けてから正典値の変更を承認する。短縮効果は語数ぶんだけ（3 語で 300 ms → 150 ms）。network が支配なら効果は小さい。
 
 ## R-15: 先読み範囲と保存容量
 
@@ -43,6 +48,16 @@
 - 画面からの操作方法: 「保存」ボタンはない。保存が起きる操作は (a)「取得」ボタン（acquisition へ）、(b) 閲覧中の画像取得（cache へ）。既存ファイルを使う表示（local-direct）は保存操作ではない。保存元は `showSourceStatus` の表示（local・cache・tn-cache・no_full）で分かる（`docs/ai/decisions/2026-11-01-tn-display-and-source-status.md`）。削除操作は画面にない（正典 `kilo-safe-remove`）。
 - LRU が効く範囲: cache 層（`cache/images`、`cache/images/thumbs`）のみ。`Galleries`（保存済みファイル）と `hitomi.db` は削除対象にしない。
 - 「保存済み優先で捨てる」の実現形: memory から捨てる対象は、disk に同じ内容がある項目を優先（完成フォルダのファイルまたは `cache/images` に同じ sha256 がある項目。DB の `files` で判定できる）。この解釈で合意している。disk 側の項目はすべて保存済みなので優先順位で区別できず、gallery 単位の古い順を維持。
+- 決定の不足（2026-11-06・R-15）。実施前に埋める必要がある点:
+  1. disk 上限の単位（件数か byte か）。memory は件数（4000 件）。disk は byte 推奨（画像の大きさがばらつく）。
+  2. disk 側の「使った順」の判定手段。mtime は読書で更新されない（LRU の順にならない）。明示的な last access の記録（DB 列または内存 LRU を disk へ反映）が必要。
+  3. disk 側の優先削除の形: 完成フォルダ（Galleries・acquisition）に同じ内容がある cache 項目を優先（冗長コピー）。判定は `files` の sha256 lookup（`schema.sql:83` の `idx_files_sha256`）。memory 側は client が持つ `local_formats`（card data）で判定できる（`app/viewer.html:295-300`）。
+  4. pinned の定義: 「現在閲覧中の gallery」だけか、列表示済みの全 gallery か。列は現在 gallery だけ。他の gallery の表示済み分を捨ててよいか。
+  5. TN 層の扱い: `cache/images/thumbs` に上限がない（R-15 の disk 上限に含まれるか、TN は別枠か）。TN を原寸画像の保存として数えない現方針は維持（`app/viewer.go:331`）。
+  6. 削除後の再表示の操作感: cache から消えた gallery を開くと remote 再取得（gate 消費・R-07）。この待ちを予算化する。
+  7. 知らせ方: どの面（`prefetch-status` か `#perf-status` か）に出すか未定。
+  8. client cap の設定化: 設定名（例 `viewer.max_object_urls`）、0 は既定、下限 guard の要否。テスト `app/viewer_test.go:816` が 2000 を固定しているため更新が必要。client 側の `prefetchedEntries`・`countsByGallery` は cap の対象外（C-05 の残存点）で、4000 へ上げると map 全体が増える。
+  9. 確認テスト: canonical build・served 画面確認、cold hygiene（操作前後の before/after）が必要（`docs/ai/rules/confirmation-test-rule.md`）。合格条件: full image の順序（local → 永続 cache → remote）、TN 表示禁止、`x-cache` 判定、generation guard を弱めない。
 
 ## R-20: 読み取り要求の要求元検査
 
