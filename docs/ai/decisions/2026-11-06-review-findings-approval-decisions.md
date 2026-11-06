@@ -59,6 +59,29 @@
   8. client cap の設定化: 設定名（例 `viewer.max_object_urls`）、0 は既定、下限 guard の要否。テスト `app/viewer_test.go:816` が 2000 を固定しているため更新が必要。client 側の `prefetchedEntries`・`countsByGallery` は cap の対象外（C-05 の残存点）で、4000 へ上げると map 全体が増える。
   9. 確認テスト: canonical build・served 画面確認、cold hygiene（操作前後の before/after）が必要（`docs/ai/rules/confirmation-test-rule.md`）。合格条件: full image の順序（local → 永続 cache → remote）、TN 表示禁止、`x-cache` 判定、generation guard を弱めない。
 
+## 確定（2026-11-06 10:52・R-11 と R-15）
+
+大前提: ユーザーに関知させる必要はない。不便が起きることは許容しない。通知 UI は置かない。これ以上判断を求めない。
+
+### R-11（interval）
+
+- data lane `min_interval_ms` を **90 ms** に決定（`docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md` の 100 ms の点のみ supersede）。
+- 下限 guard（50 ms）・image lane（60 ms）・politeness 退避先（1000 ms）は変更しない。
+- 効果: 語数ぶん（3 語で 300 ms → 270 ms）。network が支配なら効果は小さい。
+- 実装時に更新が必要: `defaultHitomiConfig()`（`app/hitomi.go:237-240`）と、100 ms を期待する test（`app/hitomi_test.go:1507-1528`）。実装開始指示待ち。
+
+### R-15（上限・削除順）
+
+- 上限は**件数**。容量（byte）計算は使わない。
+  - memory（ブラウザ内の画像参照）: **4000 件**。設定化（例 `viewer.max_object_urls`、0 は既定、下限 1000）。テスト `app/viewer_test.go:816` の 2000 固定を更新。
+  - disk（`cache/images`・`cache/images/thumbs`）: **8000 件**ずつ。
+- 削除順:
+  - disk: **作成順**（古いファイルから）。last access 記録は作らない。sha256 で完成フォルダとの同一内容 lookup はしない。現在閲覧中の gallery の項目は捨ない。
+  - memory: 既存の entry status（保存済み＝local）を優先して捨てる。次に最後に使った順。現在表示中の項目は捨ない。status は書き込み時に記録済みの値を見る（追加 lookup なし）。
+- 件数・作成順・status を filesystem scan ではなく DB の 1 表（例 `cache_entries`: hash、format、kind、created_at、source_status）で持つ。追加コストは書き込み・削除時の 1 行だけ。filesystem scan で数えない。
+- 通知 UI: 置かない（関知させない）。
+- 不便の許容: 保存済みの項目を memory から捨てた場合は disk から再表示できる。disk で作成順の項目を捨てることは、一度見て二度と使わない分を消すこととして許容（再取得を前提にしない）。現在閲覧中と表示中は捨てない。
+
 ## R-20: 読み取り要求の要求元検査
 
 - 元の推奨: 案 A（読み取り要求にも、自分自身の端末からの要求だけを認める検査を追加）。

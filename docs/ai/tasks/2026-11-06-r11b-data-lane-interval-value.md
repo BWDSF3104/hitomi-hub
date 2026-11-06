@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 実測（P3 #10・gate wait と network 分離）後に正典値を承認。候補: 50 ms（下限 guard 内・単発実測で 429 なし）・25 ms（guard 変更要）・100 ms 維持。1000 ms は politeness 退避先で別物。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+**Next Action**: 値確定 90 ms（100 ms の点のみ supersede）。下限 guard 50 ms・image lane 60 ms・politeness 1000 ms は不変。実装時に defaultHitomiConfig()（hitomi.go:237-240）と 100 ms を期待する test（hitomi_test.go:1507-1528）の更新が必要。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 

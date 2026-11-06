@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 設計確定（memory cap 4000・設定化、memory 削除は disk に同じ内容がある項目優先、pinned は現在閲覧中、LRU は第2基準、cache 層のみ・Galleries と hitomi.db は対象外）。不足の埋め合わせ待ち: disk 上限の単位（byte 推奨）、disk の last access 記録、pinned 定義、TN 層の扱い、削除後の再取得予算、知らせ方の面、client map（prefetchedEntries・countsByGallery）の cap 対象外、guard test（viewer_test.go:816）更新、確認テスト（canonical build・cold hygiene）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+**Next Action**: 設計確定（memory 4000 件・設定化、disk 8000 件ずつ、disk 削除は作成順、memory 削除は保存済み status 優先→LRU、現在閲覧中・表示中は捨ない、通知 UI なし、last access 記録なし、sha256 lookup なし）。件数と作成順と status は DB の 1 表（例 cache_entries: hash、format、kind、created_at、source_status）で持つ。テスト viewer_test.go:816 の 2000 固定更新。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 
