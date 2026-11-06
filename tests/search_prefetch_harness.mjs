@@ -15,7 +15,7 @@ check(
   schedulerBlock.includes("const PREFETCH_IDLE_MS = 800;") && schedulerBlock.includes("const PREFETCH_CONCURRENCY = 4;") && schedulerBlock.includes("const PREFETCH_COOLDOWN_MS = 300000;"),
   "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes"
 );
-check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES =") && schedulerBlock.includes("currentPage + PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is variableized as PREFETCH_AHEAD_PAGES");
+check(schedulerBlock.includes("const PREFETCH_AHEAD_PAGES =") && schedulerBlock.includes("offset <= PREFETCH_AHEAD_PAGES"), "prefetch ahead page count is variableized as PREFETCH_AHEAD_PAGES");
 check(schedulerBlock.includes("\"priority=background\""), "prefetch requests carry the background marker as a query param");
 check(schedulerBlock.includes("api(prefetchMarkerUrl("), "prefetch requests go through the existing api() helper with the marker");
 check(searchHtml.includes("const api = (p) => fetch(p, { cache: \"no-store\" })") && searchHtml.includes("err.status = r.status;"), "api stays no-store and exposes the response status for the 429/5xx stop rule");
@@ -85,11 +85,12 @@ function resetScenario(gen) {
 
 const testScript = `
 async function runAll() {
+  const firstAheadPage = 2;
   const targetPage = 1 + PREFETCH_AHEAD_PAGES;
 
-  // scenario a: current page completed plus 800ms idle starts the next-page prefetch
+  // scenario a: current page completed plus 800ms idle starts the first-ahead-page prefetch
   resetScenario(1);
-  currentSearchTotal = targetPage * 25;
+  currentSearchTotal = firstAheadPage * 25;
   scenarioIds = [201, 202, 203, 204];
   searchCardsCompleted = true;
   armPrefetchIdle();
@@ -97,7 +98,7 @@ async function runAll() {
   check(requests.length === 0, "no prefetch request before the idle window elapses");
   await fireTimers();
   const searchReq = requests[0];
-  check(searchReq.startsWith("/api/search?query=female%3Ayuri&lang=all&page=" + targetPage + "&limit=25"), "first prefetch request is the next page id list in the current runSearch query format");
+  check(searchReq.startsWith("/api/search?query=female%3Ayuri&lang=all&page=" + firstAheadPage + "&limit=25"), "first prefetch request is the next page id list in the current runSearch query format");
   check(searchReq.includes("priority=background"), "the id list request carries the marker");
   const cardReqs = requests.filter((p) => p.split("?")[0].startsWith("/api/search-card/"));
   const coverReqs = requests.filter((p) => p.split("?")[0].startsWith("/api/thumb/"));
@@ -157,19 +158,20 @@ async function runAll() {
   await fireTimers();
   check(requests.length > beforeCooldown, "prefetch may resume after the cooldown expires");
 
-  // scenario d: the target never exceeds one target page
+  // scenario d: the target never exceeds the configured ahead-page count
   resetScenario(1);
-  currentSearchTotal = (targetPage - 1) * 25;
+  currentSearchTotal = 25;
   scenarioIds = [201];
   searchCardsCompleted = true;
   armPrefetchIdle();
   await fireTimers();
-  check(requests.length === 0, "prefetch does not start when there is no target page");
+  check(requests.length === 0, "prefetch does not start when there is no ahead page beyond the current page");
   currentSearchTotal = targetPage * 25;
   armPrefetchIdle();
   await fireTimers();
-  check(requests.some((p) => p.includes("page=" + targetPage)) && !requests.some((p) => p.includes("page=" + (targetPage + 1))), "the prefetch targets the configured ahead-page offset only, never beyond it");
-  check(requests.filter((p) => p.split("?")[0] === "/api/search").length === 1, "one prefetch run covers at most one target page worth");
+  const searchPages = requests.filter((p) => p.split("?")[0] === "/api/search").map((p) => Number(p.split("page=")[1].split("&")[0]));
+  check(searchPages.every((page) => page > 1 && page <= targetPage) && [firstAheadPage, targetPage].every((page) => searchPages.includes(page)) && !searchPages.includes(targetPage + 1), "the prefetch targets configured ahead pages only, never beyond them");
+  check(searchPages.length === PREFETCH_AHEAD_PAGES, "one prefetch run covers at most the configured ahead-page count");
 
   // scenario e: saved-query startup is not eligible
   resetScenario(1);

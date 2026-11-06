@@ -44,10 +44,10 @@ def test_search_prefetch_scheduler_fixed_behaviours():
         "the failed prefetch request is not retried from the UI side",
         "no prefetch resumes during the cooldown",
         "prefetch may resume after the cooldown expires",
-        # (d) the target never exceeds one target page
-        "prefetch does not start when there is no target page",
-        "the prefetch targets the configured ahead-page offset only, never beyond it",
-        "one prefetch run covers at most one target page worth",
+        # (d) the target never exceeds the configured ahead-page count
+        "prefetch does not start when there is no ahead page beyond the current page",
+        "the prefetch targets configured ahead pages only, never beyond them",
+        "one prefetch run covers at most the configured ahead-page count",
         # exclusions and Phase 1 harmony
         "saved-query startup does not trigger the idle prefetch",
         "the search form re-enables the idle prefetch",

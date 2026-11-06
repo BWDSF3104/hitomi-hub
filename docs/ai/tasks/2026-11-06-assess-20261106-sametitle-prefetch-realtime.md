@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 変数化完了。実装判断待ち
+**Next Action**: 推奨値3・ahead-page loop実装済み。実装判断待ち
 
 ## 意図 / 背景
 
@@ -12,8 +12,10 @@
 
 ### 0. 先読みページ数の変数化
 
-- `app/search.html` の `runPrefetch()` で、固定 `+ 1` を `PREFETCH_AHEAD_PAGES = 1` と `currentPage + PREFETCH_AHEAD_PAGES` へ変更。
-- `tests/search_prefetch_harness.mjs` と `tests/test_search_prefetch.py` を、変数化された target page を見る形へ更新。
+- `app/search.html` の `PREFETCH_AHEAD_PAGES` を推奨値 `3`（この検証の算術例 depth3）へ変更。
+- `runPrefetch()` は `offset = 1..PREFETCH_AHEAD_PAGES` の ahead-page loop とし、current page の次の 1 page だけでなく、total pages に収まる範囲で最大 3 page 先読みする。
+- `tests/search_prefetch_harness.mjs` と `tests/test_search_prefetch.py` を、固定 page+1 ではなく configured ahead-page count を見る形へ更新。
+- 推奨値そのものは正典 decision に明示記録がない。この実装は算術例の `3` を採用したもので、判断項目は「5. 基本動作の guardian との衝突」に列挙。
 
 ### 1. データ取得コスト（追加リクエスト0で可能）
 
@@ -47,7 +49,7 @@
 
 ### 5. 基本動作の guardian との衝突（要 decision + test re-anchor）
 
-- `tests/search_prefetch_harness.mjs:168-169`「the prefetch targets page+1 only, never page+2」「one prefetch run covers at most one page worth」→ depth 変更は正典 invariant（decision `2026-11-06-tn-image-lane-60ms-approved.md` の「page+1 限定」含む search page 無変更条）の明示 supersede と harness re-anchor が必要。
+- 変更前 harness は「page+1 only」「one run covers at most one page worth」を固定していた。現在の実装で推奨値 `3` ahead-page loop を採用するため、正典 invariant（decision `2026-11-06-tn-image-lane-60ms-approved.md` の「page+1 限定」含む search page 無変更条）の明示 supersede が必要。harness は「configured ahead pages only, never beyond them」「at most configured ahead-page count」へ re-anchor 済み。
 - `tests/search_prefetch_harness.mjs:29`（schedulerBlock に `setStatus(`/`renderSearchCard(`/`innerHTML` 不許可・"prefetch failures are not rendered on screen"）と `:31`（"cooldown is memory-only, never persisted"）。prefetch 経路から DOM へ anchor を書き、group cache へ保存すると、リテラルでは helper 経由なら通過できるが guard の意味が変わる。実装は schedulerBlock 内で helper 呼び出のみ（`innerHTML`/`setStatus(`/`renderSearchCard(`/`localStorage` リテラルを置かない）とし、check の意味を「失败は画面へ書かない・成功の anchor patch と group cache 更新は許可」へ re-anchor する必要。
 - `app/viewer_test.go:3331-3347` は `renderSearchCard` が `sameTitleJapaneseAnchor(r)` と `anchor + ` を呼ぶことを固定 → render 時点 anchor は残す（リアルタイム patch は加算）。
 - `app/viewer_test.go:2672-2682` card height contract（130px 固定・tags line-clamp 9・`.card .text` max-height calc(130px - 2rem)・overflow hidden）。anchor は `.card .text` の最後の子なので、tags が幅を使うと retroactive patch は clip される（現 render 時 anchor も同じ制約）。可視性の screen confirmation が必要（canonical build rule）。
@@ -62,6 +64,7 @@
 ## Verification
 
 - 変数化後の検証: `go vet .` clean、`go test -count=1 -timeout 300s .` pass `22.835s`、`python -m pytest tests/ -q` 53 passed `8.73s`。正典 exe を `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` で再生成し、canonical freshness test を通過。
+- 推奨値 `3`・ahead-page loop 実装後の検証: `python -m pytest tests/ -q` 53 passed `9.11s`（canonical rebuild 後）、`go vet .` clean、`go test -count=1 -timeout 300s .` pass `22.837s`。canonical exe を同じ正典 build で再生成し、canonical freshness test を通過。
 - baseline 検証: `go vet .`（app）clean、`go test -count=1 -timeout 300s .`（app）pass `24.054s`（変更なし・baseline）
 - `python -m pytest tests/ -q` 53 passed `9.69s`（`tests/test_search_prefetch.py` の固定 behaviors 含む・baseline pass）
 - 実測スクリプト（スクラッチ・コミット対象外）: `docs/ai/tmp/assess-20261106-sametitle-feasibility/analyze_groups2.py`、`analyze_union.py`

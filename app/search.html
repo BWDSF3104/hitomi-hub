@@ -628,7 +628,7 @@ async function runSearch() {
 const PREFETCH_IDLE_MS = 800;
 const PREFETCH_CONCURRENCY = 4;
 const PREFETCH_COOLDOWN_MS = 300000;
-const PREFETCH_AHEAD_PAGES = 1;
+const PREFETCH_AHEAD_PAGES = 3;
 
 let prefetchCooldownUntil = 0;
 let prefetchInterruptFlag = false;
@@ -699,19 +699,24 @@ async function runPrefetch() {
   const query = document.getElementById("query").value.trim();
   const lang = document.getElementById("lang").value.trim() || "all";
   const currentPage = Number(document.getElementById("page").value || "1");
-  const page = currentPage + PREFETCH_AHEAD_PAGES;
   const total = Number(currentSearchTotal || 0);
-  if (!total || page > searchTotalPages(total)) return;
+  const maxAheadPage = Math.min(currentPage + PREFETCH_AHEAD_PAGES, searchTotalPages(total));
+  if (!total || currentPage + 1 > maxAheadPage) return;
   prefetchRunning = true;
   try {
-    const data = await api(prefetchMarkerUrl("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25"));
-    if (prefetchInterrupted(gen)) return;
-    const ids = data.ids || (data.results || []).map((r) => r.id);
-    if (!ids.length) return;
-    const cards = [];
-    await prefetchQueue(ids.map((id) => "/api/search-card/" + id), gen, (card) => cards.push(card));
-    if (prefetchInterrupted(gen)) return;
-    await prefetchQueue(cards.map((card) => searchCardCoverSource(card)).filter(Boolean), gen);
+    for (let offset = 1; offset <= PREFETCH_AHEAD_PAGES; offset++) {
+      const page = currentPage + offset;
+      if (page > maxAheadPage) break;
+      if (prefetchInterrupted(gen)) return;
+      const data = await api(prefetchMarkerUrl("/api/search?query=" + encodeURIComponent(query) + "&lang=" + encodeURIComponent(lang) + "&page=" + page + "&limit=25"));
+      if (prefetchInterrupted(gen)) return;
+      const ids = data.ids || (data.results || []).map((r) => r.id);
+      if (!ids.length) continue;
+      const cards = [];
+      await prefetchQueue(ids.map((id) => "/api/search-card/" + id), gen, (card) => cards.push(card));
+      if (prefetchInterrupted(gen)) return;
+      await prefetchQueue(cards.map((card) => searchCardCoverSource(card)).filter(Boolean), gen);
+    }
   } catch (err) {
     handlePrefetchFailure(err);
     return;
