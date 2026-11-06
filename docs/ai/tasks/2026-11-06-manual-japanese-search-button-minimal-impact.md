@@ -122,6 +122,16 @@ Recommended minimal impact implementation plan:
 - colon title は明示的に unsupported（plan step 2・8 の推奨案）。live 実測で field term 誤読を確認済み（上記）。fuzzy search 化はしない（非接触）。
 - `normalizeTitleKey`・prefetch constants・TN lane・saved query・download path 非接触（変更なし）。
 
+## 追加確認（non-Japanese card からの manual click・親実測 2026-11-06 08:05 UTC）
+
+- Fresh canonical `hub.exe`（commit `5d87f4c` からの canonical build）・fresh server instance（port 8733・runtime root `output\hitomi-hub`）・isolated origin（localStorage clear 後で測定）・actual window/viewport 1280x900（dpr 1）。Playwright browser 画面基準。
+- search `furry` page 1 → group 未確定 non-Japanese card 14 件に button が existing `.meta` row 内表示。
+- click 1（english card #4308110 `Witch Doctor`）→ click 後の network delta 2件のみ：`/api/search?query=witch%20doctor%20language%3Ajapanese&lang=all&limit=1` 200、`/api/search-card/3888535` 200。click 後の `/api/thumb` 発生 0（TN request なし）。same `.meta` row の button → link `同名の日本語版: #3888535`、card computed height `130px`、cover src（bigtn）不変。
+- click 2（chinese card #4308228 `Ao no Sekai to Hanasaku Karada`）→ click 後の network delta 2件のみ：`/api/search?query=ao%20no%20sekai%20to%20hanasaku%20karada%20language%3Ajapanese&lang=all&limit=1` 200、`/api/search-card/3710954` 200。same row button → link `同名の日本語版: #3710954`、height `130px`。
+- japanese card（#4306976）は button なし（non-Japanese card 限定の rule どおり）。
+- スクリーンショット（Playwright browser 画面・normal-screenshot-rule）: `I:\マイドライブ\kilo\2026-11-06-manual-japanese-search-button\manual-jp-nonjapanese-check-20261106.png`（local copy `scratch/manual_jp_nonjapanese_check_20261106.png`）
+- 画面で未確認（harness 確認のみ・実サンプルなし）: busy state・error state・colon-title unsupported message の表示。
+
 ## 完了時 Memory Bank 操作
 
 - [x] `current-task.tsv` の参照行を削除（task_manager end で実施）
