@@ -1,8 +1,8 @@
 # R-11: 複数 term の取得が逐次（gate は間隔のみ直列化）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 方向承認済み（interval 短縮）。値未確定: 50 ms（下限 guard 内・単発実測範囲）推奨、25 ms は guard 変更要。1000 ms は politeness 退避先で別物。P3 #10 の実測（gate wait と network 分離）後に正典値変更を承認。逐次・FIFO・grace は変更しない。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+**Next Action**: 判定済み（逐次維持・FIFO・grace 変更なし）。interval 値の短縮方向は R-11b で追跡。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 
