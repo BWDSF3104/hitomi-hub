@@ -145,7 +145,7 @@ func TestFirstStatusStatusMaskMembership(t *testing.T) {
 	}
 }
 
-func TestFirstStatusSavedStrictPartial(t *testing.T) {
+func TestFirstStatusSavedEventPreFilterAndStickyAfterDeletion(t *testing.T) {
 	hashA := "1111111111111111111111111111111111111111111111111111111111111111"
 	hashB := "2222222222222222222222222222222222222222222222222222222222222222"
 	hashC := "3333333333333333333333333333333333333333333333333333333333333333"
@@ -161,20 +161,20 @@ func TestFirstStatusSavedStrictPartial(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// files rows = saved pre-filter（scan 記録由来）。未 scan の filesystem 単独ファイルは
-	// candidate に出ない（限界・タスク記録に記載）。
+	// saved pre-filter は event 列（decision 2026-11-06）。scan record・disk 現况だけでは candidate に
+	// ならない（アプリ外部の手动コピーは event にならない）。
 	insertStatusTestFileRow(t, db, 202, hashA)
 	if err := setViewed(db, 202); err != nil {
 		t.Fatal(err)
 	}
-	// 202: partial save（disk に hashA のみ・galleryinfo 2 entry）→ strict saved=0
+	// 202: partial save（disk に hashA のみ・galleryinfo 2 entry・event なし）→ saved candidate なし
 	if err := os.MkdirAll(filepath.Join(galleryRoot, "202"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(galleryRoot, "202", hashA+".webp"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// 205: full save（全 entry local）
+	// 205: app download 完成 event（全 entry 写入済み・files record + disk）
 	if err := os.MkdirAll(filepath.Join(galleryRoot, "205"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -184,32 +184,47 @@ func TestFirstStatusSavedStrictPartial(t *testing.T) {
 		}
 		insertStatusTestFileRow(t, db, 205, h)
 	}
+	if err := setSavedEvent(db, 205); err != nil {
+		t.Fatal(err)
+	}
 
-	// mask = saved: partial（rank 1）は strict 判定で skip、full save の rank 4 が hit。
-	// walk 中の info fetch は hit candidate 分だけ（202・205 の 2 件・lazy）。
+	// mask = saved: 202（record+disk・event なし）は candidate に出ない。event の rank 4 が hit。
+	// event 源では candidate ごとの info fetch が不要（jump 計算は DB だけ）。
 	res, err := v.firstStatus("female:yuri", "all", statusBitSaved)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.Hit || res.ID != 205 || res.Rank != 4 || res.Flags["saved"] != 1 {
-		t.Fatalf("saved-only strict: %v", res)
+		t.Fatalf("saved-only event: %v", res)
 	}
-	if *fetches != 3 {
-		t.Errorf("lazy saved check must fetch info only for hit candidates: fetches %d (want 3=1 dataset+2 info)", *fetches)
+	if *fetches != 1 {
+		t.Errorf("event-source saved must not fetch info per candidate: fetches %d (want 1=dataset)", *fetches)
 	}
 
-	// mask = saved|viewed: rank 1（partial だが viewed）が hit。flags は strict 結果（saved=0・viewed=1）
-	before := *fetches
+	// sticky 回帰: 完成後ファイル削除でも saved は true を保つ（state 再計算で false へ戻さない）
+	for _, h := range []string{hashC, hashD} {
+		if err := os.Remove(filepath.Join(galleryRoot, "205", h+".webp")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err = v.firstStatus("female:yuri", "all", statusBitSaved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Hit || res.ID != 205 || res.Flags["saved"] != 1 {
+		t.Fatalf("saved must stay hit after completion deletion (event sticky): %v", res)
+	}
+
+	// mask = saved|viewed: rank 1（viewed・saved event なし）が hit。flags は event 結果（saved=0・viewed=1）
 	res, err = v.firstStatus("female:yuri", "all", statusBitSaved|statusBitViewed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.Hit || res.ID != 202 || res.Rank != 1 || res.Flags["viewed"] != 1 || res.Flags["saved"] != 0 {
-		t.Fatalf("strict/partial distinction: %v", res)
+		t.Fatalf("event/partial distinction: %v", res)
 	}
-	// cache 共有（card 描画と同一源 v.info・searchCache）: 2 度目の呼出で fetch が増えない
-	if *fetches != before {
-		t.Errorf("second jump call must not refetch (shared caches): %d → %d", before, *fetches)
+	if *fetches != 1 {
+		t.Errorf("second and third jump calls must not refetch (DB-only event source): %d", *fetches)
 	}
 }
 

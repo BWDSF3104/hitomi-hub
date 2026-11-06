@@ -230,7 +230,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 // execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
 type execer interface {
@@ -318,6 +318,8 @@ func ensureSchema(db *sql.DB) error {
 // 判定できないため再ハッシュ（安全側）。
 // schemaVersion 6（search-result-state-badges）: read_state へ viewed / viewed_at を
 // 追加する。列追加のみ・既存行を削除しない（同じ D-03 非破壊迁移規約）。
+// schemaVersion 7（saved-as-event-record・decision 2026-11-06）: read_state へ saved_at を
+// 追加する。列追加のみ・既存行を削除しない（同じ D-03 非破壊迁移規約）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -341,7 +343,48 @@ func migrateSchema(db *sql.DB, current int) error {
 			return err
 		}
 	}
+	if current < 7 {
+		if err := ensureReadStateSavedAt(db); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ensureReadStateSavedAt は read_state へ saved_at（saved event）列を追加する（schemaVersion 7・
+// decision 2026-11-06-saved-as-event-record-approved）。列追加のみ・既存行はそのまま（saved_at は
+// NULL で埋まる）。新 DB は schema.sql 定義で揃う（正典 DB は次回 ensureSchema 実行で自然に揃う・
+// D-03 非破壊迁移規約）。
+func ensureReadStateSavedAt(db *sql.DB) error {
+	var exists int
+	if err := db.QueryRow("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'read_state'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return nil
+	}
+	var have bool
+	rows, err := db.Query("PRAGMA table_info(read_state)")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == "saved_at" {
+			have = true
+		}
+	}
+	rows.Close()
+	if have {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE read_state ADD COLUMN saved_at TEXT")
+	return err
 }
 
 // ensureReadStateViewed は read_state へ viewed / viewed_at 列を追加する（schemaVersion 6）。
@@ -626,6 +669,27 @@ func recordedSizes(db *sql.DB, root string, galleryID int) map[string]int64 {
 	}
 	rows.Close()
 	return out
+}
+
+// recordSavedEventOnCompletedRun は app 自身の download 完成時点へ saved event を書く
+// （decision 2026-11-06-saved-as-event-record-approved・hook）。完成 = run が全 entry を
+// エラーなしで終えたこと。1 entry でも err がある、または run が全 entry を覆わない
+// （--limit で部分）場合は event を書かない。アプリ外部の手动コピー（download run なしの
+// scan 記録）は event にならない。
+func recordSavedEventOnCompletedRun(db *sql.DB, galleryID int, results []downloadEntryResult, total int) bool {
+	if total <= 0 || len(results) != total {
+		return false
+	}
+	for _, result := range results {
+		if result.err != "" {
+			return false
+		}
+	}
+	if err := setSavedEvent(db, galleryID); err != nil {
+		fmt.Fprintf(os.Stderr, "saved event: %s\n", err.Error())
+		return false
+	}
+	return true
 }
 
 func downloadFilesParallel(client *Client, target string, entries []FileEntry, format string, maxConcurrent int, expected map[string]int64) []downloadEntryResult {
@@ -1085,6 +1149,7 @@ func main() {
 			}
 			processFile(db, cfg, state, root, result.path, summary, nil)
 		}
+		recordSavedEventOnCompletedRun(db, info.ID, results, len(info.Files))
 		printJSON(map[string]any{"gallery_id": info.ID, "attempted": len(results), "written": written, "skipped": skipped, "summary": summary})
 	case "export":
 		id, err := targetID(f)

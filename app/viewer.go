@@ -638,22 +638,21 @@ func (v *viewer) searchResult(id int, background bool) map[string]any {
 		readState = map[string]any{"gallery_id": id, "last_page": 0, "fully_read": 0, "favorite": 0, "viewed": 0, "viewed_at": nil}
 	}
 	files := []map[string]any{}
-	localEntries := 0
 	for _, entry := range info.Files {
 		eFormat := entryFormat(entry, baseFormat)
 		localFormats := v.entryLocalFormats(id, entry.Hash, baseFormat, eFormat)
-		if len(localFormats) > 0 {
-			localEntries++
-		}
 		files = append(files, map[string]any{
 			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
 			"hasavif": entry.HasAVIF, "format": eFormat, "local": len(localFormats) > 0,
 			"local_formats": localFormats,
 		})
 	}
-	// saved は指定フォルダ内に全 entry の local ファイルがあること（部分保存は saved=0。
-	// meta の local N/M は card 応答の files[].local を分子へ使う）。追加 I/O なし・既存ループで計算。
-	saved := boolToInt(len(info.Files) > 0 && localEntries == len(info.Files))
+	// saved は event 記録（decision 2026-11-06-saved-as-event-record-approved）。完成後削除で
+	// false へ戻さない（sticky）。meta の local N/M は disk 現况表示のまま（files[].local 分子）。
+	saved := 0
+	if ev, err := savedEvent(v.db, id); err == nil {
+		saved = ev
+	}
 	return map[string]any{"id": id, "title": info.Title, "japanese_title": info.JapaneseTitle,
 		"language": info.Language, "type": info.Type, "url": info.URL,
 		"tags": info.Tags, "artists": info.Artists, "groups": info.Groups,

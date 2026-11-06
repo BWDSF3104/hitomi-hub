@@ -100,10 +100,34 @@ func setViewed(db *sql.DB, galleryID int) error {
 	return err
 }
 
+// setSavedEvent は app 自身の download 完成（全 entry を gallery_dir へコピーし終わった時点）を
+// saved event（sticky）として記録する（decision 2026-11-06-saved-as-event-record-approved）。
+// saved_at は初回のみ写入（最初の完成時点を保持・再完成で上書きしない）。アプリ外部の手动コピーは
+// event にならない。reset "all" は event を削除しない。
+func setSavedEvent(db *sql.DB, galleryID int) error {
+	_, err := db.Exec(`INSERT INTO read_state (gallery_id, saved_at) VALUES (?, ?)
+		ON CONFLICT(gallery_id) DO UPDATE SET saved_at = COALESCE(saved_at, excluded.saved_at)`,
+		galleryID, nowISO())
+	return err
+}
+
+// savedEvent は event 列（saved_at）の有無で saved を返す（badge・firststatus の算出源）。
+// disk 現况の逐再計算はしない。meta 側 local N/M は disk 現况表示のまま（searchResult 側）。
+func savedEvent(db *sql.DB, galleryID int) (int, error) {
+	var savedAt sql.NullString
+	if err := db.QueryRow("SELECT saved_at FROM read_state WHERE gallery_id = ?", galleryID).Scan(&savedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return boolToInt(savedAt.Valid), nil
+}
+
 // resetReadState は手動リセット。cascade（承認済み設計）:
 // target "viewed" → viewed=0・fully_read=0・last_page=0（fully_read は viewed を含意するため）。
 // target "read" → fully_read=0 のみ（viewed・last_page 保持）。
-// target "all" → last_page・fully_read・viewed・favorite をまとめて 0（ファイル由来の saved は削除しない）。
+// target "all" → last_page・fully_read・viewed・favorite をまとめて 0（saved event saved_at は削除しない）。
 func resetReadState(db *sql.DB, galleryID int, target string) error {
 	switch target {
 	case "viewed":

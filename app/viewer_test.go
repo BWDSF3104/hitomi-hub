@@ -2268,6 +2268,8 @@ func TestSearchCardViewedAndSavedStates(t *testing.T) {
 		t.Errorf("partial save must report saved=0: got %v", out)
 	}
 
+	// manual copy of all entries (outside the app's own download) is not an event: saved stays 0.
+	// meta local N/M reflects the disk state, not the badge.
 	if err := os.WriteFile(filepath.Join(galleryRoot, "9", hashB+".webp"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2276,8 +2278,36 @@ func TestSearchCardViewedAndSavedStates(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
+	if out["saved"] != float64(0) {
+		t.Errorf("manual copy without the app download event must report saved=0: got %v", out)
+	}
+
+	// app download completion records the saved event. The event must survive later file deletion
+	// (decision 2026-11-06-saved-as-event-record-approved: sticky, no state recompute).
+	if err := setSavedEvent(v.db, 9); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
 	if out["saved"] != float64(1) {
-		t.Errorf("all entries local must report saved=1: got %v", out)
+		t.Errorf("saved event must report saved=1: got %v", out)
+	}
+	if err := os.Remove(filepath.Join(galleryRoot, "9", hashB+".webp")); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["saved"] != float64(1) {
+		t.Errorf("saved must stay 1 after deletion of a completed entry (event sticky): got %v", out)
+	}
+	if out["local"] != float64(1) {
+		t.Errorf("meta local must show the disk state after deletion while the saved badge stays: got %v", out)
 	}
 
 	// reopen is idempotent: viewed stays 1 and the first timestamp is kept

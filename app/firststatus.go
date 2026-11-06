@@ -96,30 +96,13 @@ func statusFlagsMap(mask int) map[string]any {
 	}
 }
 
-// savedStrict は badge 正典定義（decision 2026-11-05-search-result-state-badges-approved 3項）:
-// 指定フォルダ内に全 entry の local ファイルがあること。部分保存は saved=0。card API と同一の
-// entryLocalFormats ループで計算（追加 I/O なし・v.info 参照）。pre-filter の限界: 未 scan の
-// filesystem 単独ファイルは candidate に出ない（app 自身の download は scan 経路を通るため実務上問題なし）。
-func (v *viewer) savedStrict(id int, info *GalleryInfo) int {
-	baseFormat := imageFormat(v.cfg)
-	localEntries := 0
-	for _, entry := range info.Files {
-		eFormat := entryFormat(entry, baseFormat)
-		if len(v.entryLocalFormats(id, entry.Hash, baseFormat, eFormat)) > 0 {
-			localEntries++
-		}
-	}
-	if len(info.Files) > 0 && localEntries == len(info.Files) {
-		return 1
-	}
-	return 0
-}
-
 // firstStatus は現在の検索条件の full ordered IDs を searchAllIDs（既存 searchCache 共有・追加
 // fetch なし）から取り、rank 0 順に walk して最初の一 hit を返す。candidate set は 1 query
-// （read_state flags + files の gallery_id 存在を saved pre-filter）。saved は hit candidate に
-// 対して lazy に strict 判定。read-only（DB 書込みは target page 描画時の既存 recordDiscoveredBatch
-// のみで、jump 計算では書かない）。hit なしは Hit=false・total=dataset total。random order は error。
+// （read_state flags）。saved は event 列 saved_at（decision 2026-11-06-saved-as-event-record-approved
+// ・完成後削除で false へ戻さない）。pre-filter を event 源へ切り替えたことで candidate（record）と
+// flag（event）の分岐が解消される（旧 savedStrict の disk 逐再計算と files EXISTS record 源は廃止）。
+// read-only（DB 書込みは target page 描画時の既存 recordDiscoveredBatch のみで、jump 計算では書かない）。
+// hit なしは Hit=false・total=dataset total。random order は error。
 func (v *viewer) firstStatus(query, lang string, mask int) (*firstStatusResult, error) {
 	terms := []string{}
 	for _, rawTerm := range strings.Fields(query) {
@@ -141,32 +124,29 @@ func (v *viewer) firstStatus(query, lang string, mask int) (*firstStatusResult, 
 		return res, nil
 	}
 
-	// candidate set を 1 query で構築: read_state の flag（mask）+ files の gallery_id 存在（saved pre-filter）。
-	// saved の candidate は read_state 行が無い gallery も含む（saved 単独は files 由来）。flag は mask bit
-	// membership として 0/1 で数え、Go 側で bit へ写す。
-	rows, err := v.db.Query(`SELECT g.gallery_id,
-		(? & 1) > 0 AND COALESCE(r.viewed, 0) > 0,
-		(? & 2) > 0 AND COALESCE(r.fully_read, 0) > 0,
-		(? & 8) > 0 AND COALESCE(r.favorite, 0) > 0,
-		(? & 4) > 0 AND EXISTS (SELECT 1 FROM files f WHERE f.gallery_id = g.gallery_id)
-		FROM (SELECT DISTINCT gallery_id FROM files WHERE gallery_id IS NOT NULL
-			UNION SELECT gallery_id FROM read_state) g
-		LEFT JOIN read_state r ON r.gallery_id = g.gallery_id
-		WHERE ((? & 1) > 0 AND COALESCE(r.viewed, 0) > 0)
-		   OR ((? & 2) > 0 AND COALESCE(r.fully_read, 0) > 0)
-		   OR ((? & 8) > 0 AND COALESCE(r.favorite, 0) > 0)
-		   OR ((? & 4) > 0 AND EXISTS (SELECT 1 FROM files f WHERE f.gallery_id = g.gallery_id))`, mask, mask, mask, mask, mask, mask, mask, mask)
+	// candidate set を 1 query で構築: read_state の flags（mask）。saved は event 列 saved_at（event 源）。
+	// flag は mask bit membership として 0/1 で数え、Go 側で bit へ写す。
+	rows, err := v.db.Query(`SELECT gallery_id,
+		(? & 1) > 0 AND COALESCE(viewed, 0) > 0,
+		(? & 2) > 0 AND COALESCE(fully_read, 0) > 0,
+		(? & 4) > 0 AND saved_at IS NOT NULL,
+		(? & 8) > 0 AND COALESCE(favorite, 0) > 0
+		FROM read_state
+		WHERE ((? & 1) > 0 AND COALESCE(viewed, 0) > 0)
+		   OR ((? & 2) > 0 AND COALESCE(fully_read, 0) > 0)
+		   OR ((? & 4) > 0 AND saved_at IS NOT NULL)
+		   OR ((? & 8) > 0 AND COALESCE(favorite, 0) > 0)`, mask, mask, mask, mask, mask, mask, mask, mask)
 	if err != nil {
 		return nil, err
 	}
 	candidates := map[int]int{}
 	for rows.Next() {
-		var id, viewed, read, favorite, savedPre int
-		if err := rows.Scan(&id, &viewed, &read, &favorite, &savedPre); err != nil {
+		var id, viewed, read, savedPre, favorite int
+		if err := rows.Scan(&id, &viewed, &read, &savedPre, &favorite); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		flags := viewed*statusBitViewed | read*statusBitRead | favorite*statusBitFavorite | savedPre*statusBitSaved
+		flags := viewed*statusBitViewed | read*statusBitRead | savedPre*statusBitSaved | favorite*statusBitFavorite
 		candidates[id] = flags
 	}
 	rows.Close()
@@ -175,20 +155,6 @@ func (v *viewer) firstStatus(query, lang string, mask int) (*firstStatusResult, 
 		flags := candidates[id]
 		if flags == 0 {
 			continue
-		}
-		if flags&statusBitSaved != 0 {
-			info, err := v.info(id, false)
-			if err != nil {
-				return nil, err
-			}
-			if v.savedStrict(id, info) == 1 {
-				flags |= statusBitSaved
-			} else {
-				flags &= ^statusBitSaved
-			}
-			if flags == 0 {
-				continue
-			}
 		}
 		res.Hit = true
 		res.Page = rank/galleriesPerPage + 1

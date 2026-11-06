@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS read_state (
     opened_at TEXT,
     favorite INTEGER NOT NULL DEFAULT 0,
     viewed INTEGER NOT NULL DEFAULT 0,
-    viewed_at TEXT
+    viewed_at TEXT,
+    saved_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bookmark_seen (

@@ -203,6 +203,81 @@ func TestSchemaMigration6AddsViewedColumnsAndPreservesReadStateRows(t *testing.T
 	}
 }
 
+func TestSchemaMigration7AddsSavedAtColumnAndPreservesReadStateRows(t *testing.T) {
+	dataDir = dataRoot()
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// pre-migration shape (schemaVersion 6: read_state has viewed / viewed_at but no saved_at)
+	if _, err := db.Exec(`CREATE TABLE galleries (
+		gallery_id INTEGER PRIMARY KEY, title TEXT, author TEXT, lang TEXT, dir TEXT,
+		first_seen TEXT NOT NULL, last_seen TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE read_state (
+		gallery_id INTEGER PRIMARY KEY REFERENCES galleries(gallery_id),
+		last_page INTEGER NOT NULL DEFAULT 0, fully_read INTEGER NOT NULL DEFAULT 0,
+		opened_at TEXT, favorite INTEGER NOT NULL DEFAULT 0,
+		viewed INTEGER NOT NULL DEFAULT 0, viewed_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO galleries (gallery_id, first_seen) VALUES (7, ?)", nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO read_state (gallery_id, last_page, fully_read, viewed) VALUES (7, 4, 1, 1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 6"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatal(err)
+	}
+	if userVersion != schemaVersion {
+		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
+	}
+
+	have := map[string]bool{}
+	rows, err := db.Query("PRAGMA table_info(read_state)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		have[name] = true
+	}
+	rows.Close()
+	if !have["saved_at"] {
+		t.Fatalf("migration must add the saved_at event column: got %v", have)
+	}
+
+	var lastPage, fully, viewed int
+	var savedAt sql.NullString
+	if err := db.QueryRow("SELECT last_page, fully_read, viewed, saved_at FROM read_state WHERE gallery_id = 7").
+		Scan(&lastPage, &fully, &viewed, &savedAt); err != nil {
+		t.Fatal(err)
+	}
+	if lastPage != 4 || fully != 1 || viewed != 1 {
+		t.Errorf("existing read_state row must survive the non-destructive migration: got last_page=%d fully_read=%d viewed=%d", lastPage, fully, viewed)
+	}
+	if savedAt.Valid {
+		t.Errorf("added saved_at column must default to NULL for existing rows: got %v", savedAt)
+	}
+}
+
 func TestSetViewedRecordsEventOnceAndKeepsFirstTimestamp(t *testing.T) {
 	db := openTestDB(t)
 	if err := recordDiscovered(db, 101, "Galleries/101"); err != nil {
@@ -237,6 +312,119 @@ func TestSetViewedRecordsEventOnceAndKeepsFirstTimestamp(t *testing.T) {
 	}
 	if row["last_page"] != 0 || row["fully_read"] != 0 || row["favorite"] != 0 {
 		t.Errorf("setViewed must not touch other flags: got %v", row)
+	}
+}
+
+func TestSetSavedEventKeepsFirstCompletionTimestamp(t *testing.T) {
+	db := openTestDB(t)
+	if err := recordDiscovered(db, 110, "Galleries/110"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setSavedEvent(db, 110); err != nil {
+		t.Fatal(err)
+	}
+	var first string
+	if err := db.QueryRow("SELECT saved_at FROM read_state WHERE gallery_id = 110").Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if first == "" {
+		t.Fatal("first setSavedEvent must write saved_at")
+	}
+	if _, err := db.Exec("UPDATE read_state SET saved_at = 'first-marker' WHERE gallery_id = 110"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setSavedEvent(db, 110); err != nil {
+		t.Fatal(err)
+	}
+	var kept string
+	if err := db.QueryRow("SELECT saved_at FROM read_state WHERE gallery_id = 110").Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != "first-marker" {
+		t.Errorf("re-completion must be idempotent and keep the first saved_at: got %q", kept)
+	}
+}
+
+func TestRecordSavedEventOnCompletedRunWritesEventOnlyOnFullRun(t *testing.T) {
+	db := openTestDB(t)
+	results := []downloadEntryResult{
+		{page: 1, hash: "a", err: ""},
+		{page: 2, hash: "b", err: ""},
+	}
+
+	// full run without entry error → event recorded（hook）
+	if err := recordDiscovered(db, 130, "Galleries/130"); err != nil {
+		t.Fatal(err)
+	}
+	if !recordSavedEventOnCompletedRun(db, 130, results, 2) {
+		t.Fatal("full completed run must record the saved event")
+	}
+	if ev, err := savedEvent(db, 130); err != nil || ev != 1 {
+		t.Fatalf("saved event after completed run: got %v err %v", ev, err)
+	}
+
+	// partial run (--limit が全 entry を覆わない) → no event
+	if err := recordDiscovered(db, 131, "Galleries/131"); err != nil {
+		t.Fatal(err)
+	}
+	if recordSavedEventOnCompletedRun(db, 131, results[:1], 2) {
+		t.Error("partial run must not record the saved event")
+	}
+
+	// run with an entry error → no event（copy 完成していない）
+	if err := recordDiscovered(db, 132, "Galleries/132"); err != nil {
+		t.Fatal(err)
+	}
+	if recordSavedEventOnCompletedRun(db, 132, []downloadEntryResult{{page: 1, err: "boom"}, {page: 2, err: ""}}, 2) {
+		t.Error("run with entry error must not record the saved event")
+	}
+
+	// empty gallery（total 0・完成時点なし）→ no event
+	if err := recordDiscovered(db, 133, "Galleries/133"); err != nil {
+		t.Fatal(err)
+	}
+	if recordSavedEventOnCompletedRun(db, 133, nil, 0) {
+		t.Error("empty gallery run must not record the saved event")
+	}
+
+	for _, id := range []int{131, 132, 133} {
+		if ev, err := savedEvent(db, id); err != nil || ev != 0 {
+			t.Errorf("no event expected for gallery %d: got %v err %v", id, ev, err)
+		}
+	}
+}
+
+func TestManualCopyWithoutDownloadRunIsNotASavedEvent(t *testing.T) {
+	db := openTestDB(t)
+	if err := recordDiscovered(db, 140, "Galleries/140"); err != nil {
+		t.Fatal(err)
+	}
+	// scan-recorded file row（manual copy 経路）だけでは event にならない
+	if err := recordPage(db, 140, 1, "cafe"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO files (path, gallery_id, sha256, size, scan_status, scan_source, scan_time)
+		VALUES ('Galleries/140/cafe.webp', 140, 'cafe', 1, 'pass', 'test', ?)`, nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if ev, err := savedEvent(db, 140); err != nil || ev != 0 {
+		t.Errorf("manual copy without the app download run must not be a saved event: got %v err %v", ev, err)
+	}
+}
+
+func TestResetReadStateAllKeepsSavedEvent(t *testing.T) {
+	db := openTestDB(t)
+	if err := recordDiscovered(db, 150, "Galleries/150"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setSavedEvent(db, 150); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetReadState(db, 150, "all"); err != nil {
+		t.Fatal(err)
+	}
+	if ev, err := savedEvent(db, 150); err != nil || ev != 1 {
+		t.Errorf("reset-all must not delete the saved event (sticky): got %v err %v", ev, err)
 	}
 }
 
@@ -329,6 +517,18 @@ func TestCLIReadResetFlagsUseResetReadState(t *testing.T) {
 	readCase := src[strings.Index(src, `case "read":`):strings.Index(src, `case "fav":`)]
 	if !strings.Contains(readCase, `resetReadState(db, id, "viewed")`) || !strings.Contains(readCase, `resetReadState(db, id, "read")`) {
 		t.Errorf("read command must apply the approved reset cascade through resetReadState: got %q", readCase)
+	}
+}
+
+func TestCLIDownloadAppliesSavedEventHookOnCompletedRun(t *testing.T) {
+	text, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(text)
+	downloadCase := src[strings.Index(src, `case "download":`):strings.Index(src, `case "export":`)]
+	if !strings.Contains(downloadCase, `recordSavedEventOnCompletedRun(db, info.ID, results, len(info.Files))`) {
+		t.Errorf("download command must apply the saved event hook at the completed run point: got %q", downloadCase)
 	}
 }
 

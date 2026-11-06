@@ -1,6 +1,6 @@
 # 保存済みステータスの定義（後で定義が必要）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-05
 **Next Action**: 実装（A・event記録）: saved_at 列の非破壊迁移 6→7、download 完了 hook、card API・firststatus（pre-filter含む）の saved 算出源を event へ。決定記録 2026-11-06-saved-as-event-record-approved.md
 
@@ -32,6 +32,20 @@
 - 子の判断ルール段階3として持ち帰る（該当条項: UX の意味変更・正典 decision 変更・不可逆なデータ変更（schema migration 6→7））。選択 A（event 列 `saved_at`・hook・算出源変更）/ B（現行逐再計算維持）は子では行わない。実測・記録確認は尽くした（上記と Verification）
 - 正典文書間の矛盾: 検出せず（task 記録・decision・実コードが一致）
 - 画面確認: 未確認継続（port 8731 は本実行でも connectable False・instance 未起動。AGENTS.md Development「dev server・build コマンドは適用なし」・`tools/` に exe なし。実データに saved gallery（全 entry disk 揃い）がなく saved badge を表示できない）。スクリーンショット保存なし
+
+### assess-20261106-0326（実装実行記録・子・2026-11-06）
+
+- 承認 A 受領（2026-11-06 09:14）→ 承認範囲内の実装完了。判定: **合格**。正典文書間の矛盾: 検出せず
+- 変更ファイル（承認範囲内・UI ファイル無変更）:
+  - `schema.sql`: `read_state` へ `saved_at TEXT` 追加（列追加のみ）
+  - `app/main.go`: `schemaVersion` 6→7、`ensureReadStateSavedAt`（非破壊迁移・`ensureScanCacheSizeMtime` パターン/D-03）、`recordSavedEventOnCompletedRun`、download case 完成時の event 書き込み hook
+  - `app/library.go`: `setSavedEvent`（first-event-wins・sticky・`COALESCE(saved_at, excluded.saved_at)`）、`savedEvent`、reset "all" は saved event を削除しない（コメント整合）
+  - `app/viewer.go`: `searchResult` の saved 算出源を event 列へ。`files[].local`（meta `local N/M`）は disk 現况ループ維持（無変更）
+  - `app/firststatus.go`: saved pre-filter を event 源（`read_state` 単独・`saved_at IS NOT NULL`）へ。`savedStrict`・lazy strict（disk 逐再計算）廃止、fetch 不要化
+  - テスト: `app/viewer_test.go`（`TestSearchCardViewedAndSavedStates` 更新: 手動コピー saved=0・event 後 saved=1・削除後 saved=1/local=1）、`app/firststatus_test.go`（`TestFirstStatusSavedEventPreFilterAndStickyAfterDeletion`）、`app/main_test.go`（迁移7・first-timestamp 冪等・完成 run 条件・手動コピー非 event・reset all 保持・CLI download hook 配線）
+- hook 完成条件の実装解釈（記録・段階3該当なし）: event 書き込みは「全 entry 完了」=`len(results)==total && 全 entry err=="" && total>0`（skipped 含む）。`--limit` による部分 run・entry err は event 書かない。手動コピー（download run なし）は event にならない（承認どおり）
+- 正典 exe rebuild 済み・正典 `output/hitomi-hub/schema.sql` を正典版と SHA256 一致同步（`2A63A6F0FFB500AF7D3B050C4B29EF1EDF54192573B756DFEACF7DC366E30866`）。正典 DB 無変更
+- 画面確認（正典 instance・port 8731・scratch `docs/ai/tmp/assess-20261106-0326/confirm-saved-event`・Playwright browser 画面・actual window size 1678x1025・content viewport 1665x932・OS foreground 不要）: gallery `4271278`（term `female:yuri`・4 entry）で saved badge 表示＋削除後 sticky を実操作で確認。スクリーンショットは Google Drive `I:\マイドライブ\kilo` へ保存（`saved-event-confirm-1678x1025-before-deletion.png`・`saved-event-confirm-1678x1025-after-deletion.png`）。要素の切り取りなし・card height contract 維持
 
 ## 調査結果 / 変更内容
 
@@ -96,6 +110,8 @@
   - `A_saved_before_deletion=1` / `B_saved_after_deletion=0` / `C_saved_after_restore=1`（saved は entry 基準で正しく 1→0→1。`local` 計数はフィクスチャフォルダの全ファイルを数えるため余分なフィクスチャファイル分を含むが saved 判定に影響なし）
 - `Test-NetConnection -ComputerName 127.0.0.1 -Port 8731` → TcpTestSucceeded False（実 instance 未起動）
 - 本実行（2026-11-06・HEAD `954b69803a74868f32485dc8af4d6e47fd6fb67d`・記録のみ変更）: `go vet .`（app）→ 出力なし（成功） / `go test -count=1 -timeout 300s .`（app）→ `ok hitomi-hub/app 25.287s`。`Test-NetConnection -ComputerName 127.0.0.1 -Port 8731` → TcpTestSucceeded False（本実行でも未起動）
+- 実装実行（2026-11-06・子）: `go vet .`（app）→ 出力なし（成功） / `go test -count=1 -timeout 300s .`（app）→ `ok hitomi-hub/app 23.858s` / `python -m pytest tests/ -v` → 53 passed in 9.01s（`tests/test_canonical_build_freshness.py` 含む）
+- 実機確認（正典 instance port 8731・rebuild 後・scratch data-dir/root・正典 DB 無変更）: CLI download gallery `4271278`（female:yuri・4 entry）→ attempted 4・written 4（一致）→ saved event 記録。served card API 200・`X-Cache: cache`・`saved:1`・`local:4`（UI badge `保存済み`・meta `local 4/4`）。`kilo-safe-remove` で1件削除 → 再検索（`#search-submit`）で badge `保存済み` 維持（sticky）・meta `local 3/4`・card API `saved:1`・`local:3`。`/api/image/f56864aec7338f893adfb322dfebe6e5abfc273d667889da7cf77ca50dc46848?format=webp&gallery=4271278` → 200・`X-Cache: local`・169140 bytes（disk 一致）・`no_full` なし
 
 ## 完了時 Memory Bank 操作
 
