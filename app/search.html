@@ -66,6 +66,8 @@
   .card .badge { font-size: .8rem; color: var(--focus); }
   .card .badge:empty { display: none; }
   .card .badge button { padding: .15rem .4rem; min-height: 24px; font-size: .75rem; }
+  .card .meta button { padding: .15rem .4rem; min-height: 24px; font-size: .75rem; }
+  .card .meta button:disabled { opacity: .5; cursor: not-allowed; }
   .card .badge .flag { font-weight: 600; }
   .card .badge .flag-viewed { color: #7cc3fa; }
   .card .badge .flag-read { color: #4db6ac; }
@@ -240,6 +242,121 @@ function sameTitleJapaneseAnchor(r) {
   return "<div class='meta'>同名の日本語版: <a href='" + viewerLink(group.bestId) + "'" + targetAttr() + ">#" + group.bestId + "</a></div>";
 }
 
+// Manual Japanese search button (task 2026-11-06). Separate helper from normalizeTitleKey; the
+// existing group key semantics are unchanged. Inline control on the existing .meta row only
+// (no new row, card height contract kept). TN lane, prefetchQueue, saved query are not touched.
+const manualSearchInFlightKeys = new Set();
+
+function manualJapaneseSearchTerm(card) {
+  const raw = card.japanese_title || card.title || "";
+  return String(raw).trim().toLowerCase().replace(/_/g, " ");
+}
+
+function manualSearchQueryUrl(term) {
+  return "/api/search?query=" + encodeURIComponent(term + " language:japanese") + "&lang=all&limit=1";
+}
+
+// non-Japanese card only, only while the Japanese bestId is not yet known in titleGroups
+function manualSearchButtonHTML(card) {
+  if (!card || card.error || card.language === "japanese") return "";
+  const key = normalizeTitleKey(card);
+  const group = key ? titleGroups.get(key) : null;
+  if (group && group.language === "japanese") return "";
+  const term = manualJapaneseSearchTerm(card);
+  if (!term) return "";
+  return " <button type='button' data-manual-jp-search data-state='idle' data-term='" + escapeHTML(term) + "' data-key='" + escapeHTML(key) + "'>日本版を検索</button>";
+}
+
+function manualSearchMessageSpan(state, message) {
+  const span = document.createElement("span");
+  span.className = state === "error" ? "error" : "meta";
+  span.textContent = message;
+  return span;
+}
+
+function manualSearchSetState(row, btn, state, message) {
+  btn.dataset.state = state;
+  btn.disabled = state === "busy";
+  if (message) row.appendChild(manualSearchMessageSpan(state, message));
+}
+
+// found state: same row only. The button is replaced by the link; no whole-card re-render and
+// no immediate DOM update of other cards sharing the same normalized key (v1).
+function manualSearchShowFound(row, btn, group) {
+  btn.remove();
+  row.appendChild(document.createTextNode("同名の日本語版: "));
+  const link = document.createElement("a");
+  link.href = viewerLink(group.bestId);
+  if (newTabMode) link.target = "_blank";
+  link.textContent = "#" + group.bestId;
+  row.appendChild(link);
+  btn.dataset.state = "found";
+}
+
+async function handleManualJapaneseSearchClick(e) {
+  const btn = e.target.closest("button[data-manual-jp-search]");
+  if (!btn) return;
+  const row = btn.closest(".meta");
+  if (!row) return;
+  const gen = searchGeneration;
+  const key = btn.dataset.key || "";
+  const term = btn.dataset.term || "";
+
+  const known = key ? titleGroups.get(key) : null;
+  if (known && known.language === "japanese") {
+    manualSearchShowFound(row, btn, known);
+    return;
+  }
+
+  if (key && manualSearchInFlightKeys.has(key)) {
+    manualSearchSetState(row, btn, "busy", "");
+    return;
+  }
+
+  if (!term) {
+    manualSearchSetState(row, btn, "none", "exact term がありません");
+    return;
+  }
+
+  // colon title: the query parser can misread it as a field term. Explicitly unsupported until
+  // live confirmation (plan step 2・8・confirmed unsupported 2026-11-06, see Verification).
+  if (term.indexOf(":") >= 0) {
+    manualSearchSetState(row, btn, "none", "colon を含む title は unsupported（field term 誤読リスク）");
+    return;
+  }
+
+  if (Date.now() < prefetchCooldownUntil) {
+    manualSearchSetState(row, btn, "error", "日本版検索は cooldown 明けまで fetch しない");
+    return;
+  }
+
+  manualSearchSetState(row, btn, "busy", "");
+  manualSearchInFlightKeys.add(key);
+  try {
+    const data = await api(manualSearchQueryUrl(term));
+    if (gen !== searchGeneration) return;
+    const ids = data.ids || (data.results || []).map((r) => r.id);
+    if (!ids.length) {
+      manualSearchSetState(row, btn, "none", "exact term に結果なし");
+      return;
+    }
+    const resultCard = await api("/api/search-card/" + ids[0]);
+    if (gen !== searchGeneration) return;
+    if (resultCard.error || resultCard.language !== "japanese") {
+      manualSearchSetState(row, btn, "none", "result card は Japanese ではなし");
+      return;
+    }
+    setSearchTitleGroup(resultCard);
+    const group = titleGroups.get(key) || titleGroups.get(normalizeTitleKey(resultCard));
+    manualSearchShowFound(row, btn, group);
+  } catch (err) {
+    if (gen !== searchGeneration) return;
+    manualSearchSetState(row, btn, "error", "日本版検索エラー: " + err.message);
+  } finally {
+    if (key) manualSearchInFlightKeys.delete(key);
+  }
+}
+
 function badgeFlag(label, className) {
   return "<span class='flag " + className + "'>" + escapeHTML(label) + "</span>";
 }
@@ -289,7 +406,8 @@ function renderSearchCard(r, opts = {}) {
   const loadingAttr = opts.highPriority ? "loading='eager' fetchpriority='high'" : "loading='lazy'";
   const cover = "<img class='search-card-cover' data-search-id='" + r.id + "' data-thumbnail='" + escapeHTML(thumbnail) + "' " + loadingAttr + " src='' alt='cover'>";
   const localCount = (r.files || []).filter((f) => f.local).length;
-  return "<li class='card" + cardStatusClass(r.id) + "' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + localCount + "/" + (r.count ?? 0) + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
+  const manualButton = manualSearchButtonHTML(r);
+  return "<li class='card" + cardStatusClass(r.id) + "' data-search-id='" + r.id + "'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + cover + "</a><div class='text'><a href='" + viewerLink(r.id) + "'" + targetAttr() + ">" + escapeHTML(r.title || r.error || r.id) + "</a>" + badgeRow(r.id) + "<div class='meta'>" + escapeHTML(r.language || "") + " / " + escapeHTML(r.type || "") + "・" + (r.count ?? 0) + " files・local " + localCount + "/" + (r.count ?? 0) + manualButton + "</div><div class='tags meta'" + tagsTitle + ">" + escapeHTML(tags) + "</div>" + anchor + "</div></li>";
 }
 
 function searchCardCoverSource(card) {
@@ -779,6 +897,9 @@ document.getElementById("search-next").addEventListener("focus", () => { startPr
 document.getElementById("results").addEventListener("click", (e) => {
   if (e.target.closest("a")) interruptPrefetch();
 });
+// Manual Japanese search button click (foreground data request only: /api/search exact term +
+// /api/search-card/<id>). No TN request, no saved query change, no whole-card re-render.
+document.getElementById("results").addEventListener("click", (e) => { handleManualJapaneseSearchClick(e); });
 document.getElementById("results").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-reset]");
   if (!btn) return;
