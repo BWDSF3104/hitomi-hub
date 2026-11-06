@@ -1,2 +1,2 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-06-assess-20261106-sametitle-prefetch-realtime.md	進行中	推奨値3・ahead-page loop実装済み。実装判断待ち
+docs/ai/tasks/2026-11-06-assess-20261106-sametitle-prefetch-realtime.md	進行中	dynamic/実装 re-anchor待ち（枚数6は実測判定上限）

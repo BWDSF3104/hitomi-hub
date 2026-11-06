@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 推奨値3・ahead-page loop実装済み。実装判断待ち
+**Next Action**: dynamic/実装 re-anchor待ち（枚数6は実測判定上限）
 
 ## 意図 / 背景
 
@@ -54,6 +54,15 @@
 - `app/viewer_test.go:3331-3347` は `renderSearchCard` が `sameTitleJapaneseAnchor(r)` と `anchor + ` を呼ぶことを固定 → render 時点 anchor は残す（リアルタイム patch は加算）。
 - `app/viewer_test.go:2672-2682` card height contract（130px 固定・tags line-clamp 9・`.card .text` max-height calc(130px - 2rem)・overflow hidden）。anchor は `.card .text` の最後の子なので、tags が幅を使うと retroactive patch は clip される（現 render 時 anchor も同じ制約）。可視性の screen confirmation が必要（canonical build rule）。
 - patch は `searchGeneration` guard と「表示中 card だけ」制約が必須（prefetch 分の id は現 page の DOM に無い）。既存 interrupt 条件（query input・card click・hidden tab）と marker（`priority=background`）、never-full-image 規則（harness:30）は非接触で維持可能。
+
+### 6. ユーザー判定（2026-11-06 03:10 UTC）
+
+- 先読み枚数 `6` は実測判定で確定できる上限。現在 `3` fixed 実装は変更しない。
+- dynamicの既定 `3`、下限 `1`、上限 `6`。判断材料は実測1ページ分耗时とユーザー待機時間。
+- リアルタイム付与: 成功時の card patch と group cache 更新を許可。失敗は画面へ出さない。schedulerBlock内は失敗処理だけ。成功patch/cache更新は helper 経由。
+- key は現行 `title || japanese_title` を維持。
+- foreground影響: `3`までは正典 foreground ≤1 枠保証で許容可能。`4~6`は block 持続窓と foreground影響の実測後に確定。
+- 記録: `docs/ai/decisions/2026-11-06-sametitle-prefetch-judgments.md`
 
 ### 判定
 
