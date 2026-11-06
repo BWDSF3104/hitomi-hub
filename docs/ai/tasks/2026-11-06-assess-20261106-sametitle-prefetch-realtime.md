@@ -1,6 +1,6 @@
 # 同名日本語版リンク：先読み深化とリアルタイム付与の実現可能性検証
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: fixed 2 implemented; block window no-block confirmed; translation populated examples pending
 
@@ -163,7 +163,7 @@
 - block 持続窓の実測（canonical server・fresh scratch root `docs/ai/tmp/block-window-cold`・port `8745`、15 cycles・depth3・data concurrency4・TN 4 workers、sustained `137378.5 ms`）: direct block statuses `0`、direct 429 statuses `0`、final metrics `retry_sleep_ms = 0`。foreground delay p50 `33.5 ms`、p95 `43.4 ms`。actual data page unit p50 `4545.8 ms`、p95 `5041.1 ms`; TN phase p50 `4494.2 ms`、p95 `4654.1 ms`。結果: `docs/ai/tmp/block-window/block_window_cold_output.json`。
 - この実測では block は発生しなかった。p95 `5041.1 ms` は p95公式で `>3900` → fixed recommendation `2`。実測結果を固定実装へ反映済み。
 - fixed `2`実装後の検証: `node tests/search_prefetch_harness.mjs` 42 checks passed; canonical rebuild後 `python -m pytest tests/ -q` 53 passed `9.85s`; `go vet .` clean; `go test -count=1 -timeout 300s .` pass `24.624s`。
-- 未確認点: `japanese_title` populated事例（本サンプル非日本語 132 件で 0 件）。
+- `japanese_title` populated live sample: canonical scratch server `docs/ai/tmp/jp-title-sample`・port `8746`・live query `female:yuri`、`20 pages`、`500 cards`。`non_japanese_rows = 270`、`japanese_title_populated_non_jp = 0`。final metrics `retry_sleep_ms = 0`。Group: current `title || japanese_title` cross `9`, anchorable cards `8`; `japanese_title || title` cross `6`, anchorable cards `2`. Result: `docs/ai/tmp/jp-title-sample/jp_title_sample_output.json`.
 
 ## 完了時 Memory Bank 操作
 
