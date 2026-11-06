@@ -19,6 +19,11 @@
 - ブラウザ側の取得の並行度（逐次か同時か）は未観測。正典 JS で確認したのは集合演算の単位（語ごと）まで。
 - 補足（2026-11-06 質問）: 語ごとに分けて 1 語ずつ取得するのは、AND 検索そのもの。元サイトには「複数語を 1 リクエストで AND する」経路がない（nozomi dataset は 1 tag 分、index key は 1 語分）。AND は「語ごとの data を取って共通部分」で組み立てる（`app/searchhtml.go` の intersection・`or` は group 内 union・`-term` は exclusion）。R-11 の指摘は意味（集合）の話ではなく、取得の逐次・同時の話だけ。
 - 決定: 逐次のまま。体感速度は R-10（同じ検索条件の最終結果を少し覚えて、ページ送りの再計算を減らす）で回収する。
+- 速度の実感（2026-11-06・機構から）。実測は未実施。
+  - cold（cache なし）で語数 N の AND 検索は、語ごとに取得するため概ね N 回のゲート通過 + N 回の network を重ねる。data lane の正典値は 100 ms（`docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md`）。語数が 3 なら 0.3 s の gate + network 3 回、5 なら 0.5 s + network 5 回。plain term は index 降下で depth ぶんの追加呼出しもあり得る。
+  - warm（同一語の dataset が 1 時間 TTL の `searchCache` にある）は network 0 回だが、呼出每次に共通部分の map を作り直す（R-10）。
+  - どの部分が支配かは実測で分ける。P3 #10（`docs/ai/backlog-items/p3-10-search-speed-measurement.md`）で「gate wait と network を分離して測る」が採用済み。この実測が終わるまで、並行化は採用しない。
+  - 実測で cold latency が予算（例: 1.5 s）を超える場合の候補: data lane の interval は守ったまま、in-flight の直列化だけを外す案。これは A-05 の FIFO・grace 意味を変えるため、実測後に別の承認が要る。
 
 ## R-15: 先読み範囲と保存容量
 
@@ -30,11 +35,19 @@
 - 変更可能にする形（設計点）: `app/viewer.html:208` の `MAX_FULL_CACHE_ENTRIES = 2000` は定数直書きで、テスト（`app/viewer_test.go:816`）が 2000 を固定している。設定 JSON（`viewer` 節）から page へ渡す形にすると設定変更が可能。メモリ使用量が増える（参照が保持するバイト）。
 - 現方針で維持: 縮小画像を列の表示にのみ使う、縮小画像のデータを原寸画像の保存として扱わない、永続先（既定 `cache/images`）を作業フォルダへ移さない。
 - 残る設計点: disk 側の容量上限値（実測後に決定）、上限到達時にユーザーへどう知らせるか（表示）、memory 側の設定名（4000 を既定へ上げるか設定化するかの確定）。
+- 保存先の事実（読み取り・2026-11-06）。アプリの書き込みは完成フォルダ内に閉じる（`docs/ai/architecture.md`）。
+  - `Galleries/<gallery_id>/`（config `gallery_dir`）— download 成果物。CLI `hub.exe -download` が書く。
+  - `acquisition/<title>/`（config `acquisition_dir`）— 画面の「取得」ボタンが書く。R-05 の名前問題はここ。
+  - `cache/images/<hash>/<format>`（config `cache_dir`、既定 `cache/images`）— 閲覧で取得した原寸画像の永続 cache。
+  - `cache/images/thumbs/`、`cache/galleryinfo/`、`hitomi.db`。
+- 画面からの操作方法: 「保存」ボタンはない。保存が起きる操作は (a)「取得」ボタン（acquisition へ）、(b) 閲覧中の画像取得（cache へ）。既存ファイルを使う表示（local-direct）は保存操作ではない。保存元は `showSourceStatus` の表示（local・cache・tn-cache・no_full）で分かる（`docs/ai/decisions/2026-11-01-tn-display-and-source-status.md`）。削除操作は画面にない（正典 `kilo-safe-remove`）。
+- LRU が効く範囲: cache 層（`cache/images`、`cache/images/thumbs`）のみ。`Galleries`（保存済みファイル）と `hitomi.db` は削除対象にしない。
+- 「保存済み優先で捨てる」の実現形: memory から捨てる対象は、disk に同じ内容がある項目を優先（完成フォルダのファイルまたは `cache/images` に同じ sha256 がある項目。DB の `files` で判定できる）。この解釈で合意している。disk 側の項目はすべて保存済みなので優先順位で区別できず、gallery 単位の古い順を維持。
 
 ## R-20: 読み取り要求の要求元検査
 
 - 元の推奨: 案 A（読み取り要求にも、自分自身の端末からの要求だけを認める検査を追加）。
-- 決定（2026-11-06 更新）: 案 A はやめる。検査は追加しない。既存の「ローカル専用前提でこの項目を扱わない」方針を維持（案 B）。
+- 一時撤回（2026-11-06 10:32 UTC）→ 取り消し。決定（2026-11-06 10:38 UTC）: 案 A を承認。読み取り要求にも、自分自身の端末からの要求だけを認める検査を追加する（既存の書き込み検査と同じ流儀）。実施開始指示待ち。
 - LAN 構成へ変更する場合は、この項目は「除外」でなくなる。その時点で下記の判断が必要になる。
 - 将来、同一私有ネットワーク内のアクセスを認める構成にする場合:
   - 「自分自身の端末」判定を、設定で決めた許可ホストまたは私有ネットワーク範囲へ置き換える。同じ判定を書き込み要求と読み取り要求の両方に適用する。

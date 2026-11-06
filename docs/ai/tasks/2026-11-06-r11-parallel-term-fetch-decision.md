@@ -21,6 +21,8 @@
 - これを満たせば並行化は結果同一。満たさないと順序・集合が変わる。
 - 正典 JS で確認したのは集合演算の単位（語ごと）まで。ブラウザ側の取得の並行度（逐次か同時か）は未観測。
 - 決定（2026-11-06）: 逐次のまま。politeness gate（1000ms・FIFO・grace）の意味を変えない。体感速度は R-10（同じ検索条件の最終結果を短 TTL で覚えて、page 移動・prefetch・firstStatus で共有）で回収する。
+- 速度の実感（2026-11-06・機構から。実測なし）: cold で語数 N の AND 検索は語ごとに gate 通過 + network を重ねる。data lane の正典値は 100 ms（`docs/ai/decisions/2026-11-05-search-speedup-recommended-approved.md`）。3 語なら gate 0.3 s + network 3 回、5 語なら gate 0.5 s + network 5 回。warm（`searchCache` は 1 時間 TTL・`app/hitomi.go:60`）は network 0 回だが呼出每次に共通部分の map を作り直す（R-10）。
+- 実測は P3 #10（`docs/ai/backlog-items/p3-10-search-speed-measurement.md`・採用済み）で gate wait と network を分離して行う。実測前に並行化は採用しない。
 - 決定ファイル: `docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md`
 
 ## Verification
