@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 設計判断確定（R-05・R-08・R-11・R-13・R-15・R-20）。実施開始指示待ち。R-19 は実例待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+**Next Action**: 優先順位確定（assess-20261106-1056）。実施開始指示待ち。承認案件: R-04 歴史記録・R-05 命名・R-14 alpha/format・R-16 atomic scope・R-17 B1・R-18 page化。R-18 は対応不要で終了。R-19 実例待ち。known-issue: KI-20261106-04（pytest 既存 failure）。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
 ## 意図 / 背景
 
@@ -11,6 +11,17 @@
 - 照合基準: HEAD `e018c1c`（`docs: 確認テスト系ルールを単一ファイルへ集約`）。照合は read-only（`git status --short` は照合開始時点で clean）。
 - 確度は 3 段階で分ける: **確定**（現コードから機構が確定できる）／**機構確定・影響は推定**（コードの機構は確認、影響の大きさ或未再現は実測なし）／**未検証**（実例・実機なし）。
 - 既存の指摘記録と重複する項目は、新規タスクを作らず既存タスクの残存点として照合した（重複欄に記録）。
+
+## 実行固有ID と対象項目一覧（assess-20261106-1056）
+
+- 開始時点の Git 状態: clean（HEAD `9f867fc`）。開始時点の未コミット変更なし。
+- 対象: R-01〜R-18 の 18 件。R-19〜R-21 は既知問題として記録済み・今回の対象外。
+- 個別タスク記録: `docs/ai/tasks/2026-11-06-r01`〜`r18`（18 件・正典 `task_manager` で登録済み）。全記録に実行固有ID を書く。
+- このセッションで確定した承認・指示（子への追加指示として扱う）:
+  - R-05 案 A、R-08 案 A、R-13 案 A、R-20 案 A（承認済み）
+  - R-11: 逐次維持。data lane interval を 90 ms に値確定（100 ms の点のみ supersede）。下限 guard 50 ms・image lane 60 ms・politeness 1000 ms は不変
+  - R-15: 案 B（全体先読み維持）。memory 参照 4000 件・設定化。disk は `cache/images` と `cache/images/thumbs` 各 8000 件。disk 削除は作成順。memory 削除は保存済み status 優先、次に最後に使った順。現在閲覧中・表示中は捨ない。last access 記録なし、sha256 lookup なし。件数・順・status は DB の 1 表（例 `cache_entries`）で持つ
+  - 大前提: ユーザーに関知させる必要はない。不便が起きることは許容しない。通知 UI は置かない
 
 ## 項目一覧
 
@@ -148,13 +159,56 @@
 
 - 読み取りで機構を確認し、それぞれ `docs/ai/known-issues/` へ記録（R-19 未検証、R-20 はローカル専用前提のセキュリティ除外方針、R-21 低優先）。実装項目としては登録していない。
 
-## 優先実装候補（指摘どおり・照合で裏付け）
+## 優先順位（assess-20261106-1056 で確定・子の要約と個別タスク記録だけを根拠）
 
-1. R-01（確定・小規模・常時稼働で効く）
-2. R-04（確定・小規模・機能停止が永続）
-3. R-05（確定・衝突実例はデータ依存。命名変更は承認が必要）
-4. R-07（機構確定・1 変数。実測で改善幅を固定できる）
-5. R-08（確定・設計承認が必要。files は使用済みなので「死荷重除去」ではなく「1 ReadDir 化」）
+この節は「優先実装候補（指摘どおり）」を supersede する。実装開始指示は出ていない（優先順位の確定のみ）。
+
+1. **R-01** 小・会計の正しさ（上書き時に old `entrySize` を引く）・常時稼働で効く・R-10 の依存（先行修正推奨）。テスト固定可。
+2. **R-03** 小・正典 magic（`37 7A BC AF 27 1C`）と実コードが 1 バイト不一致。検出漏れは実測で確認済み。
+3. **R-02** 小・Python（D-04 seek）と Go の非対称。実在 PE fixture で hit 漏れ。
+4. **R-04** 小・機能停止が永続（一度 `missing_at_verify=1` の行は以後検出されない）。歴史記録を保持するか更新かは承認が必要。
+5. **R-12** 小（`app/search.html:468` の card fetch 呼び出し削除）+ harness re-anchor。実測 33→25 requests（2 runs→1 run）。cold hygiene の汚染源を直接解消。案 B（generation を進めない）は UX 意味変更なので承認案件として分離。
+6. **R-05** 案 A 承認済み・小。Windows 境界（予約名・末尾点/空白・255/260）は実測済み。既存フォルダは再命名しない。
+7. **R-08** 案 A 承認済み・実測 94.3 ms → 6.0 ms（25 gallery・1 `ReadDir`）。response shape を維持側は guard test（`app/viewer_test.go:2203-2238`）変更不要。UI の per-entry `local` 意味は変えない。
+8. **R-13** 案 A 承認済み・実測 5 requests → 1 call（3 箇所）。D-05 は fetch group と write group を分離維持が推奨。TN 正典（表示源・fallback・byte 保存）は維持。
+9. **R-10** 実測 20–28 ms/page → ≤0.10 ms/page（warm path・mock）。bounded・copy 不変条件・key 正規化・random order 除外をテスト固定。R-01 依存。
+10. **R-06** 小・path-key meta 表（推奨）。A-12 skip 意味の回復。PK 変更（不可逆）は回避済み。テスト 1 件追加必要。
+11. **R-09** 小・card 経路の commit を 25→0（page 合計 26→1）で固定可。wall time 便益は A-02 より小。`last_seen` 更新の数据的 caveats は app 内読み出しなし。
+12. **R-14** 実測 130–160 ms/page（1300 page で 320 s→147 s 目安）、割当 63 MB→27 MB、Flate raw RGB 20.63×肥大化。alpha 保持（`/SMask`）は出力の意味変更＝承認が必要。`draw.Draw` 案は A-11 gate の再導出が必要。
+13. **R-15** 案 B 確定（全体先読み維持）。実測 memory cap 2000→4000 の差 347 MiB（近似）、cap 外 `prefetchedEntries` 7.8 MiB（無制限）。disk cap（各 8000 件）は DB 1 表（`cache_entries`）案が正典「filesystem scan で数えない」に適合。現データ（1,146 件・36 件）は cap 未到達。
+14. **R-11** 小（値 90 ms + 設定 JSON + テスト 2 箇所 re-anchor）。「数十秒級」は 3語/5語 cold で実測不支持（gate 支配 451/631 ms、network 265 ms/呼では 100 ms と差ゼロ）。並行化は予算 1.5 s 超過時の検討案として記録・採用しない。
+15. **R-16** 小・crash 限定だが TN への影響は永続（magic 照合なしで `tn-cache` として返る）。混ざりは 0.5%。atomic write の正典適用範囲は full cache のみで TN を明示除外 → TN・download への適用は方針変更の提案（承認が必要）。
+16. **R-17** 小〜中・実測で内容変化後 stale finding 1 行残存（join view 0 行）。UI 読み取り口なし。案 A（歴史として残す・現判定 = join view 定義可）は対応不要、B1（`resolved_at` 追加）を推奨として承認案件に分離。
+17. **R-07** 優先降格（旧 4 位）。現行 gate 下では default と 16 で接続数同一（改善ゼロ）。改善は burst/pause 条件のみ（18–53→8 接続、handshake 注入で wall −11.5%）。推奨は `http.DefaultTransport` 直接変更ではなく `Clone()` + `MaxIdleConnsPerHost=16` の helper。
+18. **R-18** 対応不要（現状維持）。理由: 実測で 20,000 件でも JSON 1.3 MB・応答 53 ms・DOM 120 ms と許容内、正典上 `read_state` は cache でなく bounded 流儀（C-05）適用不可、D-03 非破壊と衝突。page 化・上限は一覧の意味（全件 vs window）と CLI `hub list` へ波及するため承認案件として分離。
+
+### 照合で訂正した点（読み取り記録 → 子の実測）
+
+- R-03: 正典 signature は 6 バイト `37 7A BC AF 27 1C`。`37 41 7A BC AF 27 1C`（7 バイト）は誤り。修正は最終バイト `38` → `1C`。
+- R-08: guard test の実測行は `app/viewer_test.go:2203-2238`（読み取り記録の `2203-2224` を訂正）。`files` は `local N/M` 表示と cover fallback で使用済み（死荷重ではない）。
+- R-14: 速度は実測済み（読み取り記録の「実測なし」を訂正）。`docs/ai/decisions/` 内の「YCbCr 130 ms」記録は実体なし。
+- R-16: 原文の「TN 側は rename 衝突で内容が混ざる」は誤り（TN に rename がない。混ざりは同時直書き 0.5%、atomic 側は上書きで 0）。
+- R-17: `no_full`・`error` は findings rule ではない（viewer の in-memory negative cache）。`deleteFindingsForGallery` は本番コードに存在しない。
+- R-18: 前提「既読・お気に入り表は bounded（C-05）」は正典上不成立（C-05 は memory cache 限定、`read_state` は state 表）。
+- R-11: `app/hitomi_test.go:1507-1528` は `Test429WithoutRetryAfter...`（1495 行）で 100 ms は `RetryBackoffMS`。更新が必要なのは `TestRateGateReturnsImmediatelyOnContextCancellation`（`app/hitomi_test.go:865`）と `TestConfigExampleHitomiKeysMatchCodeDefaults`（`app/main_test.go:1304`・`config.example.json:15`）。正典 pointer `2026-11-03-a05-...` は実体なし（採用: `2026-11-05-phase4-two-lane-gate-implementation.md`）。
+- R-15: `viewer_test.go:816` の 2000 固定ではなく、pins は `app/viewer_test.go:2483/2567/2572`（`MAX_FULL_CACHE_ENTRIES` 文字列）。
+- 正典 pointer 実体なし（実測で確認）: `docs/ai/tasks/2026-11-03-a14-search-freshness-checks-cache.md`、`docs/ai/tasks/2026-11-03-d13-search-freshness-decision.md`、`docs/ai/tasks/2026-11-03-b03-search-card-generation-guard.md`、`docs/ai/tasks/2026-11-03-b06-startup-double-search.md`、`docs/ai/decisions/2026-11-03-a05-interactive-search-priority-fifo-and-30s-grace.md`。
+- 既存 verification blocker（全項目共通）: `python -m pytest tests/ -v` で `test_canonical_build_freshness_rule_exists` が 54 passed / 1 failed。原因は commit `e018c1c` で AGENTS.md Rules 条が `docs/ai/rules/confirmation-test-rule.md` へ集約され、テストが照合する literal pointer が AGENTS.md から消えたこと。known-issue: `docs/ai/known-issues/KI-20261106-04-canonical-build-freshness-pointer-missing.md`。
+
+### 判断保留（有効性を左右する承認が必要）
+
+- R-14: alpha 保持（PDF 表示の意味変更）と format 分岐の設計判断。
+- R-17: findings 照会結果の意味を変える側（B1）。案 A は承認不要。
+- R-18: page 化・上限（一覧の意味 = 全件 vs window、CLI 波及）。
+- R-16: atomic write の TN・download への scope 拡張（正典 guard）。
+- R-05: 命名変更（decision 2026-11-03 の「acquisitionTitleName 変更しない」と衝突）。既存 folder 衝突の実例はデータ依存。
+- R-04: 歴史記録の扱い（update するか insert-only 保持か）。
+
+### 対応不要（理由記録）
+
+- R-18（案 A・現状維持）: 上記優先順位 18 位の理由。実施項目として閉じた（`task_manager end`）。
+- R-21（known-issues・低優先）: `bytes.Replace` の脆さは機構確定。既存の低優先判定を維持。
+- R-19（known-issues・実例待ち）: 実 gallery 実例が未発現。判定は未検証のまま。
 
 ## Verification
 

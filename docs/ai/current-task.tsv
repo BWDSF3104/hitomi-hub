@@ -1,5 +1,5 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	設計判断確定（R-05・R-08・R-11・R-13・R-15・R-20）。実施開始指示待ち。R-19 は実例待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	優先順位確定（assess-20261106-1056）。実施開始指示待ち。承認案件: R-04 歴史記録・R-05 命名・R-14 alpha/format・R-16 atomic scope・R-17 B1・R-18 page化。R-18 は対応不要で終了。R-19 実例待ち。known-issue: KI-20261106-04（pytest 既存 failure）。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 docs/ai/tasks/2026-11-06-r01-bounded-cache-put-overwrite-double-count.md	進行中	実施開始指示待ち。合格条件: 同一 key の再 insert で totalBytes が水増ししない（上書き時は old entrySize を引いてから加算）。記録: 2026-11-06-claude-review-20261106-findings.md R-01
 docs/ai/tasks/2026-11-06-r02-go-ispe-window-parity.md	進行中	実施開始指示待ち。合格条件: e_lfanew >= 64 の実在 PE fixture で mz_without_pe_header 非 hit（Python 版 seek 実装と対称）。記録: R-02
 docs/ai/tasks/2026-11-06-r03-7z-magic-last-byte.md	進行中	実施開始指示待ち。合格条件: 正典 magic 37 41 7A BC AF 27 1C の fixture で detect magic = 7z（Go・Python 両側）。記録: R-03
@@ -16,5 +16,4 @@ docs/ai/tasks/2026-11-06-r14-pdf-raw-rgb-type-switch.md	進行中	実施開始�
 docs/ai/tasks/2026-11-06-r15-viewer-prefetch-window-and-disk-lru.md	進行中	設計確定（memory 4000 件・設定化、disk 8000 件ずつ、disk 削除は作成順、memory 削除は保存済み status 優先→LRU、現在閲覧中・表示中は捨ない、通知 UI なし、last access 記録なし、sha256 lookup なし）。件数と作成順と status は DB の 1 表（例 cache_entries: hash、format、kind、created_at、source_status）で持つ。テスト viewer_test.go:816 の 2000 固定更新。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 docs/ai/tasks/2026-11-06-r16-atomic-write-tn-download.md	進行中	実施開始指示待ち。full cache の writeImageCacheAtomically（A-07a）を共通化し、TN と downloadFilesParallel（main.go:737）へ適用。合格条件: write/close/rename 失敗で壊れた target が残らない。記録: R-16
 docs/ai/tasks/2026-11-06-r17-stale-findings-on-content-change.md	進行中	実施開始指示待ち。合格条件: 再 scan で現行判定と食い違わない（path 基準で旧 finding を更新/無効化）。D-03 の unique key（path, sha256, rule, detail）は維持し、残存行の扱いを判断。記録: R-17
-docs/ai/tasks/2026-11-06-r18-unread-list-limit.md	進行中	実施開始指示待ち。案: LIMIT、または viewed/saved のみの行を除外。/api/lists と DOM の肥大化に対応。記録: R-18
 docs/ai/tasks/2026-11-06-r11b-data-lane-interval-value.md	進行中	値確定 90 ms（100 ms の点のみ supersede）。下限 guard 50 ms・image lane 60 ms・politeness 1000 ms は不変。実装時に defaultHitomiConfig()（hitomi.go:237-240）と 100 ms を期待する test（hitomi_test.go:1507-1528）の更新が必要。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
