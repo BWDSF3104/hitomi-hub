@@ -39,11 +39,6 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 - **Go app 変更後**: `app` で `go vet . && go test -count=1 -timeout 300s .`
 - テストの外部 API 呼出し方針: `docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md`
 
-## Canonical Latest Build / UI Confirmation Test Rule
-
-- 正典（直接記載は廃止・ポインタ化 2026-11-04）: `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md`
-  - ポインタ化の記録: `docs/ai/decisions/2026-11-04-agents-md-rule-pointer-ization.md`
-
 ## Development
 
 - dev server・build コマンドは適用なし。スクリプトは `python src/scan.py` で実行
@@ -63,7 +58,7 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 ## Rules
 
 - Project rules folder: `docs/ai/rules/`
-- Normal screenshot rule: `docs/ai/rules/normal-screenshot-rule.md`
+- 確認テスト系正典（単一ルール・テスト系は本ファイルに集約）: `docs/ai/rules/confirmation-test-rule.md` — 画面・network・実機の確認テストを行うとき（canonical build / served 画面確認・window size 基準・cold hygiene・screenshot 被写体と取得方法・操作前後の before/after・Drive 保存と local copy cleanup を含む）
 
 ## Documentation
 

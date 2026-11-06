@@ -132,6 +132,17 @@ Recommended minimal impact implementation plan:
 - スクリーンショット（Playwright browser 画面・normal-screenshot-rule）: `I:\マイドライブ\kilo\2026-11-06-manual-japanese-search-button\manual-jp-nonjapanese-check-20261106.png`（local copy `scratch/manual_jp_nonjapanese_check_20261106.png`）
 - 画面で未確認（harness 確認のみ・実サンプルなし）: busy state・error state・colon-title unsupported message の表示。
 
+### 前後ペア確認（操作で状態が変わる項目・2026-11-06 08:20 UTC）
+
+- 確認テスト系正典を単一ルールへ集約: `docs/ai/rules/confirmation-test-rule.md`。旧ファイル `normal-screenshot-rule.md`・`screen-confirmation-size-rule.md`・`cold-confirmation-hygiene-rule.md`・`before-after-screenshot-and-drive-cleanup-rule.md` の内容は本ルールへ移動し、ファイルはゴミ箱へ送った。AGENTS.md の Rules ポインタは本1本（画面・network・実機の確認テストを行うとき／操作前後の before・after、Drive 保存後の local copy cleanup を含む）。
+- before / after（同一 window size `1678x1025`・content viewport `1280x900`・同一 element・Playwright browser 画面・人工 resize なし）:
+  - before: card `#4308198`（english / doujinshi）の existing `.meta` row 内 button `日本版を検索`
+  - click 後の request delta 1件のみ: `/api/search?query=madoromi%20mirage%20%7C%20catnap%20mirage%20language%3Ajapanese&lang=all&limit=1` (200)。exact term に Japanese result なし → `search-card` fetch 発生なし・TN request なし
+  - after: 同一 row に `exact term に結果なし`（none state の message span）。card computed height `130px` は before/after 同一
+- Drive（task folder・正典 storage procedure）: `I:\マイドライブ\kilo\2026-11-06-manual-japanese-search-button\manual-jp-card-4308198-before-20261106.png`、`...\manual-jp-card-4308198-after-20261106.png`、`...\manual-japanese-search-button-confirmation-20261106.txt`
+- Drive 保存後、local copy（`scratch/` の png・txt）は正典 `kilo-safe-remove` でゴミ箱へ送った（Drive 側は保持）
+- 2026-11-06 08:05 UTC の full page 1枚は before が欠けるため、新ルールでは前後ペアとして不合格扱い（上記 before/after で補完。Drive 上の該当画像は歴史的記録として維持）
+
 ## 完了時 Memory Bank 操作
 
 - [x] `current-task.tsv` の参照行を削除（task_manager end で実施）
