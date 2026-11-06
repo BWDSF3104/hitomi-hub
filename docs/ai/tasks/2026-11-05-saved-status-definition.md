@@ -19,6 +19,20 @@
 - 開始時点の既存未コミット変更: なし（`git status --porcelain` 空）
 - goal: 開始2回失敗のため未使用（手順直実行）
 
+### assess-20261106-0326（子実行記録・本実行 2026-11-06）
+
+- 実装なし（承認範囲=Memory Bank 記録のみ・実装開始指示未受領）。記録と実コードの突合（HEAD `954b69803a74868f32485dc8af4d6e47fd6fb67d`）: 記載箇所すべて一致・食い違いなし
+  - `schema.sql:60-68`: `read_state` に saved event 列なし（`viewed`/`viewed_at` のみ）
+  - card API 算出源: `app/viewer.go:640-663`（`entryLocalFormats` ループの disk 逐再計算）→ `app/viewer.go:706-718` → `fileLocal` の `os.Stat`（`app/viewer.go:913-920`）
+  - `reset` "all" の「ファイル由来の saved は削除しない」: `app/library.go:106`（列なしと整合）
+  - jump 側 `savedStrict`: `app/firststatus.go:99-116`・saved pre-filter の `files` EXISTS: `app/firststatus.go:144-172`
+  - UI badge: `app/search.html:263`（`savedByGallery`）・`:522`（card.saved から set）
+  - 既存テスト参照: `app/viewer_test.go:1737`・`1746`・`1765`・`2217-2280`（saved 判定テスト存在）
+- 合格条件判定: 不合格（進行中継続）。残る確認点（完成後ファイル削除で saved を event 記録として保持か、state 再計算で false へ戻すか）は実測では閉じられない。実測で確定できるのは現行挙動（state 再計算・`saved` が 1→0→1 で戻る）のみで、保持/戻すの選択は方針でありユーザー承認を要る。正典 decision `2026-11-05-saved-status-definition-approved` の「保留点」として未解決
+- 子の判断ルール段階3として持ち帰る（該当条項: UX の意味変更・正典 decision 変更・不可逆なデータ変更（schema migration 6→7））。選択 A（event 列 `saved_at`・hook・算出源変更）/ B（現行逐再計算維持）は子では行わない。実測・記録確認は尽くした（上記と Verification）
+- 正典文書間の矛盾: 検出せず（task 記録・decision・実コードが一致）
+- 画面確認: 未確認継続（port 8731 は本実行でも connectable False・instance 未起動。AGENTS.md Development「dev server・build コマンドは適用なし」・`tools/` に exe なし。実データに saved gallery（全 entry disk 揃い）がなく saved badge を表示できない）。スクリーンショット保存なし
+
 ## 調査結果 / 変更内容
 
 ### 定義確定（ユーザー指示 2026-11-05 13:52）
@@ -73,6 +87,7 @@
 - 実測（スクラッチフィクスチャ・port 8741・実データ無変更）: `powershell docs\ai\tmp\assess-20261106-0326\measure_saved.ps1`
   - `A_saved_before_deletion=1` / `B_saved_after_deletion=0` / `C_saved_after_restore=1`（saved は entry 基準で正しく 1→0→1。`local` 計数はフィクスチャフォルダの全ファイルを数えるため余分なフィクスチャファイル分を含むが saved 判定に影響なし）
 - `Test-NetConnection -ComputerName 127.0.0.1 -Port 8731` → TcpTestSucceeded False（実 instance 未起動）
+- 本実行（2026-11-06・HEAD `954b69803a74868f32485dc8af4d6e47fd6fb67d`・記録のみ変更）: `go vet .`（app）→ 出力なし（成功） / `go test -count=1 -timeout 300s .`（app）→ `ok hitomi-hub/app 25.287s`。`Test-NetConnection -ComputerName 127.0.0.1 -Port 8731` → TcpTestSucceeded False（本実行でも未起動）
 
 ## 完了時 Memory Bank 操作
 
