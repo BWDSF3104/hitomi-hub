@@ -628,6 +628,7 @@ async function runSearch() {
 const PREFETCH_IDLE_MS = 800;
 const PREFETCH_CONCURRENCY = 4;
 const PREFETCH_COOLDOWN_MS = 300000;
+const PREFETCH_AHEAD_PAGES = 1;
 
 let prefetchCooldownUntil = 0;
 let prefetchInterruptFlag = false;
@@ -697,7 +698,8 @@ async function runPrefetch() {
   if (prefetchRunning || prefetchInterrupted(gen) || !prefetchEligible) return;
   const query = document.getElementById("query").value.trim();
   const lang = document.getElementById("lang").value.trim() || "all";
-  const page = Number(document.getElementById("page").value || "1") + 1;
+  const currentPage = Number(document.getElementById("page").value || "1");
+  const page = currentPage + PREFETCH_AHEAD_PAGES;
   const total = Number(currentSearchTotal || 0);
   if (!total || page > searchTotalPages(total)) return;
   prefetchRunning = true;

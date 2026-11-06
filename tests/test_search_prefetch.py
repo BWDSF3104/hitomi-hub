@@ -18,6 +18,7 @@ def test_search_prefetch_scheduler_fixed_behaviours():
     required = [
         # fixed constants and marker
         "scheduler keeps the fixed constants idle 800ms, concurrency 4, cooldown 5 minutes",
+        "prefetch ahead page count is variableized as PREFETCH_AHEAD_PAGES",
         "prefetch requests carry the background marker as a query param",
         "prefetch requests go through the existing api() helper with the marker",
         "api stays no-store and exposes the response status for the 429/5xx stop rule",
@@ -43,10 +44,10 @@ def test_search_prefetch_scheduler_fixed_behaviours():
         "the failed prefetch request is not retried from the UI side",
         "no prefetch resumes during the cooldown",
         "prefetch may resume after the cooldown expires",
-        # (d) the target never exceeds one next page
-        "prefetch does not start when there is no next page",
-        "the prefetch targets page+1 only, never page+2",
-        "one prefetch run covers at most one page worth",
+        # (d) the target never exceeds one target page
+        "prefetch does not start when there is no target page",
+        "the prefetch targets the configured ahead-page offset only, never beyond it",
+        "one prefetch run covers at most one target page worth",
         # exclusions and Phase 1 harmony
         "saved-query startup does not trigger the idle prefetch",
         "the search form re-enables the idle prefetch",
