@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: dynamic/実装 re-anchor待ち（枚数6は実測判定上限）
+**Next Action**: P0実測→dynamic→patch実装→guard re-anchor→screen confirmation
 
 ## 意図 / 背景
 
@@ -69,6 +69,70 @@
 - リアルタイム付与単体（depth 不変）: 追加 remote 0・rate/gate 非接触・image 経路非接触。衝突は「prefetch は画面へ書かない」guard の意味1件だけ → decision + re-anchor で解消可能。client 側 helper + patch で実装規模は小。
 - 先読み深化: 技術的には可能だが「page+1 限定」の正典 invariant を明示的に supersede する必要。foreground ≤1 枠は保たれるが block exposure と background 総量が増える（未測）。per-page latency は改善しない（background 量が増えるだけ）。
 - AGENTS.md「絶対に壊してはいけない条件」は非接触で維持可能（viewer imageProxy 順序、TN display fallback 禁止、TN バイトを full cache に保存しない、shard URL format、永続先）。
+
+## 計画
+
+### P0. 実測ゲート
+
+- `actualPageUnitMs`: 1 search + 25 card meta の p50/p95。正典 data lower bound `100 ms` で最低 `2.6 s`。
+- `idleWindowMs`: 現 page 完了後の実ユーザー待機時間。`PREFETCH_IDLE_MS` は開始判定のみ。
+- foreground delay と block 持続窓を canonical build で確認。
+
+判定:
+
+- `actualPageUnitMs <= 2600 ms` かつ `idleWindowMs >= 10 s` → dynamic cap `4`。
+- `actualPageUnitMs <= 2600 ms` かつ `idleWindowMs >= 13 s` → dynamic cap `5`。
+- `actualPageUnitMs <= 2600 ms` かつ `idleWindowMs >= 16 s` → dynamic cap `6`。
+- `actualPageUnitMs > 3900 ms` → dynamic default `2`。
+- `actualPageUnitMs > 5200 ms` → dynamic default `1`。
+
+### P1. dynamic実装
+
+- 式候補: `dynamicAheadPages = min(cap, max(1, floor(idleWindowMs / actualPageUnitMs)))`
+- 現コードの `3` fixed は、P0実測で確定するまで維持。
+
+### P2. realtime patch実装
+
+- schedulerBlockは失敗処理だけ。
+- 成功path helperを schedulerBlock 外へ置く。
+- helper:
+  - current `searchGeneration` のみ。
+  - 表示中 card だけ patch。
+  - group cache は現行 key `title || japanese_title`。
+  - failure path は画面へ書かない。
+  - cooldown memory-only。
+- guard re-anchor:
+  - schedulerBlockに `setStatus(`、`renderSearchCard(`、`innerHTML`、`localStorage` リテラル禁止。
+  - helper側で成功 patch/cache更新を許可。
+
+### P3. card height screen confirmation
+
+- tagsが `line-clamp: 9` に近いカードで、後から追加した anchor が `overflow: hidden` で切れるか確認。
+- 切れる場合は、現行制限・tags短縮・条件付き表示のどれかを選ぶ。
+
+### P4. tests
+
+- harness追加:
+  - dynamic formula。
+  - success patch only。
+  - failure not rendered。
+  - helper outside schedulerBlock。
+  - generation guard。
+  - only visible card patch。
+  - key current。
+- existing fixed behavior labelsを新意味へ更新。
+
+### P5. validation
+
+- `go vet .`
+- `go test -count=1 -timeout 300s .`
+- `python -m pytest tests/ -q`
+- canonical build freshness
+- screen confirmation
+
+### Stop conditions
+
+- `actualPageUnitMs`、block持続窓、card height visibilityが未確認なら完了と書かない。
 
 ## Verification
 
