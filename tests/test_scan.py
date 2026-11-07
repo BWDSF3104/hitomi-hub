@@ -330,6 +330,66 @@ def test_findings_unique_index_key_includes_path(tmp_path):
     conn.close()
 
 
+def test_ensure_schema_adds_findings_resolved_at_without_deleting_rows(tmp_path):
+    # R-17（B1・Go ensureFindingsResolvedAt 対称）: resolved_at 列追加は列追加のみ・
+    # 既存行を削除しない（D-03 非破壊迁移規約）。既存 DB 形状（列なし）から ensure_schema で揃う
+    conn = scan.open_db(tmp_path / "hitomi.db")
+    conn.execute("""CREATE TABLE findings (
+        id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT NOT NULL,
+        rule TEXT NOT NULL, detail TEXT, found_at TEXT NOT NULL)""")
+    conn.execute("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+                 ("Galleries/1/1.cbz", "a" * 64, "structural", "bad_zip", scan.now_iso()))
+    conn.commit()
+    scan.ensure_schema(conn, DATA_DIR / "schema.sql")
+    have = [row[1] for row in conn.execute("PRAGMA table_info(findings)")]
+    assert "resolved_at" in have, "findings must have resolved_at column after ensure_schema"
+    row = conn.execute("SELECT path, sha256, rule, detail, resolved_at FROM findings").fetchone()
+    assert row == ("Galleries/1/1.cbz", "a" * 64, "structural", "bad_zip", None), "existing row must survive"
+    conn.close()
+
+
+def test_rescan_content_change_marks_stale_findings_resolved(tmp_path):
+    # R-17 合格条件固定（B1）: 同一 path で内容（sha256）が変わる再 scan で旧 sha256 行が
+    # stale マーキング（resolved_at）され、現行判定（join view）と食い違わない。残存行は歴史として
+    # 削除せず維持（D-03）。sha 一致の行は非更新・resolved_at 済み行の再マーキングもしない。
+    # （UI 読み取り口なし・直接 SQL 照会の意味の実測固定。VT なし・structural のみ）
+    conn = make_db(tmp_path)
+    root = tmp_path
+    state = {"window": [], "total": 0}
+
+    def join_view(conn, unresolved_only=False):
+        sql = ("SELECT COUNT(1) FROM findings f JOIN files fi ON fi.path = f.path AND fi.sha256 = f.sha256"
+               + (" AND f.resolved_at IS NULL" if unresolved_only else ""))
+        return conn.execute(sql).fetchone()[0]
+
+    cbz = make_zip(root / "Galleries" / "71" / "71.cbz", {"../evil.exe": b"MZ\x90\x00"})
+    assert scan.process_file(conn, cbz, root, CFG, state, {}) == "hit"
+    rows = conn.execute("SELECT sha256, resolved_at FROM findings").fetchall()
+    assert len(rows) == 2 and all(r[1] is None for r in rows)
+    assert join_view(conn) == 2
+
+    # 内容変化（clean zip → pass）。旧行はマーキング・join view 0（現判定と食い違わない）・findings は消えない
+    make_zip(cbz, {"ok.webp": PNG})
+    assert scan.process_file(conn, cbz, root, CFG, state, {}) == "pass"
+    total, marked = conn.execute("SELECT COUNT(1), COUNT(resolved_at) FROM findings").fetchone()
+    assert total == 2 and marked == 2, f"stale rows must be marked and kept: total {total} marked {marked}"
+    assert join_view(conn) == 0
+
+    # 同一 content 再実行: 既存マーキングは再マーキング（上書き）なし・新行なし（D-03 行数不変）
+    resolved_before = conn.execute("SELECT resolved_at FROM findings ORDER BY rule, detail").fetchall()
+    assert scan.process_file(conn, cbz, root, CFG, state, {}) == "pass"
+    resolved_after = conn.execute("SELECT resolved_at FROM findings ORDER BY rule, detail").fetchall()
+    assert resolved_after == resolved_before, "stale row must not be re-marked on same-content re-scan"
+
+    # 内容変化・再 hit: 新行は unresolved・join view = 新行のみ（現判定と一致）
+    make_zip(cbz, {"../bad.exe": b"MZ\x90\x00"})
+    assert scan.process_file(conn, cbz, root, CFG, state, {}) == "hit"
+    total, marked = conn.execute("SELECT COUNT(1), COUNT(resolved_at) FROM findings").fetchone()
+    assert total == 4 and marked == 2, f"new findings must be unresolved, stale must remain marked: total {total} marked {marked}"
+    assert join_view(conn, unresolved_only=True) == 2
+    conn.close()
+
+
 def test_same_content_different_paths_are_separate_findings(tmp_path):
     conn = make_db(tmp_path)
     scan.add_finding(conn, "Galleries/1/1.cbz", "a" * 64, "structural", "bad_zip")

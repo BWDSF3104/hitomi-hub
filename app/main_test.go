@@ -722,6 +722,181 @@ func TestScanTwiceDoesNotChangeFindingsCount(t *testing.T) {
 	}
 }
 
+// R-17（B1・schemaVersion 10）: findings への resolved_at 追加は列追加のみ（既存行の削除禁止・
+// D-03 非破壊迁移規約）。unique key（path, sha256, rule, detail）は維持。
+func TestMigrateSchemaAddsFindingsResolvedAtWithoutDeletingRows(t *testing.T) {
+	dataDir = dataRoot()
+	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// 移行前の findings 形状（v9・resolved_at 列なし・既存行あり）を再現する
+	if _, err := db.Exec(`CREATE TABLE findings (
+		id INTEGER PRIMARY KEY, path TEXT NOT NULL, sha256 TEXT NOT NULL,
+		rule TEXT NOT NULL, detail TEXT, found_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
+		"Galleries/1/file.cbz", "sha1", "structural", "bad_zip", nowISO()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var have bool
+	rows, err := db.Query("PRAGMA table_info(findings)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == "resolved_at" {
+			have = true
+		}
+	}
+	rows.Close()
+	if !have {
+		t.Fatal("findings must have resolved_at column after migration")
+	}
+	var path, sha, rule, foundAt string
+	var detail, resolved sql.NullString
+	if err := db.QueryRow("SELECT path, sha256, rule, detail, found_at, resolved_at FROM findings").
+		Scan(&path, &sha, &rule, &detail, &foundAt, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if path != "Galleries/1/file.cbz" || sha != "sha1" || rule != "structural" || detail.String != "bad_zip" {
+		t.Errorf("existing finding row must survive the migration: got %v %v %v %v", path, sha, rule, detail.String)
+	}
+	if resolved.Valid {
+		t.Errorf("existing finding row must not be marked by migration: got resolved_at %v", resolved.String)
+	}
+	def := indexDef(t, db, "idx_findings_unique")
+	if normalizeIndexSQL(def) != normalizeIndexSQL(findingsUniqueIndexSQL) {
+		t.Errorf("unique key must remain (path, sha256, rule, detail): got %q", def)
+	}
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatal(err)
+	}
+	if userVersion != schemaVersion {
+		t.Errorf("user_version: got %d want %d", userVersion, schemaVersion)
+	}
+}
+
+// R-17 合格条件固定（B1）: 同一 path で内容（sha256）が変わる再 scan で旧 sha256 行が
+// stale マーキング（resolved_at）され、現行判定（join view）と食い違わない。残存行は歴史として
+// 削除せず維持（D-03）。sha 一致の行は非更新・resolved_at 済み行の再マーキングもしない。
+func TestRescanContentChangeMarksStaleFindingsResolved(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	c := cfg()
+	c.Yr = ""
+
+	path := makeZip(t, dir, map[string]string{"../evil.exe": "x"})
+	summary1 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary1, nil); status != "hit" {
+		t.Fatalf("run 1 status: got %s", status)
+	}
+	if summary1["hit"] != 1 {
+		t.Fatalf("run 1 summary: got %v", summary1)
+	}
+
+	// run 2: 内容変化（clean zip → pass）。旧 findings 行はマーキング・join view 0・findings は消えない
+	makeZip(t, dir, map[string]string{"ok.webp": "y"})
+	summary2 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary2, nil); status != "pass" {
+		t.Fatalf("run 2 status: got %s", status)
+	}
+	var total, marked int
+	if err := db.QueryRow("SELECT COUNT(1), COUNT(resolved_at) FROM findings").Scan(&total, &marked); err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || marked != 2 {
+		t.Fatalf("stale rows must be marked and kept: total %d marked %d", total, marked)
+	}
+	var joinView int
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings f JOIN files fi ON fi.path = f.path AND fi.sha256 = f.sha256").Scan(&joinView); err != nil {
+		t.Fatal(err)
+	}
+	if joinView != 0 {
+		t.Errorf("current view must be 0 rows after content change to clean: got %d", joinView)
+	}
+
+	// run 3: 内容変化・再 hit。新 sha256 の行は unresolved・join view = 新行のみ（現判定と一致）
+	makeZip(t, dir, map[string]string{"../bad.exe": "z"})
+	summary3 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary3, nil); status != "hit" {
+		t.Fatalf("run 3 status: got %s", status)
+	}
+	if err := db.QueryRow("SELECT COUNT(1), COUNT(resolved_at) FROM findings").Scan(&total, &marked); err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 || marked != 2 {
+		t.Errorf("new findings must be unresolved, stale must remain marked: total %d marked %d", total, marked)
+	}
+	if err := db.QueryRow("SELECT COUNT(1) FROM findings f JOIN files fi ON fi.path = f.path AND fi.sha256 = f.sha256 AND f.resolved_at IS NULL").Scan(&joinView); err != nil {
+		t.Fatal(err)
+	}
+	if joinView != 2 {
+		t.Errorf("current view after re-hit: got %d want 2", joinView)
+	}
+
+	// run 4: 同一 content 再実行（mtime のみ変化させて再ハッシュ→マーキングが走っても sha 一致の
+	// 行は非更新・resolved_at 済み行の再マーキング（上書き）なし・D-03 行数不変）
+	newTime := time.Now().Add(2 * time.Hour)
+	if err := os.Chtimes(path, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleQuery := "SELECT resolved_at FROM findings WHERE sha256 <> (SELECT sha256 FROM files WHERE path = ?) ORDER BY rule, detail"
+	staleRows := func(db *sql.DB) string {
+		rows, err := db.Query(staleQuery, rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := []string{}
+		for rows.Next() {
+			var resolved sql.NullString
+			if err := rows.Scan(&resolved); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, resolved.String)
+		}
+		return strings.Join(out, "\n")
+	}
+	resolvedBefore := staleRows(db)
+	summary4 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir, path, summary4, nil); status != "hit" {
+		t.Fatalf("run 4 status: got %s", status)
+	}
+	if resolvedBefore == "" {
+		t.Fatal("run 4 must have stale marked rows before re-scan")
+	}
+	resolvedAfter := staleRows(db)
+	if resolvedBefore != resolvedAfter {
+		t.Errorf("stale row must not be re-marked on re-scan of same content: got %q want %q", resolvedAfter, resolvedBefore)
+	}
+	if err := db.QueryRow("SELECT COUNT(1), COUNT(resolved_at) FROM findings").Scan(&total, &marked); err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 || marked != 2 {
+		t.Errorf("same content re-scan must not change findings: total %d marked %d", total, marked)
+	}
+}
+
 func TestMigrateSchemaAlignsUniqueIndexWithoutDeletingRows(t *testing.T) {
 	dataDir = dataRoot()
 	db, err := openDB(filepath.Join(t.TempDir(), "hitomi.db"))

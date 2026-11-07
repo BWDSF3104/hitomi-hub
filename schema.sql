@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS findings (
     sha256 TEXT NOT NULL,
     rule TEXT NOT NULL,
     detail TEXT,
-    found_at TEXT NOT NULL
+    found_at TEXT NOT NULL,
+    resolved_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bookmark_queries (

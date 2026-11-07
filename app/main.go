@@ -244,7 +244,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 9
+const schemaVersion = 10
 
 // execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
 type execer interface {
@@ -343,6 +343,10 @@ func ensureSchema(db *sql.DB) error {
 // 新設する（2026-11-02 の「image cache state の DB 表追加不可」条の該当点のみ supersede）。追加のみ・
 // 既存表の PK 変更・既存行削除なし（同じ D-03 非破壊迁移規約）。表生成以前の実 cache ファイルは
 // backfill しない（backfill は filesystem scan で正典ルールに反する）。
+// schemaVersion 10（R-17・B1 承認済み・task 2026-11-06-r17）: findings へ resolved_at（stale マーキング）
+// 列を追加する。列追加のみ・既存行を削除しない（同じ D-03 非破壊迁移規約）。unique key（path, sha256,
+// rule, detail）は維持。内容変化後の再 scan で旧 sha256 行をマーキングし、現行判定（join view）と
+// 食い違わない形にする（現判定視 = resolved_at IS NULL）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -378,6 +382,11 @@ func migrateSchema(db *sql.DB, current int) error {
 	}
 	if current < 9 {
 		if err := ensureCacheEntriesTable(db); err != nil {
+			return err
+		}
+	}
+	if current < 10 {
+		if err := ensureFindingsResolvedAt(db); err != nil {
 			return err
 		}
 	}
@@ -523,6 +532,41 @@ func ensureCacheEntriesTable(db *sql.DB) error {
 	return err
 }
 
+// ensureFindingsResolvedAt は findings へ resolved_at（stale マーキング）列を追加する（R-17・
+// schemaVersion 10）。列追加のみ・既存行はそのまま（resolved_at は NULL で埋まる）。新 DB は
+// schema.sql 定義で揃う（正典 DB は次回 ensureSchema 実行で自然に揃う・D-03 非破壊迁移規約）。
+func ensureFindingsResolvedAt(db *sql.DB) error {
+	var exists int
+	if err := db.QueryRow("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'findings'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return nil
+	}
+	var have bool
+	rows, err := db.Query("PRAGMA table_info(findings)")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == "resolved_at" {
+			have = true
+		}
+	}
+	rows.Close()
+	if have {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE findings ADD COLUMN resolved_at TEXT")
+	return err
+}
+
 const findingsUniqueIndexSQL = "CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(path, sha256, rule, detail)"
 
 func normalizeIndexSQL(s string) string {
@@ -631,6 +675,16 @@ func scanSkipStatus(db dbExec, rel string, size, mtime int64) (string, bool) {
 func addFinding(db dbExec, path, sha, rule, detail string) error {
 	_, err := db.Exec("INSERT OR IGNORE INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
 		path, sha, rule, detail, nowISO())
+	return err
+}
+
+// resolveStaleFindings は同一 path で内容（sha256）が変わった旧行を stale マーキングする（R-17・B1）。
+//マーキングのみ・既存行を削除しない（D-03 非破壊）。再 scan の scan tx 内（再判定が走った file のみ）
+// で実行し、A-12 skip の file は tx に入らないためマーキングも走らない。sha 一致（同一 content）の行は
+// 非更新・resolved_at 済み行の再マーキング（上書き）もしない。
+func resolveStaleFindings(db dbExec, path, sha string) error {
+	_, err := db.Exec("UPDATE findings SET resolved_at = ? WHERE path = ? AND sha256 <> ? AND resolved_at IS NULL",
+		nowISO(), path, sha)
 	return err
 }
 
@@ -944,6 +998,10 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 			logScanError(err)
 			return status
 		}
+	}
+	if err := resolveStaleFindings(tx, rel, sha); err != nil {
+		logScanError(err)
+		return status
 	}
 	if needsCacheStore {
 		if err := cacheStore(tx, cacheStoreEntry.sha, cacheStoreEntry.verdict, cacheStoreEntry.engine, cacheStoreEntry.threat, cacheStoreEntry.detail); err != nil {

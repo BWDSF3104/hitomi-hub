@@ -282,7 +282,17 @@ def open_db(db_path: Path) -> sqlite3.Connection:
 
 def ensure_schema(conn: sqlite3.Connection, schema_path: Path) -> None:
     conn.executescript(schema_path.read_text(encoding="utf-8"))
+    ensure_findings_resolved_at(conn)
     conn.commit()
+
+
+def ensure_findings_resolved_at(conn: sqlite3.Connection) -> None:
+    # R-17（B1・schemaVersion 10 相当）: findings へ resolved_at（stale マーキング）列を追加する。
+    # 列追加のみ・既存行を削除しない（D-03 非破壊迁移規約）。新 DB は schema.sql 定義で揃う。
+    have = [row[1] for row in conn.execute("PRAGMA table_info(findings)")]
+    if "resolved_at" in have:
+        return
+    conn.execute("ALTER TABLE findings ADD COLUMN resolved_at TEXT")
 
 
 def first_nonempty(*values) -> str:
@@ -326,6 +336,16 @@ def add_finding(conn: sqlite3.Connection, path: str, sha256: str, rule: str, det
     conn.execute(
         "INSERT OR IGNORE INTO findings (path, sha256, rule, detail, found_at) VALUES (?, ?, ?, ?, ?)",
         (path, sha256, rule, detail, now_iso()),
+    )
+
+
+def resolve_stale_findings(conn: sqlite3.Connection, path: str, sha256: str) -> None:
+    # R-17（B1・Go resolveStaleFindings と対称）: 同一 path で内容（sha256）が変わった旧行を stale
+    # マーキングする。マーキングのみ・既存行を削除しない（D-03 非破壊）。sha 一致の行は非更新・
+    # resolved_at 済み行の再マーキングもしない。
+    conn.execute(
+        "UPDATE findings SET resolved_at = ? WHERE path = ? AND sha256 != ? AND resolved_at IS NULL",
+        (now_iso(), path, sha256),
     )
 
 
@@ -482,6 +502,7 @@ def process_file(conn: sqlite3.Connection, path: Path, root: Path, cfg: dict, st
             add_finding(conn, rel, sha, rule, detail)
         for rule, detail in vt_findings:
             add_finding(conn, rel, sha, rule, detail)
+        resolve_stale_findings(conn, rel, sha)
         if pending_cache:
             cache_store(conn, *pending_cache)
         record_file(conn, rel, sha, path.stat().st_size, ext, magic, status, source)

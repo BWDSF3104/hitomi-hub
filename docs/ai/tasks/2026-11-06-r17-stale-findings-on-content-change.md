@@ -2,9 +2,9 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 実施開始指示待ち。合格条件: 再 scan で現行判定と食い違わない（path 基準で旧 finding を更新/無効化）。D-03 の unique key（path, sha256, rule, detail）は維持し、残存行の扱いを判断。記録: R-17
+**Next Action**: 完了（B1 実装済み・pytest 59 passed・go test ok・probe 再実行で内容変化後 join view 0 行/stale マーキング/同一 content 不変を確認。コミット待ち）
 
 ## 意図 / 背景
 
@@ -49,6 +49,18 @@
 - ユーザーに見える意味変更の分離: UI 表示はないが、案 B（B1）は findings 照会結果の意味を変える（直接 SQL で user-visible）＋ schema 変更を要る → 承認が必要として分離。案 A は意味を変えない。
 - **推奨**: 案 B1（非破壊マーキング）。D-03 の unique key と非破壊規約を保ったまま合格条件を満たす最も適切な案。ユーザーが「歴史として残す」を選んだ場合は案 A（実装不要・記録明確化のみ）で閉じ可。
 
+### 実装方針（確定・B1 承認済み・実装前確定）
+
+- 採用: 案 B1（ユーザー承認済み・委譲指示）。`resolved_at` 列追加のみ・既存データ削除・不可逆 migration なし（D-03 非破壊迁移規約）。残存行の扱い = 歴史として残す＋再判定時に stale マーキング（`resolved_at` に時刻設定）。unique key（path, sha256, rule, detail）は維持（D-03）。
+- 矛盾記録: 委譲文は decision `2026-11-06-review-findings-approval-decisions.md` の R-17 記載を正典として採用するよう指示したが、実際の同文書に R-17 の項目記載がない（記載は R-11・R-15・R-20・R-05・R-08・R-13）。B1 承認は委譲文（ユーザー承認・追加指示）を正典として採用した。矛盾の旨をここに記録。
+- schemaVersion: 記録の推定は 7→8 だが実測の現行値は 9（R-06 = 8・R-15 = 9）。本項目は 9→10。
+- マーキング規則（scan tx・再判定時のみ）: `UPDATE findings SET resolved_at = ? WHERE path = ? AND sha256 <> ? AND resolved_at IS NULL`（Go `resolveStaleFindings`・Python `resolve_stale_findings` 対称）。同一 content（sha 一致）の行は非更新 → D-03 の既存テスト（`test_second_scan_does_not_change_findings_count`・Go の findings snapshot 固定）と衝突なし。skip（A-12）は tx 内に入るためマーキングも走らない。
+- 現行判定の定義: join view（`findings.sha256 = files.sha256`）を維持し、`resolved_at IS NULL` を stale マーカーの現判定視として併記。known nuance（記録・実装変更なし）: 内容が過去の sha へ戻ると INSERT OR IGNORE の意味（D-03 正典・insert 意味変更なし）により旧行の resolved_at は cleared されない → join view は正、resolved view は非追従。B1 範囲（列追加＋UPDATE 1）の境界としてこの形を採用。
+- 既存 DB への列追加（非破壊・列追加のみ）: Go `ensureFindingsResolvedAt`（migrateSchema の `current < 10` 追加）、Python `ensure_schema` に `ensure_findings_resolved_at`（列追加のみ）を対称追加。
+- 固定テスト: Go 2 件（migration 列追加非破壊・内容変化再 scan の stale マーキング/join view）、Python 1 件（probe 同形状・現判定と食い違わないことの固定）。
+- UI: 読み取り口なし（grep 確認済み）→ 画面確認該当なし。
+- 検証方法（合格条件固定）: `python -m pytest tests/ -v`、`go vet . && go test -count=1 -timeout 300s .`（app）、実装後 probe 再実行（scratch・`docs/ai/tmp/assess-20261106-1056/`）で 内容変化後 stale 行マーキング・join view 0 行・同一 content 再実行不変を証拠として記録。
+
 ### 推定規模・優先要素
 
 - 推定規模: 小〜中（B1 = 列追加 1 + scan tx 内 UPDATE 1 + Go/Python 対称 + 固定テスト。A = 記録のみ）。
@@ -64,7 +76,23 @@
   - scan2（同 path・内容変更 → clean zip → pass）: findings **1 行のまま残存**（sha256=361df9b8… の stale 行）、files = pass・sha256=ae54d63c…。join view（`findings.sha256 = files.sha256`）= **0 行**、stale 行（sha256 ≠ files.sha256）= **1 行**。
   - scan3（同一 content 再実行）: findings 1 行不変（INSERT OR IGNORE skip・D-03 合格条件維持）。
   - scan4（内容変更・再 hit）: findings 3 行（stale 1 + 新 2）、join view = 2 行（新 sha256 のみ）。残存 rule 観測 = `structural` のみ（`no_full`/`error` rule は生成されない）。
-- UI 照合（読み取り・grep 実測）: `listFindings` 0 件・`/api/findings` route なし・search card 応答に findings なし・UI html に `finding` なし → findings の UI 読み取り口なし（画面確認該当なし）。
+- UI 照合（読み取り・grep 実測）: `listFindings` 0 件・`/api/findings` route なし・search card 応答に findings なし・UI html に `finding` なし → findings の UI 読み取り口なし（画面確認該当なし・Drive スクリーンショット該当なし）。
+
+### 実装後の検証（2026-11-08・B1 実施）
+
+- 変更ファイル: `schema.sql`（findings へ `resolved_at TEXT` 追加）、`app/main.go`（schemaVersion 9→10・`ensureFindingsResolvedAt`・`resolveStaleFindings`・scan tx 内呼出し）、`src/scan.py`（`ensure_findings_resolved_at`・`resolve_stale_findings`・`process_file` の tx 内呼出し・対称）、固定テスト 3 件（`app/main_test.go` 2 件・`tests/test_scan.py` 2 件追加）。
+- `python -m pytest tests/ -v`: **59 passed / 1 failed in 13.31 s**。1 件の失敗は `tests/test_canonical_build_freshness.py::test_canonical_build_freshness_rule_exists`（既存 failure・R-17 と無関係・本項目では未処置）。R-17 固定テスト: `test_ensure_schema_adds_findings_resolved_at_without_deleting_rows`・`test_rescan_content_change_marks_stale_findings_resolved` PASSED（内容変化後 stale 行マーキング・join view 0・同一 content 再実行 rows_identical=True・再 hit で join view=新行のみ）。
+- `go vet . && go test -count=1 -timeout 300s .`（app）: vet clean / `ok hitomi-hub/app 24.168s`（2026-11-08）。R-17 固定テスト: `TestMigrateSchemaAddsFindingsResolvedAtWithoutDeletingRows`（列追加のみ・既存行Survive・unique key 維持・user_version 10）と `TestRescanContentChangeMarksStaleFindingsResolved`（run1 hit→run2 内容変化 pass で stale マーキング・join view 0→run3 再 hit で新行 unresolved・join view=2→run4 同一 content 再ハッシュで resolved_at 再マーキングなし・行数不変）PASSED。
+- 試行回数: 2。試行1 の失敗はテスト側の照会パラメータ誤り（`files.path` は rel 基準・絶対 path を渡した）。原因分析: run4 の stale 行照会が不一致で no rows。変更点: rel 基準の照会へ修正（product code の変更なし）。試行2 で合格。
+- probe 再実行（scratch・同形状 `docs/ai/tmp/assess-20261106-1056/r17_probe_after.py`・出力 `r17_probe_after_out.txt`・elapsed 1.94 s・VT/YARA 呼出しなし）:
+  - scan1 hit: findings 1・unresolved 1
+  - scan2（内容変更 → pass）: findings 1 残存・marked 1（resolved_at 設定）・unresolved 0・join view **0 行** → 現行判定と食い違わない（合格条件）
+  - scan3（同一 content）: findings 1 不変・rows_identical=True（D-03 維持）
+  - scan4（再 hit）: findings 3・marked 1・unresolved 2・join view 2（新 sha256 のみ）
+- 画面確認: 該当項目なし（UI 読み取り口なし grep 確認済み）。
+- 実装前実測（記録のみ・ソース未変更）は上記の節のまま。commit 前に local==remote（HEAD `5db9042`・clean）確認済み。
+
+
 - `go vet . && go test -count=1 -timeout 300s .`（app）: vet clean / `ok hitomi-hub/app 24.903s`（2026-11-06）。この挙動（旧 sha256 行の残存）を固定するテストなし。
 - `python -m pytest tests/ -v`: 54 passed / 1 failed in 9.81 s。1 件の失敗は `tests/test_canonical_build_freshness.py::test_canonical_build_freshness_rule_exists`（AGENTS.md ポインタ）で R-17 と無関係な既存失敗（R-04 と同一記録・本項目では未処置・未触）。
 - ソースコード変更なし。変更は本記録と `docs/ai/tmp/assess-20261106-1056/` のみ。`git status --short`: docs/ai 配下の記録のみ（他項目の変更は別セッション・非触）。
