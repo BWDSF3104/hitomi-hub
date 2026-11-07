@@ -580,7 +580,7 @@ func recordFile(db dbExec, path string, galleryID sql.NullInt64, sha string, siz
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET scan_status = excluded.scan_status, scan_source = excluded.scan_source,
 		scan_time = excluded.scan_time, sha256 = excluded.sha256, magic = excluded.magic,
-		gallery_id = excluded.gallery_id`,
+		gallery_id = excluded.gallery_id, missing_at_verify = 0`,
 		path, galleryID, sha, size, ext, magic, status, source, nowISO())
 	return err
 }

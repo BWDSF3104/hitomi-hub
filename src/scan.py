@@ -335,7 +335,7 @@ def record_file(conn: sqlite3.Connection, path: str, sha256: str, size: int, ext
         "INSERT INTO files (path, sha256, size, ext, magic, scan_status, scan_source, scan_time) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET scan_status = excluded.scan_status, "
         "scan_source = excluded.scan_source, scan_time = excluded.scan_time, sha256 = excluded.sha256, "
-        "magic = excluded.magic",
+        "magic = excluded.magic, missing_at_verify = 0",
         (path, sha256, size, ext, magic, status, source, now_iso()),
     )
 
