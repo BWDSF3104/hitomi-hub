@@ -151,6 +151,16 @@ Flate/DCTDecode の既存分岐も decision に記録がない（`README.md:46`�
 - `app` `go vet . && go test -count=1 -timeout 300s .` → `ok hitomi-hub/app 24.463s`（全通過）。既存 PDF 3 テスト（opaque fixture → byte 形式・object 番号不変なので SMask 非発火）と A-11 gate（`TestExportPDFStreamedPeakMemoryFitsSinglePageWorkingSet`）通過。fast path は opaque page で追加割当なし（gate 項目構成不変）。
 - ルート `python -m pytest tests/ -v` → 56 passed / 1 failed（12.43s・collect 57）。不合格は開始時点からの既存 failure `test_canonical_build_freshness_rule_exists`（KI-20261106-04・本項目と無関係）。collect 57（記録時の 55）は pytest 側の collect 増で本項目の変更ではない。`test_canonical_executable_embeds_current_pages` PASSED（UI 非触）。
 - UI 画面確認: 該当なし（本項目は UI 項目でない）。Drive 保存なし。
+- 修正・再検証の試行（実装 1 回。不合格はテスト側 2 試行・実装バグの検出なし）:
+  1. 新テスト失敗: 8x8 fixture の pixel index を x 優先で計算（正 j = y*w + x）＋ SMask テストで fixture file 書き出し漏れ（missing skip → error）。原因はテスト側。修正 → 該当テスト通過。
+  2. 新テスト失敗: xref 解析が object 0 の `f` entry（20 B）を object 1 と読んで offset 0。原因はテスト側。修正（f line skip）→ 通過。以後全通過。
+
+## 完了確認
+
+- Commit: `65f51e3`（push 済み・base `bb6efba`）。変更: `app/pdf.go`・`app/export_test.go`・decision `2026-11-07-r14-type-switch-smask-dct-implementation.md`・本記録・`current-task.tsv`（参照行削除）。
+- 段階3 持ち帰り: なし。alpha 保持（表示意味変化）と DCTDecode 分岐は追加指示で承認済み。micro 決定（条件付き SMask・SOF header で size・generic path の従来動作維持）は既存テスト・gate を壊さない範囲の選択で、正典 decision（2026-11-07 新規）に記録。
+- 正典矛盾: 追加指示が挙げる decision ファイルの R-14 記載は不存在（採用根拠: 追加指示のユーザー承認＋本記録の推奨案＋実測）。記録済み。
+- 既存 PDF 3 テストは opaque fixture のため SMask 非発火・byte 同一で通過（意味変更の承認範囲と分離確認）。
 
 ### 実測（スクラッチ `docs/ai/tmp/assess-20261106-1056/`・本番コード・実完成フォルダ・実 DB へ書き込みなし）:
   - `go run ./bench`（fixture `fixture_opaque.png`・`fixture_opaque.jpg`・`fixture_alpha.png`・`fixture_alpha.jpg`）→ 上記速度表。p50 ではなく 1 run 値。
