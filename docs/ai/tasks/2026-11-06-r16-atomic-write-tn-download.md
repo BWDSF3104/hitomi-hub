@@ -91,7 +91,9 @@
 - Canonical build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → 生成済み。
 - CLI download 実機（実在 gallery 4294614・scratch p3_canonical_fresh）: attempted=2・written=2・skipped=0（一致）。ファイル: `2d18a9a8...` 210784 B・`76f4e315...` 183038 B。elapsed 2.21 s。
 - viewer full 実機（canonical server 8731）: `GET /api/image/9d990fde5de572e0cccd806f3f87258f6a7905d0e99a2ddb13254342?format=webp` → 1st 200 `x-cache: miss` 193724 B、2nd 200 `x-cache: cache` 193724 B（`no_full` でない・cache ファイル実寸 193724 B・rename 由来）。`.tmp` 残留: cache 配下・scratch 全体で none。
-- TN 実機: 既存 TN cache hit 確認（`GET /api/thumb/2d18a9a8...?format=webp&gallery=4294614&variant=bigtn` → 200 `x-cache: tn-cache` 55320 B・thumbs 内ファイル 55320 B）。TN 新規 write（tn → tn-cache）は TN upstream が 502 を返せず、確認できなかった → **TN live write は未確認**（テストで固定済みの機構・実機確認は tn-cache 読みのみ）。
+- TN 実機: 既存 TN cache hit 確認（`GET /api/thumb/2d18a9a8...?format=webp&gallery=4294614&variant=bigtn` → 200 `x-cache: tn-cache` 55320 B・thumbs 内ファイル 55320 B）。TN 新規 write（tn → tn-cache）は TN upstream が 502 を返せず、確認できなかった
+- TN live write 再試行（2026-11-07・1 回のみ・記録のみで code 変更なし）: freshly rebuilt canonical `hub.exe`（freshness test `test_canonical_executable_embeds_current_pages` PASSED・pytest 57 passed・failed 1 は既存 failure `test_canonical_build_freshness_rule_exists`・KI-20261106-04）からの **fresh server instance**（pid 13760・port 8731）・cold root `scratch/r16_tn_retest`（測定時点で cache ディレクトリなし）で TN 新規 fetch→write を測定 → **TN upstream が再び 502**（2026-11-07 17:42 UTC 単発・x-cache ヘッダなし＝TN error path・display fallback 非接触・write 走らず）。cold root 確認: `hitomi.db` (+shm/wal) のみ・`cache/images`（full）・`cache/images/thumbs` 未生成＝TN バイトが full cache に保存されていない・`.tmp` 残留 0。TN display fallback 禁止・reader 表示源化禁止の正典は非接触（error path 確認まで）。→ **TN live write は未確認点として確定**（テスト固定済みの失敗注入機構は維持）
+- 画面操作は実施しなかった（TN 新規 write 不合格で screen path 到達不可・network 経路のみ）→ Drive 保存該当なし・local copy なし → **TN live write は未確認**（テストで固定済みの機構・実機確認は tn-cache 読みのみ）。
 - 合格条件（write/close/rename 失敗で壊れた target が残らない）: テストで確定・実機では full cache write 成功経路（miss→cache・residue なし）と download 一致を確認。TN live write 失敗注入は実機未実施（upstream 502）。
 
 ## 完了時 Memory Bank 操作
