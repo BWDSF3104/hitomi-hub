@@ -1386,6 +1386,45 @@ func (s *sqlTransactor) Begin() (txExec, error) {
 	return tx, nil
 }
 
+// cardStore は card 経路（R-09）の単独 write 口。exists 照合は read（commit に数えない）。
+// fake が *sql.Row を作れないため、fake が満たせる Exec と galleryExists だけで interface を組む
+type cardStore interface {
+	execer
+	galleryExists(galleryID int) (bool, error)
+}
+
+// sqlCardStore は *sql.DB を cardStore へ橋渡しする。テスト fake が同じ口を満たせる（sqlTransactor と同形状）
+type sqlCardStore struct {
+	db *sql.DB
+}
+
+func (s *sqlCardStore) Exec(query string, args ...any) (sql.Result, error) {
+	return s.db.Exec(query, args...)
+}
+
+func (s *sqlCardStore) galleryExists(galleryID int) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM galleries WHERE gallery_id = ?`, galleryID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// recordDiscoveredIfMissing（R-09・正典 item 8 の既存行 skip）: 既存行は read-only（commit 0）、
+// 行が無いときのみ 1 件書く（autocommit 1 commit）。read_state の FK は galleries を参照するため
+// 行生成の義務は残す。exists 照合失敗時は義務側（1 件 write）へ落ちる
+func recordDiscoveredIfMissing(store cardStore, galleryID int, dir string) error {
+	exists, err := store.galleryExists(galleryID)
+	if err == nil && exists {
+		return nil
+	}
+	return recordDiscovered(store, galleryID, dir)
+}
+
 func recordDiscoveredBatchTx(t dbTransactor, ids []int, root string) error {
 	if len(ids) == 0 {
 		return nil

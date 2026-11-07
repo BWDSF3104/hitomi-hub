@@ -1528,6 +1528,52 @@ func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 	}
 }
 
+// R-09: handler 配線の read-only 意味を real DB で確認（commit 回数は fake harness で固定済み）。
+// search batch 済みの既存行は card 経路が last_seen を更新しない（read-only）。
+// 行生成義務（read_state の FK が galleries を参照）で、行が無い handler は 1 行作る
+func TestSearchCardHandlerIsReadOnlyForExistingRow(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
+	v, _ := newTestViewer(t, galleryJSON)
+	if err := recordDiscoveredBatch(v.db, []int{1}, v.root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.db.Exec(`UPDATE galleries SET last_seen = 'sentinel' WHERE gallery_id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search card existing row: code %d body %q", rec.Code, rec.Body.String())
+	}
+	var lastSeen string
+	if err := v.db.QueryRow("SELECT last_seen FROM galleries WHERE gallery_id = 1").Scan(&lastSeen); err != nil {
+		t.Fatal(err)
+	}
+	if lastSeen != "sentinel" {
+		t.Errorf("card path must be read-only for existing row: last_seen got %q", lastSeen)
+	}
+
+	// cold card（search batch を経ない単独経路): 行生成義務で handler は 1 行作る
+	var rows int
+	if err := v.db.QueryRow("SELECT COUNT(1) FROM galleries WHERE gallery_id = 2").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("cold gallery rows before handler: got %d", rows)
+	}
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/2", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cold card handler: code %d body %q", rec.Code, rec.Body.String())
+	}
+	if err := v.db.QueryRow("SELECT COUNT(1) FROM galleries WHERE gallery_id = 2").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("cold card must still create the row: got %d", rows)
+	}
+}
+
 func TestEmbeddedUIUsesLocalThumbProxy(t *testing.T) {
 	s := uiText(t, "viewer.html", "search.html")
 	if !strings.Contains(s, "/api/thumb/") || !strings.Contains(s, "thumbURL") {

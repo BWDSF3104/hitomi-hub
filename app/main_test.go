@@ -1533,6 +1533,11 @@ func (f *fakeExec) Exec(query string, args ...any) (sql.Result, error) {
 	return fakeResult{}, nil
 }
 
+func (f *fakeExec) galleryExists(galleryID int) (bool, error) {
+	f.counter.add("exists-read") // read（commit に数えない）
+	return f.galleries[galleryID], nil
+}
+
 func (f *fakeExec) Commit() error {
 	if !f.counter.inTx {
 		return errors.New("fakeExec: commit outside tx")
@@ -1663,5 +1668,73 @@ func TestRecordDiscoveredBatchPersistsRowsOnRealDB(t *testing.T) {
 	}
 	if rows != 25 {
 		t.Errorf("galleries rows after second pass: got %d", rows)
+	}
+}
+
+// R-09 合格条件テスト: card 経路の commit 回数を fake harness で objectively 測る（mocked DB）。
+// search batch 済み page の card 25 件は read-only（commit 0）。行生成義務（read_state の FK）で
+// 行が無いときのみ 1 件 1 commit。exists 照合は read で commit に数えない
+func TestSearchCardRecordDedupSkipsExistingRowsMockedDB(t *testing.T) {
+	counter := &testCommitCounter{}
+	fake := &fakeExec{counter: counter, galleries: map[int]bool{}}
+	tr := &fakeTransactor{fake: fake, counter: counter}
+	root := t.TempDir()
+	ids := make([]int, 25)
+	for i := range ids {
+		ids[i] = 1000 + i
+	}
+
+	// page 前提: search batch 1 commit（A-02 で固定済み）の後、card 1 ページ 25 件
+	if err := recordDiscoveredBatchTx(tr, ids, root); err != nil {
+		t.Fatal(err)
+	}
+	if counter.commits() != 1 {
+		t.Fatalf("search batch commits: got %d events %v", counter.commits(), counter.snapshot())
+	}
+
+	counter.reset()
+	for _, id := range ids {
+		if err := recordDiscoveredIfMissing(fake, id, galleryDir(root, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counter.commits() != 0 {
+		t.Fatalf("card page after batch must not add commits: got %d events %v", counter.commits(), counter.snapshot())
+	}
+	events := counter.snapshot()
+	if len(events) != 25 {
+		t.Fatalf("card phase must be 25 exists-read only: %v", events)
+	}
+	for _, e := range events {
+		if e != "exists-read" {
+			t.Fatalf("no Exec allowed for existing rows: %v", events)
+		}
+	}
+	if len(fake.galleries) != 25 {
+		t.Errorf("rows after card page: got %d", len(fake.galleries))
+	}
+
+	// card 単独経路（cold・search batch を経ない): 行生成義務で初回 1 件 1 commit、2 回目 0 commit
+	counter.reset()
+	cold := []int{2000, 2001}
+	for _, id := range cold {
+		if err := recordDiscoveredIfMissing(fake, id, galleryDir(root, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counter.commits() != 2 {
+		t.Fatalf("cold card first pass commits: got %d events %v", counter.commits(), counter.snapshot())
+	}
+	counter.reset()
+	for _, id := range cold {
+		if err := recordDiscoveredIfMissing(fake, id, galleryDir(root, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counter.commits() != 0 {
+		t.Fatalf("cold card second pass commits: got %d events %v", counter.commits(), counter.snapshot())
+	}
+	if len(fake.galleries) != 27 {
+		t.Errorf("rows after cold pass: got %d", len(fake.galleries))
 	}
 }

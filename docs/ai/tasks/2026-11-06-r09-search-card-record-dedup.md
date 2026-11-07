@@ -2,7 +2,7 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: 実施開始指示待ち。合格条件: card 1 ページ 25 件で commit が増えない（search 側 batch と重複排除）。記録: R-09（A-02/C-03 の残存点）
 
@@ -42,8 +42,22 @@
 
 推定規模: 小（`searchCard` handler 1 箇所の existence check + commit 回数固定テスト 1 件。schema・`recordDiscovered` 本体変更なし）。
 
+### 実施（assess-20261106-1056・2026-11-07）
+
+- 採用: 案 A（正典 item 8 の既存行 skip）。実装:
+  - `app/main.go`: `cardStore`（`execer` + `galleryExists`）と `sqlCardStore`（`*sql.DB` からの橋渡し・`sqlTransactor` と同形状）と `recordDiscoveredIfMissing` を追加。`galleryExists` は read 口（commit に数えない）。fake が `*sql.Row` を作れないため、fake が満たせる interface に限定（既存正典 comment `app/main.go:235` の「fake は Exec だけで足りる」を read 口へ拡張する実装細部。`recordDiscovered` 本体・search batch semantics は非変更）。exists 照合失敗時は行生成義務側（1 件 write）へフォールバック。
+  - `app/viewer.go:647`（`searchCard` handler）: `recordDiscovered` 直書き → `recordDiscoveredIfMissing(&sqlCardStore{v.db}, id, galleryDir(v.root, id))`。
+  - `app/main_test.go`: 既存 fake harness に `fakeExec.galleryExists`（`exists-read` event・commit に数えない）を追加。新テスト `TestSearchCardRecordDedupSkipsExistingRowsMockedDB`（search batch 1 commit 後の card 25 件 = 0 commit・exists-read のみ、cold 単独経路 = 初回 1 件 1 commit・2 回目 0 commit・行数 27）。
+  - `app/viewer_test.go`: 新テスト `TestSearchCardHandlerIsReadOnlyForExistingRow`（real DB で handler 配線確認: batch 済み既存行の `last_seen` を sentinel へ更新後 handler → `last_seen` 変化なし＝read-only、cold id は handler が 1 行生成＝FK 義務維持）。
+  - 既存テストの変更なし。schema・`recordDiscovered` 本体・read/fav/acquire 経路・`upsertGallery`・UI 非接触。
+- 試行 1: 新テスト cold 2 回目 pass 前に `counter.reset()` を省略（テスト側 mistake・2 commits）。試行 2: reset 追加で合格。生産コードの変更は試行 1 以降なし。
+
 ## Verification
 
+- 実施後の正典検証（合格証拠):
+  - `go vet . && go test -count=1 -timeout 300s .`（app）: `ok hitomi-hub/app` **28.317s**（試行 2）。試行 1 は新テスト内の `counter.reset()` 省略で 1 failed（テスト側 mistake・原因分析を「実施」に記録）、修正後 PASS。合格条件の実測: search batch 1 commit 後 card 25 件 = **0 commit**（exists-read のみ）、cold 単独経路 初回 **1 件 1 commit**・2 回目 **0 commit**、行数 27。
+  - `python -m pytest tests/ -v`（root）: **56 passed・1 failed（14.30s）**。failure は既存 known-issue `KI-20261106-04-canonical-build-freshness-pointer-missing.md`（`test_canonical_build_freshness_rule_exists`）。R-09 は AGENTS.md 非接触・本 failure は本項目不合格ではない（R-09 由来 failure 0 件）。
+  - 画面キャプチャ: 該当なし（server 側 commit 回数のみ・UI 変更なし）。保存先なし。
 - スクラッチ実測（`docs/ai/tmp/assess-20261106-1056/r09/r09_measure_test.go`・一時 DB・既存テスト同形状 harness。正典 SQL は `app/main.go:1344-1347` の逐語コピー。commit 定義は `app/main_test.go:1407-1417` と同文）。外部 API 呼出しなし（この項目で不要）。
   - 現行 shape: search batch = **1 commit**、card 25 個別リクエスト（tx 外 Exec・autocommit）= **25 commit**、page 合計 **26 commit**。rows 25 永続化、`journal_mode=wal` 確認。card 経路は既存行の `last_seen` を実更新（write であることの確認）。
   - 推奨案 A（既存行 skip）: batch の後 card 25 件 = **0 commit**、page 合計 **1 commit**。行数不変、`last_seen` は batch 時時点のまま。

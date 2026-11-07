@@ -644,7 +644,7 @@ func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
 	}
 	v.infoCacheMu.Unlock()
 	w.Header().Set("x-cache", cacheState)
-	_ = recordDiscovered(v.db, id, galleryDir(v.root, id))
+	_ = recordDiscoveredIfMissing(&sqlCardStore{v.db}, id, galleryDir(v.root, id))
 	jsonOut(w, v.searchResult(id, background))
 }
 
