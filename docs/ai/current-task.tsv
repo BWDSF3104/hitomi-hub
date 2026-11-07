@@ -2,7 +2,6 @@ task_file	status	next_action
 docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	優先順位確定（assess-20261106-1056）。実施開始指示待ち。承認案件: R-04 歴史記録・R-05 命名・R-14 alpha/format・R-16 atomic scope・R-17 B1・R-18 page化。R-18 は対応不要で終了。R-19 実例待ち。known-issue: KI-20261106-04（pytest 既存 failure）。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 docs/ai/tasks/2026-11-06-r06-scan-cache-meta-per-path.md	進行中	実施開始指示待ち。合格条件: 同一 sha256 の 2 path（Galleries と acquisition）を 1 scan 後 2 scan で双方 hash 計算 0。key に path を含めるか path 別 meta 表。記録: R-06（A-12 の残存点）
 docs/ai/tasks/2026-11-06-r07-http-transport-idle-conns.md	進行中	実施開始指示待ち。合格条件: 8 並行 prefetch/download で接続Reuseが確認できる（MaxIdleConnsPerHost を 16 程度へ）。gate semantics・fetch 口（テスト inject）非触。記録: R-07
-docs/ai/tasks/2026-11-06-r08-search-card-light-response.md	進行中	設計承認済み（案 A: 1 gallery 1 回の集合判定、保存済み枚数と代表画像の材料は残す）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 docs/ai/tasks/2026-11-06-r09-search-card-record-dedup.md	進行中	実施開始指示待ち。合格条件: card 1 ページ 25 件で commit が増えない（search 側 batch と重複排除）。記録: R-09（A-02/C-03 の残存点）
 docs/ai/tasks/2026-11-06-r10-page-result-cache-per-query-lang.md	進行中	実施開始指示待ち。案: (query, lang) 単位で最終結果を短 TTL キャッシュし page移動・prefetch・firstStatus で共有。既存 term 単位 searchCache は維持。記録: R-10
 docs/ai/tasks/2026-11-06-r13-singleflight-tn-info-nozomi.md	進行中	設計承認済み（案 A: 縮小画像・作品情報・nozomi 分割データへ同じ内容 1 回を追加）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md

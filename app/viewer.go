@@ -637,10 +637,12 @@ func (v *viewer) searchResult(id int, background bool) map[string]any {
 	if err != nil {
 		readState = map[string]any{"gallery_id": id, "last_page": 0, "fully_read": 0, "favorite": 0, "viewed": 0, "viewed_at": nil}
 	}
+	// R-08（案 A・1 gallery 1 回の ReadDir 集合判定）。response shape は現状のまま（guard test 不変）。
+	localSet, localTotal := v.galleryLocalSet(id)
 	files := []map[string]any{}
 	for _, entry := range info.Files {
 		eFormat := entryFormat(entry, baseFormat)
-		localFormats := v.entryLocalFormats(id, entry.Hash, baseFormat, eFormat)
+		localFormats := entryLocalFormatsFromSet(localSet, entry.Hash, baseFormat, eFormat)
 		files = append(files, map[string]any{
 			"hash": entry.Hash, "name": entry.Name, "width": entry.Width, "height": entry.Height,
 			"hasavif": entry.HasAVIF, "format": eFormat, "local": len(localFormats) > 0,
@@ -656,7 +658,7 @@ func (v *viewer) searchResult(id int, background bool) map[string]any {
 	return map[string]any{"id": id, "title": info.Title, "japanese_title": info.JapaneseTitle,
 		"language": info.Language, "type": info.Type, "url": info.URL,
 		"tags": info.Tags, "artists": info.Artists, "groups": info.Groups,
-		"characters": info.Characters, "count": len(info.Files), "local": v.localCount(id),
+		"characters": info.Characters, "count": len(info.Files), "local": localTotal,
 		"thumbnail": thumbnail, "scene_indexes": info.SceneIndexes, "files": files,
 		"format": baseFormat, "read_state": readState,
 		"viewed": readState["viewed"], "saved": saved}
@@ -710,6 +712,20 @@ func (v *viewer) entryLocalFormats(id int, hash, baseFormat, eFormat string) []s
 	localFormats := []string{}
 	for _, format := range candidates {
 		if v.fileLocal(id, hash, format) {
+			localFormats = append(localFormats, format)
+		}
+	}
+	return localFormats
+}
+
+func entryLocalFormatsFromSet(localSet map[string]bool, hash, baseFormat, eFormat string) []string {
+	candidates := []string{baseFormat}
+	if eFormat != baseFormat {
+		candidates = append(candidates, eFormat)
+	}
+	localFormats := []string{}
+	for _, format := range candidates {
+		if localSet[hash+"."+format] {
 			localFormats = append(localFormats, format)
 		}
 	}
@@ -1126,6 +1142,26 @@ func (v *viewer) localCount(id int) int {
 		}
 	}
 	return count
+}
+
+// galleryLocalSet は 1 回の ReadDir で file 名集合と non-dir 件数を返す（R-08・案 A）。
+// 集合 membership は os.Stat 相当の local 判定と一致し、件数は localCount と一致する。
+func (v *viewer) galleryLocalSet(id int) (map[string]bool, int) {
+	dir := filepath.Join(v.galleryRoot, strconv.Itoa(id))
+	entries, err := os.ReadDir(dir)
+	localSet := map[string]bool{}
+	if err != nil {
+		return localSet, 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		count++
+		localSet[entry.Name()] = true
+	}
+	return localSet, count
 }
 
 func imageFormat(cfg Config) string {
