@@ -1165,7 +1165,7 @@ func main() {
 			printJSON(firstStatusJSON(f.term, f.lang, mask, res))
 			return
 		}
-		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		client := &Client{http: &http.Client{Timeout: 30 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
 		mode := "html"
 		var shown []int
@@ -1213,7 +1213,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(2)
 		}
-		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		client := &Client{http: &http.Client{Timeout: 30 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
 		info, err := client.Gallery(id, false)
 		if err != nil {
@@ -1230,7 +1230,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "download: "+err.Error())
 			os.Exit(2)
 		}
-		client := &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi}
+		client := &Client{http: &http.Client{Timeout: 60 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
 		info, err := client.Gallery(id, false)
 		if err != nil {
@@ -1344,7 +1344,7 @@ func main() {
 		}
 		printJSON(map[string]any{"gallery_id": id, "favorite": boolToInt(!f.unfav)})
 	case "check":
-		client := &Client{http: &http.Client{Timeout: 30 * time.Second}, cfg: cfg.Hitomi}
+		client := &Client{http: &http.Client{Timeout: 30 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
 		results, err := runSavedQueries(db, client, root, f.lang, f.limit)
 		if err != nil {

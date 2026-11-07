@@ -280,6 +280,20 @@ func defaultHitomiConfig() HitomiConfig {
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: defaultBgGraceMS}
 }
 
+// R-07（assess-20261106-1056）: Client 構築口用 pooled transport。`http.DefaultTransport` を
+// 直接変更すると VT（`http.DefaultClient`）とテスト inject（`srv.Client()`）へ波及するため
+// 不可。`Clone()` で既定値（IdleConnTimeout 90s・TLSHandshakeTimeout・ForceAttemptHTTP2・
+// ProxyFromEnvironment）を保持し、`MaxIdleConnsPerHost` だけ 16（実測: gate 定常条件では
+// 改善 0、burst・pause 条件のみ接続確立回数 40→8・handshake 注入 wall −11.5%。根拠
+// docs/ai/tasks/2026-11-06-r07-http-transport-idle-conns.md）。16 は並行 8 への headroom。
+const pooledMaxIdleConnsPerHost = 16
+
+func newPooledTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = pooledMaxIdleConnsPerHost
+	return t
+}
+
 func negativeNoFullKey(hash, format string, gg GG) string {
 	values := make([]int, 0, len(gg.CaseSet))
 	for value := range gg.CaseSet {

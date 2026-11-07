@@ -125,7 +125,7 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		galleryRoot:     filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries")),
 		cacheRoot:       filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
 		acquisitionRoot: filepath.Join(root, orDefault(cfg.AcquisitionDir, "acquisition")),
-		client:          &Client{http: &http.Client{Timeout: 60 * time.Second}, cfg: cfg.Hitomi},
+		client:          &Client{http: &http.Client{Timeout: 60 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi},
 		infoCache:       map[int]*infoCacheEntry{},
 		infoCacheRoot:   filepath.Join(root, orDefault(cfg.CacheDir, "cache"), "galleryinfo"),
 		infoDiskTTL:     galleryInfoCacheTTL,
