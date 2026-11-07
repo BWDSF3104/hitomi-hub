@@ -2,9 +2,9 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 設計承認済み（案 A: 作品名 + 作品番号、予約名・末尾点・末尾空白・長さ上限を処理、既存フォルダは再命名せず新規保存分から）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+**Next Action**: 完了。単独 commit へ反映（案 A 実装・テスト更新/追加・実機確認済み）。supersede 反映: decision 2026-11-03/2026-11-04 の「acquisitionTitleName は変更しない」は 2026-11-06 決定（案 A）で supersede 済み
 
 ## 意図 / 背景
 
@@ -35,6 +35,14 @@
   4. 同名 title 衝突（1 gallery 1 folder 相当の形状・スクラッチ内シミュレーション）: 同一 folder 同一 page file 名で後書きが前書きを上書き（final content = 後書き bytes）。実データに同名衝突の実例があるかは**未確認**（実例查询は実施せず、シミュレーションと区別）。
 - 画面確認: 該当なし（UI 項目ではない）。保存経路の命名のみ。
 
+### 実装（2026-11-07・案 A・実施済み）
+
+- `acquisitionTitleName`（`app/acquisition.go`）を承認された案 A の変換順で実装: sanitize（禁止文字 `_` 置換・既存挙動維持）→ 末尾の `.`・末尾空白除去（`strings.TrimRight(". ")`・明示）→ Windows 予約名回避（case-insensitive 完全一致 CON・PRN・AUX・NUL・COM1-9・LPT1-9 → `_` 接頭。接頭は原文の大小を保持）→ title 部 200 rune 截断（`acquisitionTitleMaxRunes = 200`・推奨値前後で実装時確定。folder 名 255 安全域と page file 名 `.%03d<format>` の余地を確保）→ gallery id 接尾（folder 名 = `title部_<gallery_id>`）。title 空・処理後空（dot-only 等）は gallery id fallback（既存規則維持）。
+- check・acquire は同一関数共有（B-04 不変）。`acquisitionCheck` の固定 comment（「acquire 側命名は変更しない」）を supersede 反映へ更新。supersede 記録: decision 2026-11-03（B-04 条）と decision 2026-11-04（スコープ限定条）の「変更しない」は 2026-11-06 決定（案 A）で supersede 済み。本実装がその supersede を反映（古い「変更しない」は check 側統一の範囲で有効だった記録として保持）。
+- `..` の挙動（段階1採用）: 案 A の変換順（末尾点明示除去）により dot-only title は sanitize 後空になり gallery id fallback。handler 経由で dot-only 名は folder 名になれないため 403 は発生せず、既存テスト `TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot` は fallback 挙動 + path guard（`..` を still reject、traversal 形の root 内正規化）へ更新。
+- テスト: 既存 5 固定を接尾名（`Kemo_1`・`what__file_1`）へ更新。新テスト追加 `TestAcquisitionTitleNameProcessesReservedTrailingAndLength`（接尾・末尾点・予約名・200 截断・fallback）、`TestViewerAcquisitionSameTitleDifferentGalleryWritesDifferentFolders`（同名 title 別 gallery → 別 folder・同名 page file 衝突なし＝新保存分の構造的解消）。
+- 既存フォルダ非再命名（承認済み）: DB `files` path・実 folder は旧名まま。コード変更は命名生成のみで既存データへ影響なし。
+
 ### 対応の実現可能性と推奨修正方法（案 A の実装形・推奨）
 
 - 実現可能。`acquisitionTitleName` を gallery id を受け取る形へ拡張し、check・acquire が同一関数を共有する構造（B-04 不変）はそのまま維持。推奨する変換順:
@@ -62,10 +70,26 @@
 
 ## Verification
 
+### 実装前（調査段階の記録）
+
 - `go vet . && go test -count=1 -timeout 300s .`（app・変更なしの確認実行）: vet clean、`ok hitomi-hub/app 25.836s`（57 tests 相当・不合格なし）。
 - `python -m pytest tests/ -v`: 54 passed / 1 failed・10.25s。失敗は `test_canonical_build_freshness_rule_exists`（AGENTS.md の pointer 状態）。R-05 と無関係（本項目はコード未変更）。観察として記録のみ、触れていない。
 - 実測（スクラッチ内・正典データ非触）: Python 0.05s、Go probe 0.00s。結果は §測定 とスクラッチ出力ファイルに記録。
-- 実機確認（canonical build・viewer `/api/image` 確認）は該当なし（本タスクは読み取り・スクラッチ実測のみ。実装時ルール上の必須確認は実装側で実施）。
+
+### 実装後（2026-11-07）
+
+- 試行1（不合格→分析→修正): 追加テスト 2 件 FAIL。原因は実装ではなくテスト期待値の誤り — (a) 予約名ガードは `_` 接頭のみで原文の大小を保持（`nul` → `_nul_5`）,(b) `filepath.Clean("/"+rel)` は rooted path で root 外へ escape できず traversal 形（`a/../b`）は root 内へ正規化される（guard は dot-only・root 直下ケースのみ reject）。期待値を実測挙動へ修正。
+- 試行2（合格): `go vet . && go test -count=1 -timeout 300s .`（app）— vet clean、`ok hitomi-hub/app 25.106s`（新テスト 2 件含む・不合格なし）。
+- `python -m pytest tests/ -v`: 56 passed / 1 failed・12.30s。失敗は既存 failure `test_canonical_build_freshness_rule_exists`（KI-20261106-04・AGENTS.md pointer 状態・本項目の不合格ではない・R-05 は Python 非変更）。
+- pre-work check 作業前チェック（viewer/download 経路該当・正典 3 decision を読了・ファイル名明記）: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。
+- 実機確認（fresh canonical `hub.exe`（正典 build command）・新 server instance・scratch data-dir/root・正典 DB 非使用・canonical server 停止済みの既存 server を fresh build へ再置換 → 確認後停止・非稼働へ復元）:
+  - CLI download（実在 gallery 4311729・`--limit 3`・`--no-vt`）: attempted 3 = written 3・skipped 0 ✓（スクラッチ root に書込み・正典 Galleries 非触）
+  - viewer `/api/image/430a53e29d6c2ba85a3be8b621659777812a6e950d27574d37f2982fbbd7b026?format=webp`: 1回目 200 `X-Cache: miss`、2回目 200 `X-Cache: cache`・512756 bytes・`no_full` なし ✓
+  - acquisition live（served API・スクラッチ scratch data-dir `docs/ai/tmp/assess-20261106-1056/`）: gallery 4311729 title `Cut Cat _TSF_de` → check `acquisition\Cut Cat _TSF_de_4311729`（title+作品番号）not_exists → acquire copied → check confirm 同一 folder ✓
+  - 予約名実機: seeded 900101 title `CON` → check `_CON_900101` → acquire copied → 実ディレクトリ `_CON_900101` 作成可（旧命名の `CON` は作成失敗・winerror=267）。`NUL` 形の「成功して実フォルダにならない」も接尾+接頭で回避 ✓
+  - 末尾点実機: seeded 900102 title `foo.` → `foo_900102`（明示除去。Windows 暗黙ストリップと一致）→ 実ディレクトリ + `001.webp` ✓
+- 画面確認: 該当なし（UI 項目ではない。保存経路の命名のみ。Drive 保存なし）。
+- 実データにおける同名 title 衝突の実例は未確認（調査段階と同一。シミュレーションと実例は区別したまま）。既存 folder 混在（旧名/新名)は承認済み仕様。
 
 ## 完了時 Memory Bank 操作
 

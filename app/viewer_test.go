@@ -3458,11 +3458,11 @@ func TestViewerAcquisitionCheckReturnsRunStartFolderStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, _ := out["path"].(string)
-	if out["status"] != "not_exists" || out["title"] != "Kemo" || !strings.Contains(path, "Kemo") {
+	if out["status"] != "not_exists" || out["title"] != "Kemo_1" || !strings.Contains(path, "Kemo_1") {
 		t.Errorf("check missing folder: got %v", out)
 	}
 
-	if err := os.MkdirAll(filepath.Join(v.acquisitionRoot, "Kemo"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(v.acquisitionRoot, "Kemo_1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
@@ -3474,7 +3474,7 @@ func TestViewerAcquisitionCheckReturnsRunStartFolderStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["status"] != "confirm" || out["title"] != "Kemo" {
+	if out["status"] != "confirm" || out["title"] != "Kemo_1" {
 		t.Errorf("check existing folder: got %v", out)
 	}
 }
@@ -3498,7 +3498,7 @@ func TestViewerAcquisitionCheckUsesSanitizedTitleFolderMatchingAcquire(t *testin
 	}
 
 	sanitized := acquisitionTitleName(title, strconv.Itoa(1))
-	if sanitized != "what__file" {
+	if sanitized != "what__file_1" {
 		t.Fatalf("fixture sanitize name: got %q", sanitized)
 	}
 
@@ -3567,11 +3567,11 @@ func TestViewerAcquisitionCopiesCacheFileIntoTitleFolder(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["status"] != "copied" || out["scan_status"] != "not_evaluated" || out["title"] != "Kemo" {
+	if out["status"] != "copied" || out["scan_status"] != "not_evaluated" || out["title"] != "Kemo_1" {
 		t.Errorf("acquisition: got %v", out)
 	}
 
-	dest := filepath.Join(v.acquisitionRoot, "Kemo", "002.png")
+	dest := filepath.Join(v.acquisitionRoot, "Kemo_1", "002.png")
 	data, err := os.ReadFile(dest)
 	if err != nil {
 		t.Fatalf("dest: %s", err)
@@ -3615,7 +3615,7 @@ func TestViewerAcquisitionExistingTitleFolderRequiresOverwrite(t *testing.T) {
 	if err := os.WriteFile(cachePath, png, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	titleDir := filepath.Join(v.acquisitionRoot, "Kemo")
+	titleDir := filepath.Join(v.acquisitionRoot, "Kemo_1")
 	if err := os.MkdirAll(titleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3662,6 +3662,13 @@ func TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot(t *testing.T) {
 	root := t.TempDir()
 	v := newViewer(db, defaultConfigForTest(), root)
 
+	if _, err := safeAcquisitionPath(v.acquisitionRoot, ".."); err == nil || !strings.Contains(err.Error(), "path outside acquisition dir") {
+		t.Errorf("path guard must still reject dot-only folder: got %v", err)
+	}
+	if got, err := safeAcquisitionPath(v.acquisitionRoot, "a/../b"); err != nil || got != filepath.Join(v.acquisitionRoot, "b") {
+		t.Errorf("path guard must keep traversal-shaped input inside root: got %q err %v", got, err)
+	}
+
 	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "..", Language: "japanese"}, galleryDir(root, 1)); err != nil {
 		t.Fatal(err)
 	}
@@ -3674,13 +3681,108 @@ func TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// R-05（案 A・末尾点処理）: dot-only title は sanitize 後に空になり gallery id へ
+	// fallback。dot-only 名は folder 名として handler へ届かないため 403 は発生しない。
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":1,"page":1,"hash":"`+sampleHash+`","format":"png","overwrite":true}`))
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("path outside root: code %d body %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dot-only title should fall back to gallery id: code %d body %q", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "path outside acquisition dir") {
-		t.Errorf("path outside root body: got %q", rec.Body.String())
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "copied" || out["title"] != "1" {
+		t.Errorf("dot-only title fallback: got %v", out)
+	}
+	if _, err := os.Stat(filepath.Join(v.acquisitionRoot, "1", "001.png")); err != nil {
+		t.Errorf("fallback folder should be the gallery id: %s", err)
+	}
+}
+
+func TestAcquisitionTitleNameProcessesReservedTrailingAndLength(t *testing.T) {
+	cases := []struct {
+		title     string
+		galleryID string
+		want      string
+	}{
+		{"Kemo", "1", "Kemo_1"},
+		{"what?/file", "1", "what__file_1"},
+		{"", "9", "9"},
+		{".", "10", "10"},
+		{"..", "11", "11"},
+		{"foo.", "2", "foo_2"},
+		{"bar. ", "3", "bar_3"},
+		{"CON", "4", "_CON_4"},
+		{"nul", "5", "_nul_5"},
+		{"COM1", "6", "_COM1_6"},
+		{"LPT9", "7", "_LPT9_7"},
+		{"CON.txt", "8", "CON.txt_8"},
+		{strings.Repeat("a", 260), "12", strings.Repeat("a", 200) + "_12"},
+	}
+	for _, c := range cases {
+		if got := acquisitionTitleName(c.title, c.galleryID); got != c.want {
+			t.Errorf("acquisitionTitleName(%q, %q): got %q want %q", c.title, c.galleryID, got, c.want)
+		}
+	}
+}
+
+func TestViewerAcquisitionSameTitleDifferentGalleryWritesDifferentFolders(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), root)
+
+	// R-05 合格条件: 同名 title（言語違い想定）の 2 gallery が別 folder に分かれ
+	// 同名 page file 上書き衝突が構造的に起きない（新命名）。
+	for _, id := range []int{1, 2} {
+		if err := upsertGallery(db, &GalleryInfo{ID: id, Title: "dup title", Language: "japanese"}, galleryDir(root, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(v.cacheRoot, sampleHash+".png")
+	png := []byte("\x89PNG\r\n\x1a\n")
+	if err := os.WriteFile(cachePath, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []int{1, 2} {
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/acquire", `{"gallery_id":`+strconv.Itoa(id)+`,"page":1,"hash":"`+sampleHash+`","format":"png","overwrite":false}`))
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusOK || out["status"] != "copied" {
+			t.Fatalf("gallery %d: code %d body %q", id, rec.Code, rec.Body.String())
+		}
+		wantTitle := "dup title_" + strconv.Itoa(id)
+		if out["title"] != wantTitle {
+			t.Errorf("gallery %d title: got %v", id, out)
+		}
+		dest := filepath.Join(v.acquisitionRoot, wantTitle, "001.png")
+		data, err := os.ReadFile(dest)
+		if err != nil {
+			t.Fatalf("gallery %d dest: %s", id, err)
+		}
+		if string(data) != string(png) {
+			t.Errorf("gallery %d dest bytes: got %q", id, data)
+		}
+	}
+
+	// 上書き衝突がないことの直接確認: gallery 1 の folder へ別内容を書いても gallery 2 の
+	// page file は変わらない（同名 title でも folder が gallery id で分かれる）。
+	if err := os.WriteFile(filepath.Join(v.acquisitionRoot, "dup title_1", "001.png"), []byte("g1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(v.acquisitionRoot, "dup title_2", "001.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(png) {
+		t.Errorf("other gallery folder must not share page file path: got %q", data)
 	}
 }
 

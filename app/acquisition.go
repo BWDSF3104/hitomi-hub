@@ -24,10 +24,16 @@ func safeAcquisitionPath(acquisitionRoot, rel string) (string, error) {
 	return full, nil
 }
 
-func acquisitionTitleName(title, fallback string) string {
+// R-05（decision 2026-11-06・案 A）: folder 名は「作品名 + 作品番号」。変換順は
+// sanitize（禁止文字 `_` 置換・既存挙動維持）→ 末尾の `.`・末尾空白除去 → Windows
+// 予約名回避 → title 部長さ上限截断 → gallery id 接尾。check・acquire はこの同一関数
+// を共有する（B-04 統一は維持）。
+const acquisitionTitleMaxRunes = 200
+
+func acquisitionTitleName(title, galleryID string) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
-		return fallback
+		return galleryID
 	}
 	var out strings.Builder
 	for _, r := range title {
@@ -37,10 +43,29 @@ func acquisitionTitleName(title, fallback string) string {
 			out.WriteRune(r)
 		}
 	}
-	if out.Len() == 0 {
-		return fallback
+	sanitized := strings.TrimRight(out.String(), ". ")
+	if sanitized == "" {
+		return galleryID
 	}
-	return out.String()
+	if isWindowsReservedName(sanitized) {
+		sanitized = "_" + sanitized
+	}
+	if r := []rune(sanitized); len(r) > acquisitionTitleMaxRunes {
+		sanitized = string(r[:acquisitionTitleMaxRunes])
+	}
+	return sanitized + "_" + galleryID
+}
+
+func isWindowsReservedName(name string) bool {
+	upper := strings.ToUpper(name)
+	switch upper {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	if len(upper) == 4 && (strings.HasPrefix(upper, "COM") || strings.HasPrefix(upper, "LPT")) && upper[3] >= '1' && upper[3] <= '9' {
+		return true
+	}
+	return false
 }
 
 func acquisitionPageName(page int, format string) string {
@@ -85,8 +110,9 @@ func (v *viewer) acquisitionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// B-04（decision 2026-11-03）: check は acquire と同じ sanitize 名で folder を指す。
-	// acquire 側命名（acquisitionTitleName）は変更しない。
+	// B-04（decision 2026-11-03）: check は acquire と同一の共有関数で folder を指す。
+	// 「命名は変更しない」の点は R-05（decision 2026-11-06・案 A）で supersede（gallery id
+	// 接尾・予約名・末尾点・末尾空白・長さ上限）。
 	titleName := acquisitionTitleName(acquisitionTitleFromDB(v.db, body.GalleryID), strconv.Itoa(body.GalleryID))
 	titlePath, err := safeAcquisitionPath(v.acquisitionRoot, titleName)
 	if err != nil {
