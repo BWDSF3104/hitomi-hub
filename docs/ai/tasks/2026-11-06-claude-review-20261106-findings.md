@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-06
-**Next Action**: 優先順位確定（assess-20261106-1056）。実施開始指示待ち。承認案件: R-04 歴史記録・R-05 命名・R-14 alpha/format・R-16 atomic scope・R-17 B1・R-18 page化。R-18 は対応不要で終了。R-19 実例待ち。known-issue: KI-20261106-04（pytest 既存 failure）。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
+**Next Action**: 実装完了（17件委譲・16件合格終了）。残件: R-16 TN live write 未確認点（upstream 502・上流回復時に再確認）。記録のみ: KI-20261106-04（pytest 既存 failure・AGENTS.md pointer 修正要・承認案件）、KI-20261107-01（prefetch worker race・表示影響なし）。R-18 終了済み。R-19 実例待ち（非実施）
 
 ## 意図 / 背景
 
