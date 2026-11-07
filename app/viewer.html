@@ -205,7 +205,7 @@ let tnDone = 0;
 let errorDone = 0;
 let prefetchTotal = 0;
 const PREFETCH_CONCURRENCY = 8;
-const MAX_FULL_CACHE_ENTRIES = 2000;
+let MAX_FULL_CACHE_ENTRIES = 4000;
 let fullObjectUrls = new Set();
 const fullObjectUrlLru = new Map();
 const currentDisplayObjectUrlKeys = new Set();
@@ -387,15 +387,30 @@ function revokeFullObjectUrl(key) {
   renderPrefetchStatus();
 }
 
+function savedStatusEvictKey(skipKey = "") {
+  for (const key of fullObjectUrlLru.keys()) {
+    if (!key || key === skipKey) continue;
+    if (isFullObjectUrlProtected(key)) continue;
+    if (sourceStatusByEntry.get(key) === "local") return key;
+  }
+  return null;
+}
+
 function evictFullObjectUrls(skipKey = "") {
   while (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) {
     let evicted = false;
-    for (const key of fullObjectUrlLru.keys()) {
-      if (!key || key === skipKey) continue;
-      if (isFullObjectUrlProtected(key)) continue;
-      revokeFullObjectUrl(key);
+    const priorityKey = savedStatusEvictKey(skipKey);
+    if (priorityKey) {
+      revokeFullObjectUrl(priorityKey);
       evicted = true;
-      break;
+    } else {
+      for (const key of fullObjectUrlLru.keys()) {
+        if (!key || key === skipKey) continue;
+        if (isFullObjectUrlProtected(key)) continue;
+        revokeFullObjectUrl(key);
+        evicted = true;
+        break;
+      }
     }
     if (!evicted) break;
   }
@@ -1474,6 +1489,17 @@ document.addEventListener("fullscreenerror", () => {
   }
 });
 
+function applyViewerConfigCap() {
+  fetch("/api/viewer-config", { cache: "no-store" }).then((r) => r.json()).then((cfg) => {
+    const cap = Number(cfg && cfg.max_object_urls);
+    if (Number.isFinite(cap) && cap >= 1000) {
+      MAX_FULL_CACHE_ENTRIES = cap;
+    }
+    if (fullObjectUrls.size > MAX_FULL_CACHE_ENTRIES) { evictFullObjectUrls(); }
+  }).catch(() => {});
+}
+
+applyViewerConfigCap();
 loadSpreadDirection();
 const spreadButton = document.getElementById("spread-direction");
 if (spreadButton) spreadButton.textContent = spreadDirection;

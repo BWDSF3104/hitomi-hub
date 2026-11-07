@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net"
@@ -4529,5 +4530,295 @@ func TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall(t *testing.T) {
 	}
 	if calls3.Load() != 2 {
 		t.Fatalf("nozomi cacheKey boundary should split into 2 groups (2 calls), got %d", calls3.Load())
+	}
+}
+
+// --- R-15: viewer prefetch window and disk cache cap (DB 1 table, creation-order prune) ---
+
+func webpMagicBytes(tag string) []byte {
+	return []byte("RIFF" + "VNTP" + "WEBP" + tag)
+}
+
+func cacheEntryRow(t *testing.T, db *sql.DB, hash, format, kind, variant string) (galleryID sql.NullInt64, createdAt, sourceStatus string, found bool) {
+	t.Helper()
+	err := db.QueryRow(`SELECT gallery_id, created_at, source_status FROM cache_entries WHERE hash = ?1 AND format = ?2 AND kind = ?3 AND variant = ?4`,
+		hash, format, kind, variant).Scan(&galleryID, &createdAt, &sourceStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sql.NullInt64{}, "", "", false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return galleryID, createdAt, sourceStatus, true
+}
+
+func TestViewerConfigEndpointServesEffectiveMaxObjectURLs(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/viewer-config", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["max_object_urls"] != float64(4000) {
+		t.Fatalf("zero config must serve the approved default 4000, got %v", out["max_object_urls"])
+	}
+	cfg := defaultConfigForTest()
+	cfg.Viewer.MaxObjectURLs = 4500
+	v2 := newViewer(v.db, cfg, v.root)
+	rec = httptest.NewRecorder()
+	v2.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/viewer-config", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["max_object_urls"] != float64(4500) {
+		t.Fatalf("configured 4500 must pass through, got %v", out["max_object_urls"])
+	}
+}
+
+func TestImageCacheWriteRecordsCacheEntryRow(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = viewerFixtureGG()
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return webpMagicBytes("aaaa"), nil
+	}
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp&gallery=42", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "miss" {
+		t.Fatalf("first request must be 200 miss: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
+	}
+	galleryID, createdAt, sourceStatus, found := cacheEntryRow(t, v.db, sampleHash, "webp", "full", "")
+	if !found {
+		t.Fatalf("write must record one cache_entries row")
+	}
+	if !galleryID.Valid || galleryID.Int64 != 42 {
+		t.Errorf("gallery_id must be the request gallery, got %+v", galleryID)
+	}
+	if sourceStatus != "miss" {
+		t.Errorf("source_status must be the write-time status, got %q", sourceStatus)
+	}
+	if createdAt == "" {
+		t.Errorf("created_at must be recorded")
+	}
+	if _, err := os.Stat(filepath.Join(v.cacheRoot, sampleHash+".webp")); err != nil {
+		t.Errorf("cache file must exist for the recorded row: %s", err)
+	}
+
+	// second request serves from cache and does not double-record the row
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp&gallery=42", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "cache" {
+		t.Fatalf("second request must be cache hit: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
+	}
+	var count int
+	if err := v.db.QueryRow(`SELECT COUNT(1) FROM cache_entries`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("cache hit must not add a second row, got %d", count)
+	}
+}
+
+func TestCacheEntriesPruneEvictsOldestByCreationOrderAndKeepsCurrentGallery(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = viewerFixtureGG()
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return webpMagicBytes("bbbb"), nil
+	}
+	v.cacheDiskMaxEntries = 2
+
+	// validHash: 64 lowercase hex chars。strings.Repeat + suffix で 64 桁の一意 hash を使う。
+	hashes := []string{
+		strings.Repeat("a", 63) + "1",
+		strings.Repeat("a", 63) + "2",
+		strings.Repeat("a", 63) + "3",
+		strings.Repeat("a", 63) + "4",
+	}
+	request := func(hash string, gallery int) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+hash+"?format=webp&gallery="+strconv.Itoa(gallery), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("write request for %s: code %d body %q", hash, rec.Code, rec.Body.String())
+		}
+	}
+
+	request(hashes[0], 8) // A (gallery 8)
+	request(hashes[1], 8) // B (gallery 8)
+	request(hashes[2], 9) // C (gallery 9) → count 3 > 2 → prune oldest A (candidate, gallery 8 ≠ current 9)
+	_, _, _, found := cacheEntryRow(t, v.db, hashes[0], "webp", "full", "")
+	if found {
+		t.Fatalf("oldest creation-order row must be pruned, kept: %s", hashes[0])
+	}
+	if _, err := os.Stat(filepath.Join(v.cacheRoot, hashes[0]+".webp")); err == nil {
+		t.Fatalf("pruned entry file must be removed")
+	}
+	if _, _, _, found = cacheEntryRow(t, v.db, hashes[1], "webp", "full", ""); !found {
+		t.Fatalf("row B must survive")
+	}
+	if _, _, _, found = cacheEntryRow(t, v.db, hashes[2], "webp", "full", ""); !found {
+		t.Fatalf("row C must survive")
+	}
+
+	request(hashes[3], 8) // D (gallery 8) → rows B(8), C(9), D(8) → count 3 > 2
+	// oldest overall is B, but B belongs to the currently viewing gallery (8) → not discarded;
+	// C (the only candidate outside the current gallery) is discarded instead.
+	if _, _, _, found = cacheEntryRow(t, v.db, hashes[1], "webp", "full", ""); !found {
+		t.Fatalf("current viewing gallery entry must not be discarded even when it is the oldest")
+	}
+	if _, _, _, found = cacheEntryRow(t, v.db, hashes[2], "webp", "full", ""); found {
+		t.Fatalf("row outside the current gallery must be pruned in creation order")
+	}
+	if _, _, _, found = cacheEntryRow(t, v.db, hashes[3], "webp", "full", ""); !found {
+		t.Fatalf("row D must survive")
+	}
+}
+
+func TestCacheEntriesPruneCountsDBRowsNotFilesystemScan(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.cacheDiskMaxEntries = 2
+
+	// untracked files: written before the table existed (no backfill by scan). They must not be
+	// counted and must not be pruned.
+	for i := 0; i < 4; i++ {
+		name := filepath.Join(v.cacheRoot, "untracked"+strconv.Itoa(i)+".webp")
+		if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, webpMagicBytes("cccc"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// DB rows only drive the count: three recorded rows over the cap of 2 trigger the prune.
+	// The four untracked files must not be counted and must not be pruned (no filesystem scan).
+	rows := []string{strings.Repeat("d", 63) + "1", strings.Repeat("d", 63) + "2", strings.Repeat("d", 63) + "3"}
+	for _, hash := range rows {
+		if err := v.recordCacheEntry(hash, "webp", "full", "", "miss", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := v.pruneCacheEntries("full", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, rows[0], "webp", "full", ""); found {
+		t.Fatalf("the oldest DB row must be pruned, kept %s", rows[0])
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, rows[1], "webp", "full", ""); !found {
+		t.Fatalf("the second DB row must survive (count went 3 to 2, one row pruned)")
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, rows[2], "webp", "full", ""); !found {
+		t.Fatalf("the newest DB row must survive")
+	}
+	// untracked files must be untouched: prune deletes only paths from DB rows
+	for i := 0; i < 4; i++ {
+		name := filepath.Join(v.cacheRoot, "untracked"+strconv.Itoa(i)+".webp")
+		if _, err := os.Stat(name); err != nil {
+			t.Fatalf("untracked file must not be touched by DB-only prune: %s", err)
+		}
+	}
+	var count int
+	if err := v.db.QueryRow(`SELECT COUNT(1) FROM cache_entries WHERE kind = 'full'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("DB count must drive the cap (4 untracked files must not be counted), got %d", count)
+	}
+}
+
+func TestTNWriteRecordsThumbsRowAndPrunesThumbsKindOnly(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = viewerFixtureGG()
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return webpMagicBytes("eeee"), nil
+	}
+	v.cacheDiskMaxEntries = 1
+
+	// full entry
+	if err := v.recordCacheEntry(sampleHash, "webp", "full", "", "miss", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, sampleHash+".webp"), webpMagicBytes("eeee"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tnHash1 := strings.Repeat("f", 63) + "1"
+	tnHash2 := strings.Repeat("f", 63) + "2"
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+tnHash1+"?format=webp&gallery=7&variant=bigtn", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "tn" {
+		t.Fatalf("TN write: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
+	}
+	galleryID, _, sourceStatus, found := cacheEntryRow(t, v.db, tnHash1, "webp", "thumbs", "bigtn")
+	if !found {
+		t.Fatalf("TN write must record one thumbs row")
+	}
+	if sourceStatus != "tn" {
+		t.Errorf("TN source_status must be the write-time status, got %q", sourceStatus)
+	}
+	if !galleryID.Valid || galleryID.Int64 != 7 {
+		t.Errorf("TN gallery_id must be the request gallery, got %+v", galleryID)
+	}
+
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+tnHash2+"?format=webp&gallery=8&variant=bigtn", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second TN write: code %d", rec.Code)
+	}
+	// thumbs count 2 > cap 1 → prune the oldest TN row+file. The request gallery (8) is the
+	// current viewing gallery, so tnHash2 is skipped and tnHash1 (gallery 7) is pruned instead.
+	// The full kind is counted separately, so the full row must be untouched.
+	if _, _, _, found := cacheEntryRow(t, v.db, tnHash1, "webp", "thumbs", "bigtn"); found {
+		t.Fatalf("oldest thumbs row outside the current gallery must be pruned")
+	}
+	if _, err := os.Stat(filepath.Join(v.cacheRoot, "thumbs", tnHash1+".webp.bigtn")); err == nil {
+		t.Fatalf("pruned TN file must be removed")
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, tnHash2, "webp", "thumbs", "bigtn"); !found {
+		t.Fatalf("newest thumbs row must survive")
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, sampleHash, "webp", "full", ""); !found {
+		t.Fatalf("full row must not be pruned by the thumbs cap")
+	}
+}
+
+func TestEmbeddedUIObjectUrlCapIsConfigurableAndStatusPriorityFirst(t *testing.T) {
+	s := uiText(t, "viewer.html")
+	for _, want := range []string{
+		`let MAX_FULL_CACHE_ENTRIES = 4000;`,
+		`function applyViewerConfigCap() {`,
+		`fetch("/api/viewer-config", { cache: "no-store" })`,
+		`const cap = Number(cfg && cfg.max_object_urls);`,
+		`if (Number.isFinite(cap) && cap >= 1000) {`,
+		`MAX_FULL_CACHE_ENTRIES = cap;`,
+		`applyViewerConfigCap();`,
+		`function savedStatusEvictKey(skipKey = "") {`,
+		`if (sourceStatusByEntry.get(key) === "local") return key;`,
+		`const priorityKey = savedStatusEvictKey(skipKey);`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("ui must keep the R-15 shape: got %q", want)
+		}
+	}
+	if strings.Contains(s, `MAX_FULL_CACHE_ENTRIES = 2000`) {
+		t.Errorf("cap default must be 4000, not the old 2000")
+	}
+	// 全体先読み維持（案 B・window 縮小不採用）: queue は stripItems() 全部を current からの距離順で
+	// 並べ、±N window 制限を持たない。
+	prefetchBlock := sliceBetween(t, s, "function resetBackgroundPrefetch(displayed) {", "\nfunction ensureBackgroundPrefetch(displayed) {")
+	if !strings.Contains(prefetchBlock, `stripItems()`) || !strings.Contains(prefetchBlock, `distance <= Math.max(items.length - currentIdx, currentIdx)`) {
+		t.Errorf("prefetch queue must cover all stripItems() by distance order without a window limit, got %q", prefetchBlock)
+	}
+	if strings.Contains(prefetchBlock, "PREFETCH_WINDOW") {
+		t.Errorf("window shrink was not adopted; a ±N window constant must not appear, got %q", prefetchBlock)
 	}
 }

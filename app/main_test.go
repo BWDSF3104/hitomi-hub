@@ -1397,6 +1397,81 @@ func TestConfigExampleHitomiKeysMatchCodeDefaults(t *testing.T) {
 	}
 }
 
+// R-15（decision 2026-11-06 確定 10:52・実施 2026-11-08）: viewer.max_object_urls の
+// memory cap 設定化。0 は「未指定＝既定 4000」、下限 guard 1000。
+func TestLoadConfigViewerMaxObjectURLsZeroNegativeUseDefaultAndFloorRejects(t *testing.T) {
+	if defaultMaxObjectURLs != 4000 {
+		t.Fatalf("approved default must be 4000: got %d", defaultMaxObjectURLs)
+	}
+	if minViewerMaxObjectURLs != 1000 {
+		t.Fatalf("approved floor must be 1000: got %d", minViewerMaxObjectURLs)
+	}
+	if defaultCacheDiskMaxEntries != 8000 {
+		t.Fatalf("approved disk cap must be 8000 per kind: got %d", defaultCacheDiskMaxEntries)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"viewer":{"max_object_urls":0}}`)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Viewer.MaxObjectURLs != defaultMaxObjectURLs {
+		t.Errorf("0 should use default 4000: got %d", cfg.Viewer.MaxObjectURLs)
+	}
+	write(`{"viewer":{"max_object_urls":-1}}`)
+	cfg, err = loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Viewer.MaxObjectURLs != defaultMaxObjectURLs {
+		t.Errorf("negative should fall back to default (unspecified), not error: got %d", cfg.Viewer.MaxObjectURLs)
+	}
+	write(`{"viewer":{"max_object_urls":4500}}`)
+	cfg, err = loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Viewer.MaxObjectURLs != 4500 {
+		t.Errorf("4500 should pass through: got %d", cfg.Viewer.MaxObjectURLs)
+	}
+	write(`{"viewer":{"max_object_urls":999}}`)
+	if _, err := loadConfig(path); err == nil {
+		t.Fatal("1〜999 must be rejected by the floor guard")
+	}
+}
+
+func TestConfigExampleViewerMaxObjectURLsMatchCodeDefault(t *testing.T) {
+	path := filepath.Join(dataRoot(), "config.example.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	viewer, ok := raw["viewer"].(map[string]any)
+	if !ok {
+		t.Fatal("config.example.json missing viewer object")
+	}
+	if got, ok := viewer["max_object_urls"]; !ok || got != float64(defaultMaxObjectURLs) {
+		t.Errorf("config.example.json viewer.max_object_urls: got %v want %d", got, defaultMaxObjectURLs)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Viewer.MaxObjectURLs != defaultMaxObjectURLs {
+		t.Errorf("config.example.json viewer.max_object_urls should load to default: got %d", cfg.Viewer.MaxObjectURLs)
+	}
+}
+
 func TestDefaultHitomiConfigUsesCanonicalBgGraceConst(t *testing.T) {
 	if defaultHitomiConfig().BgGraceMS != defaultBgGraceMS {
 		t.Errorf("defaultHitomiConfig BgGraceMS should output canonical const: got %d want %d", defaultHitomiConfig().BgGraceMS, defaultBgGraceMS)

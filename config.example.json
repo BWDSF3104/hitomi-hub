@@ -24,7 +24,8 @@
   },
   "viewer": {
     "port": 8731,
-    "bind": "127.0.0.1"
+    "bind": "127.0.0.1",
+    "max_object_urls": 4000
   },
   "limits": {
     "max_entries": 2000,

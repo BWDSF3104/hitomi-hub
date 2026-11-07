@@ -86,7 +86,19 @@ CREATE TABLE IF NOT EXISTS vt_rate_state (
     total INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS cache_entries (
+    hash TEXT NOT NULL,
+    format TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('full', 'thumbs')),
+    variant TEXT NOT NULL DEFAULT '',
+    gallery_id INTEGER,
+    created_at TEXT NOT NULL,
+    source_status TEXT NOT NULL,
+    PRIMARY KEY (hash, format, kind, variant)
+);
+
 CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(scan_status);
 CREATE INDEX IF NOT EXISTS idx_findings_sha256 ON findings(sha256);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(path, sha256, rule, detail);
+CREATE INDEX IF NOT EXISTS idx_cache_entries_kind_created ON cache_entries(kind, created_at);

@@ -72,7 +72,14 @@ type viewer struct {
 	tnFetchJoinObserver   func(key string)
 	infoFetchMu           sync.Mutex
 	infoFetchGroup        map[int]*infoFetchCall
-	infoFetchJoinObserver func(id int)
+	infoFetchJoinObserver func(int)
+
+	// R-15（decision 2026-11-06 確定・2026-11-08 supersede）: disk cache の件数・作成順・status を
+	// DB の 1 表 cache_entries だけで持つ。filesystem scan で数えない。書き込み時 1 行 INSERT、
+	// prune 時にファイル削除 + 1 行 DELETE。cap 超過は作成順（古い順）で捨てる。現在閲覧中の
+	// gallery（書き込みリクエストの gallery）の項目は捨ない。
+	cacheEntriesMu      sync.Mutex
+	cacheDiskMaxEntries int
 }
 
 type tnFetchCall struct {
@@ -112,6 +119,7 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		infoCache:       map[int]*infoCacheEntry{},
 		infoCacheRoot:   filepath.Join(root, orDefault(cfg.CacheDir, "cache"), "galleryinfo"),
 		infoDiskTTL:     galleryInfoCacheTTL,
+		cacheDiskMaxEntries: defaultCacheDiskMaxEntries,
 	}
 }
 
@@ -159,6 +167,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /", v.index)
 	mux.HandleFunc("GET /search", v.serveSearchPage)
 	mux.HandleFunc("GET /api/lists", v.lists)
+	mux.HandleFunc("GET /api/viewer-config", v.uiConfig)
 	mux.HandleFunc("GET /api/search", v.search)
 	mux.HandleFunc("GET /api/search-first-status", v.searchFirstStatus)
 	mux.HandleFunc("GET /api/search-card/{id}", v.searchCard)
@@ -508,6 +517,120 @@ func (v *viewer) writeCacheFileOnce(cachePath string, data []byte) error {
 	return nil
 }
 
+// effectiveMaxObjectURLs は R-15 の memory cap（client objectURL 件数）。loadConfig で
+// 0 は既定 4000・下限 1000 が確定済み。テストの direct Config 構成でも既定へ揃う。
+func (v *viewer) effectiveMaxObjectURLs() int {
+	if v.cfg.Viewer.MaxObjectURLs > 0 {
+		return v.cfg.Viewer.MaxObjectURLs
+	}
+	return defaultMaxObjectURLs
+}
+
+// uiConfig は page へ memory cap を渡す口（R-15）。設定名 viewer.max_object_urls。
+// 通知 UI を置かない項目のため、この口は設定値の受け渡しのみ（画面表示しない）。
+func (v *viewer) uiConfig(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, map[string]any{"max_object_urls": v.effectiveMaxObjectURLs()})
+}
+
+func requestGalleryID(r *http.Request) int {
+	g := r.URL.Query().Get("gallery")
+	if g == "" {
+		return 0
+	}
+	id, err := strconv.Atoi(g)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// recordCacheEntry は cache 書き込み時に cache_entries へ 1 行 INSERT する（R-15）。
+// 件数・作成順・status の判定源は DB 行のみ（filesystem scan 禁止）。INSERT OR IGNORE:
+// 同一 (hash, format, kind, variant) は最初の created_at を保持する。gallery_id は書き込み
+// リクエストの gallery（なければ NULL）。source_status は書き込み時記録値（追加 lookup なし）。
+func (v *viewer) recordCacheEntry(hash, format, kind, variant, sourceStatus string, galleryID int) error {
+	v.cacheEntriesMu.Lock()
+	defer v.cacheEntriesMu.Unlock()
+	var gallery any
+	if galleryID > 0 {
+		gallery = galleryID
+	}
+	_, err := v.db.Exec(`INSERT OR IGNORE INTO cache_entries (hash, format, kind, variant, gallery_id, created_at, source_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+		hash, format, kind, variant, gallery, time.Now().UTC().Format(time.RFC3339), sourceStatus)
+	return err
+}
+
+func cacheEntryPath(v *viewer, kind, hash, format, variant string) (string, error) {
+	if kind == "full" {
+		return safeCachePath(v.cacheRoot, hash, format)
+	}
+	return safeThumbnailCachePath(v.cacheRoot, hash, format, variant)
+}
+
+// pruneCacheEntries は kind 単位の disk cap（既定 8000 件・byte 計算なし）を DB 行だけで
+// 判定し、作成順（古い順）で超ぶ分をファイル削除 + 1 行 DELETE で捨てる（R-15）。現在閲覧中の
+// gallery の項目は捨ない。表に記録のない項目（表生成以前の file・backfill 禁止）は件数に
+// 入らず prune 対象にならない。ファイル削除に失敗した行は保持（次の prune で再試行）。
+func (v *viewer) pruneCacheEntries(kind string, currentGalleryID int) error {
+	v.cacheEntriesMu.Lock()
+	defer v.cacheEntriesMu.Unlock()
+	var count int
+	if err := v.db.QueryRow(`SELECT COUNT(1) FROM cache_entries WHERE kind = ?1`, kind).Scan(&count); err != nil {
+		return err
+	}
+	if count <= v.cacheDiskMaxEntries {
+		return nil
+	}
+	type cacheVictim struct {
+		hash   string
+		format string
+		variant string
+	}
+	excess := count - v.cacheDiskMaxEntries
+	rows, err := v.db.Query(`SELECT hash, format, variant FROM cache_entries WHERE kind = ?1 AND (gallery_id IS NULL OR gallery_id != ?2) ORDER BY created_at ASC, rowid ASC LIMIT ?3`,
+		kind, currentGalleryID, excess)
+	if err != nil {
+		return err
+	}
+	victims := []cacheVictim{}
+	for rows.Next() {
+		var victim cacheVictim
+		if err := rows.Scan(&victim.hash, &victim.format, &victim.variant); err != nil {
+			rows.Close()
+			return err
+		}
+		victims = append(victims, victim)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, victim := range victims {
+		path, err := cacheEntryPath(v, kind, victim.hash, victim.format, victim.variant)
+		if err != nil {
+			continue // path を組めない行は保持（ファイル削除・行 DELETE しない）
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			continue // 削除失敗の行は保持（次の prune で再試行）
+		}
+		if _, err := v.db.Exec(`DELETE FROM cache_entries WHERE hash = ?1 AND format = ?2 AND kind = ?3 AND variant = ?4`,
+			victim.hash, victim.format, kind, victim.variant); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *viewer) recordAndPruneCacheEntry(hash, format, kind, variant, sourceStatus string, galleryID int) {
+	if err := v.recordCacheEntry(hash, format, kind, variant, sourceStatus, galleryID); err != nil {
+		log.Printf("cache_entries insert failed for %s %s %s: %s", kind, hash, format, err)
+		return
+	}
+	if err := v.pruneCacheEntries(kind, galleryID); err != nil {
+		log.Printf("cache_entries prune failed for kind %s: %s", kind, err)
+	}
+}
+
 // safeGalleryPath は完成フォルダ内の gallery dir に閉じた路径解決（`..` と絶対路径を拒否）
 func safeGalleryPath(galleryRoot, rel string) (string, error) {
 	if rel == "" {
@@ -813,12 +936,18 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	galleryID := requestGalleryID(r)
 	body, err := v.fetchTNOnce(r.Context(), hash, format, variant, v.client.GG(), background)
 	if err == nil {
 		writeImage(w, format, body, "tn")
 		if thumbCacheErr == nil && len(body) > 0 {
 			_ = os.MkdirAll(filepath.Join(v.cacheRoot, "thumbs"), 0o755)
-			_ = os.WriteFile(thumbCachePath, body, 0o644)
+			if writeErr := os.WriteFile(thumbCachePath, body, 0o644); writeErr == nil {
+				// R-15: TN 書き込み（R-16 の atomic 化同一地点・本項目は write 機構を変えない）の
+				// 直後で thumbs kind の 1 行 INSERT + cap prune（作成順・現在 gallery skip）。
+				// TN を full cache に保存しない・件数分離（kind='thumbs'）は維持。
+				v.recordAndPruneCacheEntry(hash, format, "thumbs", variant, "tn", galleryID)
+			}
 		}
 		return
 	}
@@ -932,12 +1061,17 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	galleryID := requestGalleryID(r)
 	body, err := v.fetchFullImageOnce(r.Context(), hash, format, gg, background)
 	if err == nil {
 		v.client.clearNegativeNoFull(hash, format, gg)
 		writeImage(w, format, body, "miss")
 		if cacheErr == nil && len(body) > 0 {
-			_ = v.writeImageCacheAtomically(cachePath, body)
+			if writeErr := v.writeImageCacheAtomically(cachePath, body); writeErr == nil {
+				// R-15: 書き込み時 1 行 INSERT + kind 別 cap の prune（作成順・現在 gallery skip）。
+				// x-cache の source（miss）と no_full 意味は変えない。
+				v.recordAndPruneCacheEntry(hash, format, "full", "", "miss", galleryID)
+			}
 		}
 		return
 	}
@@ -952,7 +1086,9 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 				v.client.clearNegativeNoFull(hash, format, gg)
 				writeImage(w, format, body, "miss")
 				if cacheErr == nil && len(body) > 0 {
-					_ = v.writeImageCacheAtomically(cachePath, body)
+					if writeErr := v.writeImageCacheAtomically(cachePath, body); writeErr == nil {
+						v.recordAndPruneCacheEntry(hash, format, "full", "", "miss", galleryID)
+					}
 				}
 				return
 			}

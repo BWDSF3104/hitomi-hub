@@ -2,7 +2,7 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: 設計確定（memory 4000 件・設定化、disk 8000 件ずつ、disk 削除は作成順、memory 削除は保存済み status 優先→LRU、現在閲覧中・表示中は捨ない、通知 UI なし、last access 記録なし、sha256 lookup なし）。件数と作成順と status は DB の 1 表（例 cache_entries: hash、format、kind、created_at、source_status）で持つ。テスト viewer_test.go:816 の 2000 固定更新。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
@@ -62,7 +62,7 @@
 
 ### UI 確認
 
-- 未確認。通知 UI を置かない項目のため、served 画面の before/after 比較が成立しない（画面に変化がない）。Google Drive への保存なし。正典ルール参照: `docs/ai/rules/confirmation-test-rule.md`（実装段階で canonical build・served 画面確認・cold hygiene・`x-cache`・generation guard が合格条件として残る）。
+- 未確認（調査段階）。通知 UI を置かない項目のため、served 画面の before/after 比較が成立しない（画面に変化がない）。正典ルール参照: `docs/ai/rules/confirmation-test-rule.md`（実装段階で canonical build・served 画面確認・cold hygiene・`x-cache`・generation guard が合格条件として残る）。実装後の served 確認は下の「実装後の検証（served 実機）」で合格。
 
 ### 推定規模
 
@@ -83,6 +83,26 @@
 - 実測コマンド 3: `node --expose-gc docs/ai/tmp/assess-20261106-1056/memory_cap_harness.mjs` → 10 checks passed（0.8 s）。数値は上（memory 342 MiB → 689 MiB、差 347 MiB、cap 外成長 7.8 MiB）。
 - 環境実測（read-only）: `cache/images` 1,146 件 / 197,317,546 B（平均 172,179 B）、`cache/images/thumbs` 36 件 / 1,569,072 B、`hitomi.db` galleries 125・files 6。disk cap（8000 件）は現況未到達。
 - 制約遵守: 既存テスト変更なし、実 cache フォルダ・実 DB 内容変更なし（DB は read-only URI `mode=ro`）、本番コードディレクトリへの書き込みなし（scratch は `docs/ai/tmp/assess-20261106-1056/`）、1 コマンド 1 行・インラインコード実行禁止（`db_stats.py`・`memory_cap_harness.mjs` をファイルとして実行）。
+
+## 実装内容（2026-11-07・指示済み）
+
+- 読了正典（作業前チェック 1）: `docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`、`docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md`、`docs/ai/rules/confirmation-test-rule.md`。
+- Supersede 記録: `docs/ai/decisions/2026-11-08-r15-cache-entries-table-supersede.md`（2026-11-02 の「DB 表追加不可」条を 2026-11-06 確定（1 表採用）へ supersede）。
+- schema.sql: `cache_entries`（PK hash, format, kind, variant・variant は TN 分岐で追加・full は `''`、gallery_id、created_at TEXT、source_status）+ `idx_cache_entries_kind_created`。backfill しない（filesystem scan 禁止・表生成以前の file は件数・prune 対象外）。
+- config.example.json: `viewer.max_object_urls` = 4000。main.go: `UIConfig.MaxObjectURLs`、guard（<=0→4000・0<v<1000→error・既定 4000・下限 1000・disk 既定 8000）、`schemaVersion` 9、`ensureCacheEntriesTable`。
+- viewer.go: route `GET /api/viewer-config`（effectiveMaxObjectURLs）、`recordCacheEntry`（INSERT OR IGNORE・full 2 箇所 + TN 書込み成功後）、`recordAndPruneCacheEntry`（kind・作成順 created_at ASC, rowid ASC・現在閲覧 gallery の行 skip・ファイル削除 + 1 行 DELETE・cap 8000/kind）。
+- viewer.html: `let MAX_FULL_CACHE_ENTRIES = 4000`（識別子保持・テスト pin 維持）、`savedStatusEvictKey`（status `local` 優先→LRU・pinned 文字列維持）、startup fetch で served runtime 反映。
+- テスト: `app/main_test.go`（config guard・example key）、`app/viewer_test.go`（R-15 節 6 test・viewer_test.go 文字列 pin 2529/2613/2618 は識別子保持により通過）、`tests/viewer_objecturl_cap_harness.mjs` + `tests/test_viewer_objecturl_cap.py`（node harness）。
+
+## 実装後の検証（served 実機）
+
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ ok（23.9s。テスト側小修正 2 回含む・試行 1 回）。
+- `python -m pytest tests/ -v` → 1 failed 57 passed。failed は既知 failure `test_canonical_build_freshness_rule_exists`（KI-20261106-04・AGENTS.md pointer・本項目不合格ではない・区別報告）。node harness（`tests/viewer_objecturl_cap_harness.mjs`）→ 20 checks passed。canonical build fresh ✓。
+- served 確認（cold hygiene 合格): fresh canonical exe（pid 92・port 8731・root `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_canonical_fresh`）、isolated tab・localStorage clear、actual window size 1665x932（人工 resize なし）。cold image fetch `/api/image/a178e5238ef3480ec3f6677e264978924dc089d6391958a67bd8fc12a392e3fb?format=webp&gallery=4300644` → 200・x-cache miss・60624 B・900 ms・no_full なし・`cache_entries` 行生成（row 5・source_status miss・gallery_id 4300644）。汚染記録: 測定前 instance（2836/11340/20720）は `restoreSearchState()` の startup fetch で cold claims 無効 → server restart で再測定。search 以降の claims は warm として記録。
+- reader 実像素・TN rules 合格: gallery 4306867（9 files）card クリック→同一 tab 表示・page 移動（route #/g/4306867/page/3-4・route/reader 一致）・reader imgs すべて objectURL・naturalWidth 2036x2880・実表示ピクセル 9/9・TN source 0・TN display fallback 禁止・`cache_entries` 14 行（TN 4 + full 5 + prefetch 9）。route `?format=avif`（format で構築）一致。
+- CLI download: `hub.exe download --id 4306867` → attempted 9 == written 9（skipped 0）。
+- before/after（同一 tab・window size・取得方法）: `r15-cold-instance92-before-20261108.png`（空 viewer）→ `r15-cold-instance92-after-20261108.png`（gallery+reader 表示 9/9）。保存先: `I:\マイドライブ\kilo\2026-11-08-r15-viewer-prefetch-window-and-disk-lru\`（+ `r15-served-confirmation-2026-11-08.txt`）。local copy 5 枚（Playwright output・project 直下）は正典 `kilo-safe-remove` でゴミ箱へ送出済み。Drive 側保持。
+- 観測非必須問題: prefetch worker race（`item` undefined・HEAD 0b34704 に既存）→ `docs/ai/known-issues/KI-20261107-01-viewer-prefetch-worker-undefined-item-race.md`（修復せず記録）。
 
 ## 完了時 Memory Bank 操作
 

@@ -47,8 +47,9 @@ type VTConfig struct {
 }
 
 type UIConfig struct {
-	Port int    `json:"port"`
-	Bind string `json:"bind"`
+	Port          int    `json:"port"`
+	Bind          string `json:"bind"`
+	MaxObjectURLs int    `json:"max_object_urls"`
 }
 
 type Config struct {
@@ -149,6 +150,12 @@ func (l *Limits) UnmarshalJSON(data []byte) error {
 // 1〜49 ms は設定エラーで拒否、50 ms 以上は受理。
 const minHitomiRateFloorMS = 50
 
+// R-15（decision 2026-11-06 確定 10:52）: memory objectURL cap。0 は「未指定＝既定 4000」。
+// 1〜999 は拒否（下限 1000）。disk cache の kind 別 cap は 8000 件（件数・byte 計算なし）。
+const defaultMaxObjectURLs = 4000
+const minViewerMaxObjectURLs = 1000
+const defaultCacheDiskMaxEntries = 8000
+
 func loadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -199,6 +206,13 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Viewer.Bind == "" {
 		cfg.Viewer.Bind = "127.0.0.1"
 	}
+	// R-15: client objectURL cap（memory 側）。0 は「未指定＝既定 4000」。
+	// 1〜999 は設定エラーで拒否（下限 guard 1000）。
+	if cfg.Viewer.MaxObjectURLs <= 0 {
+		cfg.Viewer.MaxObjectURLs = defaultMaxObjectURLs
+	} else if cfg.Viewer.MaxObjectURLs < minViewerMaxObjectURLs {
+		return Config{}, fmt.Errorf("config error: viewer.max_object_urls must be 0 (unspecified, use default) or >= %d, got %d", minViewerMaxObjectURLs, cfg.Viewer.MaxObjectURLs)
+	}
 	return cfg, nil
 }
 
@@ -230,7 +244,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 // execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
 type execer interface {
@@ -324,6 +338,11 @@ func ensureSchema(db *sql.DB) error {
 // 複数 path で meta が 1 組の上書きにより skip が双方再ハッシュへ退化する点の修正）。追加のみ・
 // 既存表の PK 変更・既存行削除なし（同じ D-03 非破壊迁移規約）。正典 DB は次回 ensureSchema 実行で
 // 自然に揃う。既存 scan_meta 記録のない file は skip 判定できないため再ハッシュ（安全側）。
+// schemaVersion 9（R-15・decision 2026-11-08-r15-cache-entries-table-supersede）: disk cache の
+// 件数・作成順・status を filesystem scan ではなく DB 行だけで持つための 1 表 cache_entries を
+// 新設する（2026-11-02 の「image cache state の DB 表追加不可」条の該当点のみ supersede）。追加のみ・
+// 既存表の PK 変更・既存行削除なし（同じ D-03 非破壊迁移規約）。表生成以前の実 cache ファイルは
+// backfill しない（backfill は filesystem scan で正典ルールに反する）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -354,6 +373,11 @@ func migrateSchema(db *sql.DB, current int) error {
 	}
 	if current < 8 {
 		if err := ensureScanMetaTable(db); err != nil {
+			return err
+		}
+	}
+	if current < 9 {
+		if err := ensureCacheEntriesTable(db); err != nil {
 			return err
 		}
 	}
@@ -480,6 +504,22 @@ func ensureScanCacheSizeMtime(db *sql.DB) error {
 func ensureScanMetaTable(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS scan_meta (
 		path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL)`)
+	return err
+}
+
+// ensureCacheEntriesTable は R-15 の disk cache 1 表 cache_entries を新設する（schemaVersion 9）。
+// 追加のみ・既存表の PK 変更・既存行削除なし（D-03 非破壊迁移規約）。新 DB は schema.sql 定義で揃う。
+// 件数・作成順・status を filesystem scan ではなく DB 行だけで持つ。正典 DB は次回 ensureSchema 実行で
+// 自然に揃う。表生成以前の実 cache ファイルは backfill しない（scan 禁止）。
+func ensureCacheEntriesTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cache_entries (
+		hash TEXT NOT NULL, format TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('full', 'thumbs')),
+		variant TEXT NOT NULL DEFAULT '', gallery_id INTEGER, created_at TEXT NOT NULL, source_status TEXT NOT NULL,
+		PRIMARY KEY (hash, format, kind, variant))`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_cache_entries_kind_created ON cache_entries(kind, created_at)")
 	return err
 }
 
