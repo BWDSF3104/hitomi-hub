@@ -1,6 +1,6 @@
 # R-13: thumbProxy / info / SearchNozomiParts に singleflight がない
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: 設計承認済み（案 A: 縮小画像・作品情報・nozomi 分割データへ同じ内容 1 回を追加）。実施開始指示待ち。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
 
@@ -77,12 +77,28 @@
 - joiner に `tn-cache` を返す案: x-cache 意味を変え、正典の full/TN 判定を弱める。却下。
 - key から gg を外す案: 内容同一の group 数は減るが、既存 `imageFetchKey` 流儀とズレ、subdomain 違いを join する。write helper で収束する利点是致だが、流儀維持（gg を key に入れる）を推奨。
 
+### 実装（案 A・実施済み 2026-11-07・assess-20261106-1056）
+
+- `app/viewer.go`: `thumbProxy` → `fetchTNOnce`（key = `tnFetchKey`（`negativeNoFullKey` 流儀 + variant））。joiner は ctx select（TN は request ctx を持つ）。`info` → `resolveInfoOnce`（key = id・joiner は shared pointer）。正典不変条件（TN display fallback 禁止・TN バイトを full cache に保存しない・full 取得経路の順序・x-cache・generation guard）は維持。TN write は per request の `os.WriteFile` を維持（atomic 化は R-16）。joiner は gate lane を消費しない（leader のみ fetch）。
+- `app/hitomi.go`: `tnFetchKey` 追加、`nozomiFetchCall` 型、Client の group field（`searchGroup`/`searchGroupMu`/`searchGroupJoinObserver`）。
+- `app/searchhtml.go`: `SearchNozomiParts` に singleflight group（key = 既存 cacheKey）。joiner は `copyInts` を返す。network 中に mutex を保持しない。
+- 流儀の照合（D-05・推奨）: fetch group と write helper を分離維持（TN write は handler 側 per request）。既存 helper（`imageFetchCall`/`cacheWriteCall`）流儀を共用。
+- 採用した判断（段階1）: joiner の wait は `fetchFullImageOnce` の ctx select に揃える方針だが、`info`・`SearchNozomiParts` は既存 signature に ctx を持たない。signature 変更は承認範囲外のテスト（`galleryinfocache_test.go`・`searchhtml_test.go`）の更新を要するため、これらは `EnsureGG` 流儀（ctx guard なし `<-call.done`）で join。leader fetch は常に完了（client timeout 60 s）→ `close(done)` されるので joiner は永久待ちにならない。TN は request ctx を持つため ctx select を適用。既存 guard test（viewer_test.go:2203-2224）と既存テストは変更なし。
+
+### 実装後の実測（合格条件）
+
+- TN・info・nozomi: 同一 key の同時 5 リクエスト → 外部呼出し 1 回・join 4（`TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall` / `TestViewerInfoConcurrentRemoteFetchDedupsToSingleCall` / `TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall`）。
+- key 境界: TN variant 2 本 → 2 calls、nozomi cacheKey 2 本 → 2 calls（同じ test 内の key 境界セクション）。
+- joiner の x-cache は source（tn）保持（tn-cache にしない）。marker record は per request（5）維持。joiner gate lane 消費なし。TN 失敗は `no_tn`・full へ fallback なし。joiner の cancellation は leader に伝播しない（TN・canceled waiter 502・leader 1 call）。nozomi joiner は per-call copy（独立 backing）。info joiner は shared pointer。
+
 ## Verification
 
 - `go vet . ; go test -count=1 -timeout 300s .`（`app`、既存テスト変更なし・ソース変更なし）: vet clean、`ok hitomi-hub/app 26.799s`。
 - scratch 実測: `go test -v -count=1 -timeout 120s ./r13`（module `assess20261106-1056` 配下 `docs/ai/tmp/assess-20261106-1056/r13/singleflight_measure_test.go`）→ `ok assess202611061056/r13 1.514s`。7 test PASS。数値は上記表と D-05 照合欄（separation: helper 4 / attempts 1 / joins 3 / errors 4、merged: helper 1 / errors 1）。
-- UI（served 画面）確認: x-cache 判定と generation guard に影響しないため不要として記録。未実施（画面キャプチャなし）。
-- 編集後の文件破損確認: harness 源码の日本語テキストと test 結果を確認済み（`Set-Content` 使用後、read で内容確認）。
+- 実装後の検証（本項目分・2026-11-07）: `app` で `go vet .` clean。`go test -count=1 -timeout 300s .` → `ok hitomi-hub/app 25.984s`（新規テスト 3 件 + key 境界 1 件・既存テスト変更なし）。新規テスト: `TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall`（calls 1・join 4・joiner x-cache `tn`・marker per-request 5・canceled joiner `no_tn` 502・leader 1 call・full fallback なし）、`TestViewerInfoConcurrentRemoteFetchDedupsToSingleCall`（calls 1・join 4・shared pointer）、`TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall`（calls 1・join 4・joiner copy 独立・key 境界 TN variant 6→2・nozomi cacheKey 6→2）。
+- `python -m pytest tests/ -v`: `1 failed, 56 passed`。failure は `test_canonical_build_freshness_rule_exists`（既存 failure・本項目不合格ではない）。本項目は Go のみ変更（Python・AGENTS.md 非触）。
+- network 1 call 実証: 既存流儀（`newTestViewer`・`httptest`・join observer）の mock 実測で合格（上記新規テスト）。cold hygiene 実機 network は本項目の合格条件に不要（UI x-cache 判定・generation guard に影響しない）。UI（served 画面）確認: x-cache 判定と generation guard に影響しないため確認不要として記録（未実施・画面キャプチャなし）。画面確認不可項目を合格条件に含まない。
+- 編集後の文件破損確認: `git diff` で日文コメントと実装内容を確認済み（edit ツール使用・`Set-Content` パイプライン不使用）。変更ファイルは `app/viewer.go`・`app/hitomi.go`・`app/searchhtml.go`・`app/viewer_test.go`（承認範囲内）。
 
 ## 完了時 Memory Bank 操作
 

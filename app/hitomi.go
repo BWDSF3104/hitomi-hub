@@ -84,6 +84,14 @@ type singleflightCall struct {
 	done chan struct{}
 }
 
+// R-13: nozomi 分割データ fetch の singleflight call。key は searchCache の cacheKey。
+// network 中に mutex を保持しない。joiner は leader result を共有し、per-call copy を返す。
+type nozomiFetchCall struct {
+	ids  []int
+	err  error
+	done chan struct{}
+}
+
 type boundedCacheEntry interface {
 	entrySize() int
 	lastAccessed() time.Time
@@ -214,6 +222,9 @@ type Client struct {
 	noFullCache     map[string]time.Time
 	noFullCacheMu   sync.Mutex
 	noFullCacheMaxEntries int
+	searchGroup     map[string]*nozomiFetchCall
+	searchGroupMu   sync.Mutex
+	searchGroupJoinObserver func(key string)
 }
 
 // put helpers must be called with the owning cache mutex held.
@@ -266,6 +277,12 @@ func negativeNoFullKey(hash, format string, gg GG) string {
 
 func imageFetchKey(hash, format string, gg GG) string {
 	return negativeNoFullKey(hash, format, gg)
+}
+
+// tnFetchKey は TN fetch dedup の key。既存 imageFetchKey（negativeNoFullKey）流儀に揃え、
+// TN identity（hash + TNFormat + variant）に gg を加える。subdomain が違う fetch を join しない。
+func tnFetchKey(hash, format, variant string, gg GG) string {
+	return negativeNoFullKey(hash, TNFormat(format), gg) + "|" + TNVariantSuffix(variant)
 }
 
 // cleanStaleNoFullCacheLocked must be called with noFullCacheMu held.

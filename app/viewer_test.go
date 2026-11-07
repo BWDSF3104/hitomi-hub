@@ -4217,3 +4217,271 @@ func TestImageProxyCacheMagicCheckSkipsMismatchedBytes(t *testing.T) {
 		}
 	}
 }
+
+// R-13: TN / info / nozomi の singleflight（案 A・既存流儀）。同一 key の同時リクエストで外部呼出し
+// 1 回、join 4、joiner の x-cache は source（tn）を保持、gate lane は joiner が消費しない（leader 1 回）。
+func waitForCounter(t *testing.T, counter *atomic.Int32, want int32) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for counter.Load() < want && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if counter.Load() < want {
+		t.Fatalf("joiners did not reach the leader group in time: got %d want %d", counter.Load(), want)
+	}
+}
+
+func TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall(t *testing.T) {
+	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = snapshotGG()
+
+	var calls atomic.Int32
+	var joins atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			close(started)
+		}
+		<-release
+		return []byte("tn"), nil
+	}
+	v.tnFetchJoinObserver = func(key string) { joins.Add(1) }
+
+	bigtn := "/api/thumb/" + sampleHash + "?format=webp&gallery=1&variant=bigtn&priority=normal"
+	recs := make([]*httptest.ResponseRecorder, 5)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		recs[0] = httptest.NewRecorder()
+		v.handler().ServeHTTP(recs[0], httptest.NewRequest("GET", bigtn, nil))
+	}()
+	<-started
+	for i := 1; i < 5; i++ {
+		wg.Add(1)
+		idx := i
+		go func() {
+			defer wg.Done()
+			recs[idx] = httptest.NewRecorder()
+			v.handler().ServeHTTP(recs[idx], httptest.NewRequest("GET", bigtn, nil))
+		}()
+	}
+	waitForCounter(t, &joins, 4)
+	joinsMain := joins.Load()
+	close(release)
+	wg.Wait()
+
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent same TN key should fetch once, got %d", calls.Load())
+	}
+	if joinsMain != 4 {
+		t.Fatalf("TN join count: got %d want 4", joinsMain)
+	}
+	for i, rec := range recs {
+		if rec.Code != http.StatusOK || rec.Body.String() != "tn" {
+			t.Fatalf("TN response %d: code %d body %q", i, rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("x-cache") != "tn" {
+			t.Errorf("joiner must keep source x-cache (tn), not tn-cache: request %d x-cache %q", i, rec.Header().Get("x-cache"))
+		}
+	}
+	// joiner は gate lane を消費しない（calls 1 = leader 1 回）。marker は per request（5）維持。
+	if snap := v.client.metricsSnapshot(); snap["marker.normal"].(map[string]int64)["calls"] != 5 {
+		t.Errorf("per-request marker record must be preserved: %v", snap)
+	}
+
+	// waiter cancellation は leader に伝播しない。canceled TN waiter は no_tn 502（full へ fallback
+	// なし）で leader は 1 回 fetch 完了。別の variant key を使う（tn-cache hit を避ける）。
+	key := tnFetchKey(sampleHash, "webp", "smalltn", snapshotGG())
+	group := &tnFetchCall{done: make(chan struct{})}
+	v.tnFetchGroup = map[string]*tnFetchCall{key: group}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	canceledRec := httptest.NewRecorder()
+	v.handler().ServeHTTP(canceledRec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=smalltn&priority=normal", nil).WithContext(canceledCtx))
+	if canceledRec.Code != http.StatusBadGateway || canceledRec.Header().Get("x-cache") != "no_tn" {
+		t.Fatalf("canceled TN waiter must return no_tn 502 without fallback: code %d x-cache %q", canceledRec.Code, canceledRec.Header().Get("x-cache"))
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("canceled TN waiter must not refetch or propagate to leader: calls %d", calls.Load())
+	}
+	group.body = []byte("tn")
+	close(group.done)
+	normalRec := httptest.NewRecorder()
+	v.handler().ServeHTTP(normalRec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=smalltn&priority=normal", nil))
+	if normalRec.Code != http.StatusOK || normalRec.Body.String() != "tn" || calls.Load() != 1 {
+		t.Fatalf("normal TN waiter must share leader result without refetch: code %d body %q calls %d", normalRec.Code, normalRec.Body.String(), calls.Load())
+	}
+	if normalRec.Header().Get("x-cache") != "tn" {
+		t.Errorf("joiner x-cache source must be preserved: %q", normalRec.Header().Get("x-cache"))
+	}
+}
+
+func TestViewerInfoConcurrentRemoteFetchDedupsToSingleCall(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"4252697","title":"Kemo","language":"japanese","type":"doujinshi","files":[]}`
+	v, _ := newTestViewer(t, galleryJSON)
+
+	var calls atomic.Int32
+	var joins atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			close(started)
+		}
+		<-release
+		return []byte(galleryJSON), nil
+	}
+	v.infoFetchJoinObserver = func(id int) { joins.Add(1) }
+
+	results := make([]*GalleryInfo, 5)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		info, err := v.info(4252697, false)
+		if err != nil {
+			t.Errorf("info leader: %v", err)
+			return
+		}
+		results[0] = info
+	}()
+	<-started
+	for i := 1; i < 5; i++ {
+		wg.Add(1)
+		idx := i
+		go func() {
+			defer wg.Done()
+			info, err := v.info(4252697, false)
+			if err != nil {
+				t.Errorf("info joiner %d: %v", idx, err)
+				return
+			}
+			results[idx] = info
+		}()
+	}
+	waitForCounter(t, &joins, 4)
+	close(release)
+	wg.Wait()
+
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent same info id should fetch once, got %d", calls.Load())
+	}
+	for i := range results {
+		if results[i] == nil || results[i] != results[0] {
+			t.Fatalf("joiner must share leader result: result %d %v", i, results[i])
+		}
+	}
+}
+
+func TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	c := v.client
+
+	var calls atomic.Int32
+	var joins atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls.Add(1)
+		if calls.Load() == 1 {
+			close(started)
+		}
+		<-release
+		return beIDs([]uint32{11, 22, 33}), nil
+	}
+	c.searchGroupJoinObserver = func(key string) { joins.Add(1) }
+
+	results := make([][]int, 5)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"})
+		if err != nil {
+			t.Errorf("nozomi leader: %v", err)
+			return
+		}
+		results[0] = ids
+	}()
+	<-started
+	for i := 1; i < 5; i++ {
+		wg.Add(1)
+		idx := i
+		go func() {
+			defer wg.Done()
+			ids, err := c.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"})
+			if err != nil {
+				t.Errorf("nozomi joiner %d: %v", idx, err)
+				return
+			}
+			results[idx] = ids
+		}()
+	}
+	waitForCounter(t, &joins, 4)
+	close(release)
+	wg.Wait()
+
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent same nozomi cacheKey should fetch once, got %d", calls.Load())
+	}
+	for i := range results {
+		if len(results[i]) != 3 || results[i][1] != 22 || results[i][2] != 33 {
+			t.Fatalf("nozomi joiner result %d: %v", i, results[i])
+		}
+	}
+	// joiner は per-call copy を返す（一方の変更が他 waiter へ泄漏しない）
+	results[0][0] = 99
+	if results[1][0] != 11 {
+		t.Fatalf("joiner copy must be independent from other joiners: first=%v second=%v", results[0], results[1])
+	}
+
+	// key 境界（別 group）: TN variant / nozomi cacheKey が違う group は join しない（2 calls）。
+	// boundary は immediate return（join なし）で group 分離のみ確認する。
+	v2, _ := newTestViewer(t, "")
+	c2 := v2.client
+	var calls2 atomic.Int32
+	c2.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls2.Add(1)
+		return beIDs([]uint32{10}), nil
+	}
+	for i := 0; i < 6; i++ {
+		var variant string
+		if i < 3 {
+			variant = "bigtn"
+		} else {
+			variant = "smalltn"
+		}
+		rec := httptest.NewRecorder()
+		v2.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant="+variant, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("TN boundary request %d: code %d", i, rec.Code)
+		}
+	}
+	if calls2.Load() != 2 {
+		t.Fatalf("TN variant key boundary should split into 2 groups (2 calls), got %d", calls2.Load())
+	}
+
+	c3 := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1}
+	var calls3 atomic.Int32
+	c3.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		calls3.Add(1)
+		if strings.Contains(rawurl, "female:yuri") {
+			return beIDs([]uint32{10}), nil
+		}
+		return beIDs([]uint32{20}), nil
+	}
+	if _, err := c3.SearchNozomiParts(&searchState{area: "tag", tag: "female:yuri", language: "all"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c3.SearchNozomiParts(&searchState{area: "tag", tag: "male:yuri", language: "all"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls3.Load() != 2 {
+		t.Fatalf("nozomi cacheKey boundary should split into 2 groups (2 calls), got %d", calls3.Load())
+	}
+}

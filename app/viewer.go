@@ -62,6 +62,31 @@ type viewer struct {
 	cacheCloseFailureHook     func(path string) error
 	cacheRenameFailureHook    func(path string) error
 	cacheSingleflightJoinHook func(key string)
+
+	// R-13: TN / info fetch dedup（案 A・既存流儀: key 単位・mutex・network 中に mutex を保持しない）。
+	// TN は search-card cover 専用・reader 表示源禁止・TN display fallback 禁止・TN バイトを full
+	// cache に保存しない正典不変条件を変えない。joiner は leader result を共有し、x-cache は source
+	// を保持し、per-request の write helper（TN write）・marker record を skip しない。
+	tnFetchMu             sync.Mutex
+	tnFetchGroup          map[string]*tnFetchCall
+	tnFetchJoinObserver   func(key string)
+	infoFetchMu           sync.Mutex
+	infoFetchGroup        map[int]*infoFetchCall
+	infoFetchJoinObserver func(id int)
+}
+
+type tnFetchCall struct {
+	body []byte
+	err  error
+	done chan struct{}
+}
+
+// infoFetchCall の joiner は shared pointer を返す（既存 infoCache が pointer を共有する意味と同一）。
+// info は ctx を持たない（既存 guard test の signature を変えないため join は ctx guard なし）。
+type infoFetchCall struct {
+	info *GalleryInfo
+	err  error
+	done chan struct{}
 }
 
 type cacheWriteCall struct {
@@ -788,7 +813,7 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := v.client.getImage(r.Context(), ThumbnailURLVariant(hash, format, variant, v.client.GG()), [2]int64{-1, -1}, background)
+	body, err := v.fetchTNOnce(r.Context(), hash, format, variant, v.client.GG(), background)
 	if err == nil {
 		writeImage(w, format, body, "tn")
 		if thumbCacheErr == nil && len(body) > 0 {
@@ -798,6 +823,48 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeNoTN(w, format)
+}
+
+// fetchTNOnce は TN fetch の singleflight（R-13・案 A）。key = TN identity + gg。network 中に mutex を
+// 保持しない。joiner は leader result を共有し、x-cache は source（tn）を保持する。joiner は gate lane を
+// 消費しない（leader のみ fetch）。waiter の cancellation は leader に伝播しない（join は ctx select、
+// leader fetch は context.WithoutCancel）。TN write は per request 側で実施（atomic 化は R-16 の範囲）。
+func (v *viewer) fetchTNOnce(ctx context.Context, hash, format, variant string, gg GG, background bool) ([]byte, error) {
+	key := tnFetchKey(hash, format, variant, gg)
+
+	v.tnFetchMu.Lock()
+	if v.tnFetchGroup == nil {
+		v.tnFetchGroup = map[string]*tnFetchCall{}
+	}
+	if call := v.tnFetchGroup[key]; call != nil {
+		if v.tnFetchJoinObserver != nil {
+			v.tnFetchJoinObserver(key)
+		}
+		v.tnFetchMu.Unlock()
+		select {
+		case <-call.done:
+			return call.body, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	call := &tnFetchCall{done: make(chan struct{})}
+	v.tnFetchGroup[key] = call
+	v.tnFetchMu.Unlock()
+
+	body, err := v.client.getImage(context.WithoutCancel(ctx), ThumbnailURLVariant(hash, TNFormat(format), variant, gg), [2]int64{-1, -1}, background)
+	call.body = body
+	call.err = err
+
+	v.tnFetchMu.Lock()
+	if v.tnFetchGroup[key] == call {
+		delete(v.tnFetchGroup, key)
+	}
+	v.tnFetchMu.Unlock()
+
+	close(call.done)
+	return body, err
 }
 
 func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg GG, background bool) ([]byte, error) {
@@ -1108,14 +1175,54 @@ func (v *viewer) info(id int, background bool) (*GalleryInfo, error) {
 		return &persisted.GalleryInfo, nil
 	}
 
+	return v.resolveInfoOnce(id, background, persisted)
+}
+
+// resolveInfoOnce は remote `Client.Gallery` の singleflight（R-13・案 A・key = id）。memory・disk を
+// 通過した request だけがこの helper に入る（disk hit は network/gate を消費しない）。network 中に mutex を
+// 保持しない。joiner は leader result を共有する（既存 infoCache が pointer を共有する意味と同一）。
+// info は ctx を持たない（既存 guard test の signature を変えないため join は ctx guard なし・EnsureGG
+// 流儀）。joiner は gate lane を消費しない。stale 暫定表示と disk persist・memory cache 書き込みは leader
+// 側のみで 1 回（joiner は skip しない per-request の memory/disk hit は info 側）。
+func (v *viewer) resolveInfoOnce(id int, background bool, persisted *persistedGalleryInfo) (*GalleryInfo, error) {
+	v.infoFetchMu.Lock()
+	if v.infoFetchGroup == nil {
+		v.infoFetchGroup = map[int]*infoFetchCall{}
+	}
+	if call := v.infoFetchGroup[id]; call != nil {
+		if v.infoFetchJoinObserver != nil {
+			v.infoFetchJoinObserver(id)
+		}
+		v.infoFetchMu.Unlock()
+		<-call.done
+		return call.info, call.err
+	}
+
+	call := &infoFetchCall{done: make(chan struct{})}
+	v.infoFetchGroup[id] = call
+	v.infoFetchMu.Unlock()
+
 	info, err := v.client.Gallery(id, background)
 	if err != nil {
 		if persisted != nil {
 			v.recordInfoDiskStaleHit(id, persisted.FetchedAt)
-			return &persisted.GalleryInfo, nil
+			call.info = &persisted.GalleryInfo
+			call.err = nil
+		} else {
+			call.err = err
 		}
-		return nil, err
+		v.infoFetchMu.Lock()
+		if v.infoFetchGroup[id] == call {
+			delete(v.infoFetchGroup, id)
+		}
+		v.infoFetchMu.Unlock()
+		close(call.done)
+		if call.err != nil {
+			return nil, err
+		}
+		return call.info, nil
 	}
+
 	if err := v.writeInfoDisk(id, info); err != nil {
 		log.Printf("galleryinfo persist failed for %d: %s", id, err)
 	}
@@ -1126,6 +1233,17 @@ func (v *viewer) info(id int, background bool) (*GalleryInfo, error) {
 	now := time.Now()
 	v.putInfoCacheLocked(id, &infoCacheEntry{info: info, lastAccess: now})
 	v.infoCacheMu.Unlock()
+
+	call.info = info
+	call.err = nil
+
+	v.infoFetchMu.Lock()
+	if v.infoFetchGroup[id] == call {
+		delete(v.infoFetchGroup, id)
+	}
+	v.infoFetchMu.Unlock()
+
+	close(call.done)
 	return info, nil
 }
 

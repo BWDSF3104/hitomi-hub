@@ -132,24 +132,68 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 	}
 	c.searchCacheMu.Unlock()
 
+	c.searchGroupMu.Lock()
+	if c.searchGroup == nil {
+		c.searchGroup = map[string]*nozomiFetchCall{}
+	}
+	if call := c.searchGroup[cacheKey]; call != nil {
+		if c.searchGroupJoinObserver != nil {
+			c.searchGroupJoinObserver(cacheKey)
+		}
+		c.searchGroupMu.Unlock()
+		<-call.done
+		if call.err != nil {
+			return nil, call.err
+		}
+		// joiner は per-call copy を返す（termIDs が返り値 slice を共有しない）。
+		return copyInts(call.ids), nil
+	}
+	call := &nozomiFetchCall{done: make(chan struct{})}
+	c.searchGroup[cacheKey] = call
+	c.searchGroupMu.Unlock()
+
 	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+path, [2]int64{-1, -1}, state.background)
 	if err != nil {
+		c.searchGroupMu.Lock()
+		if c.searchGroup[cacheKey] == call {
+			delete(c.searchGroup, cacheKey)
+		}
+		call.err = err
+		c.searchGroupMu.Unlock()
+		close(call.done)
 		return nil, err
 	}
 	ids, err := decodeNozomiIDs(body)
 	if err != nil {
+		c.searchGroupMu.Lock()
+		if c.searchGroup[cacheKey] == call {
+			delete(c.searchGroup, cacheKey)
+		}
+		call.err = err
+		c.searchGroupMu.Unlock()
+		close(call.done)
 		return nil, err
 	}
 
+	stored := copyInts(ids)
 	c.searchCacheMu.Lock()
 	if c.searchCache == nil {
 		c.searchCache = map[string]*searchCacheEntry{}
 	}
 	now := time.Now()
-	c.putSearchCacheLocked(cacheKey, &searchCacheEntry{ids: copyInts(ids), fetchedAt: now, lastAccess: now})
+	c.putSearchCacheLocked(cacheKey, &searchCacheEntry{ids: stored, fetchedAt: now, lastAccess: now})
 	c.searchCacheMu.Unlock()
 
-	return ids, nil
+	call.ids = stored
+
+	c.searchGroupMu.Lock()
+	if c.searchGroup[cacheKey] == call {
+		delete(c.searchGroup, cacheKey)
+	}
+	c.searchGroupMu.Unlock()
+
+	close(call.done)
+	return copyInts(stored), nil
 }
 
 func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
