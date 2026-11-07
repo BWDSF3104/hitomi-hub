@@ -86,7 +86,7 @@ func DetectMagic(head []byte) string {
 			return "heif"
 		}
 		return "iso-bmff"
-	case len(head) >= 6 && hex.EncodeToString(head[:6]) == "377abcaf2738":
+	case len(head) >= 6 && hex.EncodeToString(head[:6]) == "377abcaf271c":
 		return "7z"
 	}
 	return "unknown"

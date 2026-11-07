@@ -2,9 +2,9 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 実施開始指示待ち。合格条件: 正典 magic 37 41 7A BC AF 27 1C の fixture で detect magic = 7z（Go・Python 両側）。記録: R-03
+**Next Action**: なし（項目完了。合格条件 fixture = 正典 6 bytes 37 7A BC AF 27 1C・両側 detect magic = 7z 実測で合格）
 
 ## 意図 / 背景
 
@@ -86,8 +86,28 @@
 - YARA 側: `rules/structural.yar` に 7z 規則なし（archive 規則は `zip.is_zip` ベース、PDF/MZ ののみ）。`scanTargets`（`app/scan.go:16`）＝ pdf・cbz・zip で、`.7z` は YaraGate（`app/scan.go:56-58`）を通らず YARA が走らない。7z の別扱い・矛盾なし（magic 値以外の差分は発生しない）。
 - 記録済み DB 行の `magic` 値は再 scan（skip 解除時）で更新される範囲のみ変化。過去行の遡及更新は R-03 の実装範囲外（parent 判断）。
 
+## 実装（試行1・2026-11-07）
+
+### 合格条件の確定（段階1・記録の確定判断で閉じた）
+
+- 委譲の合格条件文言は `37 41 7A BC AF 27 1C`（7 bytes・`41` 含む）だが、本記録の差し戻し3（正典 2 系統・実ファイル実測）で確定した転記誤り。findings（`2026-11-06-claude-review-20261106-findings.md` L167・L187）も「`37 41 7A BC AF 27 1C`（7 bytes）は誤り・正典は 6 bytes `37 7A BC AF 27 1C`」で一致。日付の新しい確定判断を優先し、合格条件の fixture は正典 6 bytes `37 7A BC AF 27 1C` として実施した。`41` fixture は正典準拠実装で文言どおり合格不能（position 2–6 の shift・本記録 62–63 行）であり、正典変更ではなく転記誤りの適用として区別する（転記誤りそのものは実測で確定済み）。
+- 推奨案採用: 最小差分で hex literal 形維持（Go `377abcaf2738`→`377abcaf271c`・Python `\x27\x38`→`\x27\x1c`）。
+
+### 変更
+
+- `app/scan.go:89`: `case len(head) >= 6 && hex.EncodeToString(head[:6]) == "377abcaf271c"`（正典列）
+- `src/scan.py:79`: `if head[:6] == b"7z\xbc\xaf\x27\x1c"`（正典列）
+- `app/scan_test.go` `TestDetectMagic`: `"7z": []byte("7z\xbc\xaf\x27\x1c")` case 追加
+- `tests/test_scan.py`: `test_detect_magic_7z_canonical_signature` 追加（fixture `canonical_271c.bin` と同バイト）
+
+### 修正後の実測（fixture・両側）
+
+- Python（実運用関数 `detect_magic`）: `canonical_271c.bin`/`sig_canonical_6.bin` → `7z`、実ファイル `real.7z` → `7z`、対照 `27 38` fixture → `unknown`（正典でない literal の削除は预期どおり）
+- Go（実運用関数）: `go test` の新 case pass（`TestDetectMagic`・7z 正典列）。スクラッチの正典 copy 更新（`r03_check.go`・`r03_check3.go`）で fixture 実測: `sig_canonical_6.bin` → `7z`、`real.7z` → `7z`、対照 → `unknown`（Python と一致）
+
 ## Verification
 
+- 実装後の検証（2026-11-07・試行1): `go vet . && go test -count=1 -timeout 300s .`（app）→ pass（`ok hitomi-hub/app`・24.954s）。`python -m pytest tests/ -v` → 55 passed（R-03 fixture case 含む）・1 failed・13.01s。failed は既存の `tests/test_canonical_build_freshness.py::test_canonical_build_freshness_rule_exists`（AGENTS.md pointer 条の内容検査・AGENTS.md write-protected・R-03 と無関係の既存 failure）。合格条件（正典 fixture 6 bytes `37 7A BC AF 27 1C`・両側 detect magic = 7z）は上記実測で達成。画面確認なし（UI 非該当）。
 - 実測（2026-11-06・実装変更なし・スクラッチ `docs/ai/tmp/assess-20261106-1056/` の `r03_check.py`・`r03_check.go`・fixture 2 件・即時実行（経過時間計測なし）):
   - Python 実運用 `detect_magic`: canonical（`37 7A BC AF 27 1C`）→ `unknown`、対照（`27 38`）→ `7z`
   - Go verbatim copy（`r03_check.go`）: canonical → `unknown`、対照 → `7z`

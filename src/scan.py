@@ -76,7 +76,7 @@ def detect_magic(head: bytes) -> str:
         if brand in (b"heic", b"heix"):
             return "heif"
         return "iso-bmff"
-    if head[:6] == b"7z\xbc\xaf\x27\x38":
+    if head[:6] == b"7z\xbc\xaf\x27\x1c":
         return "7z"
     return "unknown"
 

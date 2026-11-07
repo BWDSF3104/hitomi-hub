@@ -64,6 +64,7 @@ func TestDetectMagic(t *testing.T) {
 		"png":  []byte("\x89PNG\r\n\x1a\n"),
 		"jpeg": []byte("\xff\xd8\xff"),
 		"webp": append(append([]byte("RIFF\x00\x00\x00\x00"), []byte("WEBP")...), 0),
+		"7z": []byte("7z\xbc\xaf\x27\x1c"),
 		"unknown": []byte("hello"),
 	}
 	for want, head := range cases {

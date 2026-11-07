@@ -44,6 +44,12 @@ def make_zip(path: Path, entries: dict) -> Path:
     return path
 
 
+def test_detect_magic_7z_canonical_signature():
+    # R-03: 正典 signature 6 bytes 37 7A BC AF 27 1C（7zFormat.txt・py7zr normative・実ファイル実測で一致）。fixture canonical_271c.bin と同バイト
+    head = b"7z\xbc\xaf\x27\x1c" + b"\x00\x04" + b"\x00" * 56
+    assert scan.detect_magic(head) == "7z"
+
+
 def test_clean_cbz_is_pass(tmp_path):
     cbz = make_zip(tmp_path / "Galleries" / "123" / "123.cbz", {"01.webp": PNG})
     ext, magic, findings, status = scan.scan_file(cbz, CFG)
