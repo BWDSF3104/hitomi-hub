@@ -3,16 +3,21 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
 	"database/sql"
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
+	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -382,6 +387,331 @@ func TestExportPDFStreamedPeakMemoryFitsSinglePageWorkingSet(t *testing.T) {
 	if !bytes.Contains(body, []byte(fmt.Sprintf("/Count %d", pageCount))) {
 		t.Errorf("pdf missing /Count %d", pageCount)
 	}
+}
+
+// R-14: fast path（型 switch）は opaque 内容で At() 換算と byte 一致。alpha は stored 値
+// （premultiply ではなく）を用い、非 opaque alpha がある page だけ alpha buffer を返す。
+func TestExportPDFRawRGBFastPathPixelParity(t *testing.T) {
+	refRGB := func(img image.Image) []byte {
+		bounds := img.Bounds()
+		out := make([]byte, 0, bounds.Dx()*bounds.Dy()*3)
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r, g, b, _ := img.At(x, y).RGBA()
+				out = append(out, byte(r>>8), byte(g>>8), byte(b>>8))
+			}
+		}
+		return out
+	}
+	rng := rand.New(rand.NewSource(1))
+
+	w, h := 37, 23
+	nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := range nrgba.Pix {
+		nrgba.Pix[i] = uint8(rng.Intn(256))
+	}
+	for i := 3; i < len(nrgba.Pix); i += 4 {
+		nrgba.Pix[i] = 255
+	}
+	rgb, alpha, nonOpaque := rawRGB(nrgba, nil, nil)
+	if nonOpaque || alpha != nil {
+		t.Fatalf("NRGBA opaque: got nonOpaque=%v alpha=%v", nonOpaque, alpha)
+	}
+	if !bytes.Equal(rgb, refRGB(nrgba)) {
+		t.Fatalf("NRGBA opaque: fast path bytes != At() bytes")
+	}
+
+	rgba := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := range rgba.Pix {
+		rgba.Pix[i] = uint8(rng.Intn(256))
+	}
+	for i := 3; i < len(rgba.Pix); i += 4 {
+		rgba.Pix[i] = 255
+	}
+	rgb, alpha, nonOpaque = rawRGB(rgba, nil, nil)
+	if nonOpaque || alpha != nil {
+		t.Fatalf("RGBA opaque: got nonOpaque=%v", nonOpaque)
+	}
+	if !bytes.Equal(rgb, refRGB(rgba)) {
+		t.Fatalf("RGBA opaque: fast path bytes != At() bytes")
+	}
+
+	// 個別 ratio の添字（COffset）一致を odd size で確認。
+	for _, ratio := range []image.YCbCrSubsampleRatio{
+		image.YCbCrSubsampleRatio444, image.YCbCrSubsampleRatio422,
+		image.YCbCrSubsampleRatio420, image.YCbCrSubsampleRatio440,
+		image.YCbCrSubsampleRatio411, image.YCbCrSubsampleRatio410,
+	} {
+		w, h := 37, 23
+		ycc := image.NewYCbCr(image.Rect(0, 0, w, h), ratio)
+		for i := range ycc.Y {
+			ycc.Y[i] = uint8(rng.Intn(256))
+		}
+		for i := range ycc.Cb {
+			ycc.Cb[i] = uint8(rng.Intn(256))
+			ycc.Cr[i] = uint8(rng.Intn(256))
+		}
+		rgb, _, _ := rawRGB(ycc, nil, nil)
+		if !bytes.Equal(rgb, refRGB(ycc)) {
+			t.Fatalf("YCbCr %v: fast path bytes != At() bytes", ratio)
+		}
+	}
+
+	// NYCbCrA（alpha あり）の stored 値 semantics: pixel (1,0) semi-transparent, (1,2) fully transparent。
+	w, h = 5, 4
+	a := image.NewNYCbCrA(image.Rect(0, 0, w, h), image.YCbCrSubsampleRatio420)
+	for i := range a.Y {
+		a.Y[i] = 128
+	}
+	for i := range a.Cb {
+		a.Cb[i] = 128
+		a.Cr[i] = 128
+	}
+	for i := range a.A {
+		a.A[i] = 255
+	}
+	a.A[a.YOffset(1, 0)] = 128
+	a.A[a.YOffset(1, 2)] = 0
+	rgb, alpha, nonOpaque = rawRGB(a, nil, nil)
+	if !nonOpaque || len(alpha) != w*h {
+		t.Fatalf("NYCbCrA alpha: nonOpaque=%v alpha len=%d", nonOpaque, len(alpha))
+	}
+	if alpha[1] != 128 || alpha[11] != 0 { // j = y*w + x: (1,0)=1, (1,2)=11
+		t.Fatalf("NYCbCrA alpha stream: got %d/%d want 128/0", alpha[1], alpha[11])
+	}
+	// Y=128,Cb=128,Cr=128 → stored RGB (128,128,128)。At() premultiply なら alpha=0/128 で 0 に寄る
+	// （(1,2) は At() 経由で 0 になるはず → fast path は stored 128 を保つ）
+	if rgb[3] != 128 || rgb[33] != 128 { // pixel (1,0)=j1→rgb idx 3, (1,2)=j11→rgb idx 33
+		t.Fatalf("NYCbCrA stored RGB: got %d/%d want 128/128", rgb[3], rgb[33])
+	}
+	if ref := refRGB(a); ref[33] == 128 {
+		t.Fatalf("At() reference should premultiply (1,2) to 0 for this fixture (alpha=0)")
+	}
+
+	// NRGBA alpha（record の fixture 相当）: (0,1)=(40,70,80,0), (0,2)=(40,80,80,128)。
+	nrgba2 := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	nrgba2.SetNRGBA(0, 1, color.NRGBA{40, 70, 80, 0})
+	nrgba2.SetNRGBA(0, 2, color.NRGBA{40, 80, 80, 128})
+	nrgba2.SetNRGBA(1, 3, color.NRGBA{50, 90, 85, 255})
+	rgb, alpha, nonOpaque = rawRGB(nrgba2, nil, nil)
+	if !nonOpaque {
+		t.Fatal("NRGBA alpha: expected nonOpaque")
+	}
+	// j = y*w + x。pixel (0,1): stored (40,70,80)（At() premultiply なら 0 に寄る）
+	if rgb[24] != 40 || rgb[25] != 70 || rgb[26] != 80 || alpha[8] != 0 {
+		t.Fatalf("NRGBA pixel (0,1): rgb=%d,%d,%d alpha=%d want 40,70,80,0", rgb[24], rgb[25], rgb[26], alpha[8])
+	}
+	if rgb[48] != 40 || rgb[49] != 80 || rgb[50] != 80 || alpha[16] != 128 {
+		t.Fatalf("NRGBA pixel (0,2): rgb=%d,%d,%d alpha=%d want 40,80,80,128", rgb[48], rgb[49], rgb[50], alpha[16])
+	}
+	if rgb[75] != 50 || rgb[76] != 90 || rgb[77] != 85 || alpha[25] != 255 {
+		t.Fatalf("NRGBA pixel (1,3): rgb=%d,%d,%d alpha=%d want 50,90,85,255", rgb[75], rgb[76], rgb[77], alpha[25])
+	}
+}
+
+// R-14: alpha を保持した page は `/SMask`（DeviceGray・Flate）を追加 object として書く。
+// opaque のみの page は byte 形式が従来と同一（既存テストで確認済み）。
+func TestExportPDFWritesSMaskForNonOpaqueAlpha(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	if err := recordDiscovered(db, 7, "Galleries/7"); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	img.SetNRGBA(0, 1, color.NRGBA{40, 70, 80, 0})
+	img.SetNRGBA(0, 2, color.NRGBA{40, 80, 80, 128})
+	img.SetNRGBA(1, 3, color.NRGBA{50, 90, 85, 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	writeExportFile(t, root, "Galleries/7/alphahash.png", buf.Bytes())
+	if err := recordFile(db, filepath.Join("Galleries", "7", "alphahash.png"), validGalleryID(7), "alphahash", int64(buf.Len()), "png", "png", "not_evaluated", "structural"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordPage(db, 7, 1, "alphahash"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := exportPDF(db, exportTestCfg(), root, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(result["output"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	streamOf := func(objNum int) map[string]int {
+		// find "N 0 obj", dict up to "stream\n", stream up to "\nendstream"
+		start := bytes.Index(body, []byte(fmt.Sprintf("%d 0 obj\n", objNum)))
+		if start < 0 {
+			t.Fatalf("object %d not found", objNum)
+		}
+		sIdx := bytes.Index(body[start:], []byte("stream\n"))
+		if sIdx < 0 {
+			t.Fatalf("object %d has no stream", objNum)
+		}
+		sStart := start + sIdx + len("stream\n")
+		eIdx := bytes.Index(body[sStart:], []byte("\nendstream\n"))
+		if eIdx < 0 {
+			t.Fatalf("object %d has no endstream", objNum)
+		}
+		return map[string]int{"dictStart": start, "streamStart": sStart, "streamLen": eIdx}
+	}
+
+	imageObj := streamOf(5)
+	dict := string(body[imageObj["dictStart"] : imageObj["dictStart"]+bytes.Index(body[imageObj["dictStart"]:], []byte("stream\n"))])
+	if !strings.Contains(dict, "/ColorSpace /DeviceRGB") {
+		t.Fatalf("image dict missing DeviceRGB: %q", dict)
+	}
+	if !strings.Contains(dict, "/SMask 6 0 R") {
+		t.Fatalf("image dict missing /SMask 6 0 R: %q", dict)
+	}
+	if !strings.Contains(dict, fmt.Sprintf("/Length %d", imageObj["streamLen"])) {
+		t.Fatalf("image /Length mismatch: %q vs stream %d", dict, imageObj["streamLen"])
+	}
+	smaskObj := streamOf(6)
+	sDict := string(body[smaskObj["dictStart"] : smaskObj["dictStart"]+bytes.Index(body[smaskObj["dictStart"]:], []byte("stream\n"))])
+	if !strings.Contains(sDict, "/ColorSpace /DeviceGray") {
+		t.Fatalf("smask dict missing DeviceGray: %q", sDict)
+	}
+	if !strings.Contains(sDict, fmt.Sprintf("/Length %d", smaskObj["streamLen"])) {
+		t.Fatalf("smask /Length mismatch: %q vs stream %d", sDict, smaskObj["streamLen"])
+	}
+
+	zread := func(start, n int) []byte {
+		r, err := zlib.NewReader(bytes.NewReader(body[start : start+n]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out) != 8*8*3 && len(out) != 8*8 {
+			t.Fatalf("unexpected decompressed size %d", len(out))
+		}
+		return out
+	}
+	rgb := zread(imageObj["streamStart"], imageObj["streamLen"])
+	alpha := zread(smaskObj["streamStart"], smaskObj["streamLen"])
+	if len(rgb) != 8*8*3 || len(alpha) != 8*8 {
+		t.Fatalf("decompressed sizes: rgb=%d alpha=%d", len(rgb), len(alpha))
+	}
+	for _, p := range []struct {
+		x, y int
+		rgb  [3]byte
+		a    byte
+	}{
+		{0, 1, [3]byte{40, 70, 80}, 0},
+		{0, 2, [3]byte{40, 80, 80}, 128},
+		{1, 3, [3]byte{50, 90, 85}, 255},
+	} {
+		j := p.y*8 + p.x
+		// fully transparent pixel must not be black in the RGB stream (black=True was the bug)
+		if rgb[j*3] != p.rgb[0] || rgb[j*3+1] != p.rgb[1] || rgb[j*3+2] != p.rgb[2] {
+			t.Errorf("pixel (%d,%d): rgb stream got %d,%d,%d want %d,%d,%d (black=%v)",
+				p.x, p.y, rgb[j*3], rgb[j*3+1], rgb[j*3+2], p.rgb[0], p.rgb[1], p.rgb[2],
+				rgb[j*3] == 0 && rgb[j*3+1] == 0 && rgb[j*3+2] == 0)
+		}
+		if alpha[j] != p.a {
+			t.Errorf("pixel (%d,%d): alpha got %d want %d", p.x, p.y, alpha[j], p.a)
+		}
+	}
+
+	// xref offset は file 実バイト上の object を指す（strict parser 回帰ガード）。
+	xrefStart := bytes.LastIndex(body, []byte("xref\n0 "))
+	if xrefStart < 0 {
+		t.Fatal("xref not found")
+	}
+	sizeStart := xrefStart + len("xref\n0 ")
+	sizeEnd := sizeStart + bytes.IndexByte(body[sizeStart:], '\n')
+	if sizeEnd < 0 {
+		t.Fatal("xref size line missing")
+	}
+	if string(body[sizeStart:sizeEnd]) != "7" {
+		t.Fatalf("xref size: got %q want 7 (objects 0..6)", string(body[sizeStart:sizeEnd]))
+	}
+	xrefBlockStart := sizeEnd + 1 + 20 // skip the `f` entry line (object 0)
+	for num := 1; num <= 6; num++ {
+		line := body[xrefBlockStart : xrefBlockStart+20]
+		offset, err := strconv.Atoi(string(line[:10]))
+		if err != nil {
+			t.Fatalf("xref entry %d parse: %v line %q", num, err, line)
+		}
+		if !bytes.HasPrefix(body[offset:], []byte(fmt.Sprintf("%d 0 obj\n", num))) {
+			t.Fatalf("xref entry %d offset %d does not point to %d 0 obj", num, offset, num)
+		}
+		xrefBlockStart += 20
+	}
+}
+
+// R-14: `.jpg` entry は decode せず保存済みバイトを DCTDecode stream へ embed する。
+// invalid .jpg は undecodable skip 維持（skipped セマンティクス非触）。
+func TestExportPDFEmbedsJpegAsDCTDecode(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	if err := recordDiscovered(db, 8, "Galleries/8"); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 5, 7))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	jpegBytes := buf.Bytes()
+	writeExportFile(t, root, "Galleries/8/jpg1hash.jpg", jpegBytes)
+	writeExportFile(t, root, "Galleries/8/jpg2hash.jpg", []byte("not-a-jpeg"))
+	for _, name := range []string{"jpg1hash.jpg", "jpg2hash.jpg"} {
+		if err := recordFile(db, filepath.Join("Galleries", "8", name), validGalleryID(8), "0", int64(len(name)), "jpg", "jpg", "not_evaluated", "structural"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := recordPage(db, 8, 1, "jpg1hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordPage(db, 8, 2, "jpg2hash"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := exportPDF(db, exportTestCfg(), root, 8, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["pages"] != 1 || result["skipped"].(map[string]int)["undecodable"] != 1 {
+		t.Fatalf("export: %v", result)
+	}
+	body, err := os.ReadFile(result["output"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := bytes.Index(body, []byte("3 0 obj\n"))
+	if start < 0 {
+		t.Fatal("page object not found")
+	}
+	if !bytes.Contains(body[start:], []byte("/MediaBox [0 0 5 7]")) {
+		t.Errorf("MediaBox missing jpeg dims (header parse): %q", string(body[start:start+120]))
+	}
+	objStart := bytes.Index(body, []byte("5 0 obj\n"))
+	if objStart < 0 {
+		t.Fatal("image object not found")
+	}
+	objEnd := objStart + bytes.Index(body[objStart:], []byte("endobj"))
+	imageObj := body[objStart:objEnd]
+	if !bytes.Contains(imageObj, []byte("/Filter /DCTDecode")) {
+		t.Fatalf("image object is not DCTDecode: %q", string(imageObj))
+	}
+	dictEnd := objStart + bytes.Index(body[objStart:], []byte("stream\n"))
+	if !bytes.Contains(imageObj, []byte(fmt.Sprintf("/Length %d", len(jpegBytes)))) {
+		t.Fatalf("DCT /Length mismatch: %q want %d", string(imageObj), len(jpegBytes))
+	}
+	sStart := dictEnd + len("stream\n")
+	if !bytes.Equal(body[sStart:sStart+len(jpegBytes)], jpegBytes) {
+		t.Fatal("embedded stream bytes != stored jpg file bytes")
+	}
+	if !bytes.Contains(body[sStart+len(jpegBytes):sStart+len(jpegBytes)+len("\nendstream\n")], []byte("\nendstream\n")) {
+		t.Fatal("endstream missing after DCT stream")
+	}
+	_ = objEnd
 }
 
 func TestExportTraversalUsesSharedSegmentCriteria(t *testing.T) {
