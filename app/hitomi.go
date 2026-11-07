@@ -90,6 +90,9 @@ type boundedCacheEntry interface {
 }
 
 func boundedCachePut[K comparable, E boundedCacheEntry](cache map[K]E, totalBytes *int, maxEntries, maxBytes int, key K, entry E) {
+	if old, ok := cache[key]; ok {
+		*totalBytes -= old.entrySize()
+	}
 	cache[key] = entry
 	*totalBytes += entry.entrySize()
 	for len(cache) > maxEntries || *totalBytes > maxBytes {

@@ -2,7 +2,7 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: 実施開始指示待ち。合格条件: 同一 key の再 insert で totalBytes が水増ししない（上書き時は old entrySize を引いてから加算）。記録: 2026-11-06-claude-review-20261106-findings.md R-01
 
@@ -57,9 +57,18 @@ helper 1 箇所で 5 cache すべてを網羅（`searchCache`/`indexDataCache`/`
 ## Verification
 
 - `go vet .`（app）: clean。
-- scratch 実測: `go test -overlay "S:/Documents/Kilo_Commons/hitomi-hub/docs/ai/tmp/assess-20261106-1056/overlay.json" -run "TestR01Measure" -v .`（app）→ 3 tests FAIL（FAIL は bug 確認としての想定。water増し total=48/48、早 eviction len=1 を観測）。経過 0.920s。
+- scratch 実測: `go test -overlay "S:/Documents/Kilo_Commons/hitomi-hub/docs/ai/tmp/assess-20261106-1056/overlay.json" -run "TestR01Measure" -v .`（app）→ 3 tests FAIL（FAIL は bug 確認としての想定。水増し total=48/48、早 eviction len=1 を観測）。経過 0.920s。
 - 既存 suite（上書き guard なしの確認・baseline）: `go test -count=1 -timeout 300s .`（app）→ ok 26.945s（追加テストなし・既存全通過）。
 - 実装実施時（承認後）: helper 修正＋上書き accounting 回帰テスト追加 → `go vet . && go test -count=1 -timeout 300s .`（app）で確認。
+
+### 実装＋回帰テスト（2026-11-07・実作業）
+
+- 採用判断: 推奨案（段階1）。`app/hitomi.go` の `boundedCachePut` 冒頭に既存 key の減算を追加（`if old, ok := cache[key]; ok { *totalBytes -= old.entrySize() }`）。回帰テスト 3 件を `app/hitomi_test.go` に追加（scratch と同形状・合格値を assert: 正味 8・正味 16 len=2 双方 survive・本番経路 bytes=8）。
+- `go vet .`（app）: clean。
+- `go test -count=1 -timeout 300s .`（app）→ ok 26.659s（既存＋新規全通過。修正前の scratch 実測で FAIL した 3 ケースが修正後 PASS へ反転）。
+- 新規回帰テスト個別実行（`-run "...ReplacesOldEntryAccounting|...PrematurelyEvictWithinCap|...TTLRefetchOverwriteKeepsNetAccounting" -v`）→ 3/3 PASS（0.923s）。合格条件（正味 total=8・早 eviction なし）を実測で確認。
+- `python -m pytest tests/ -v` → 54 passed / 1 failed（`test_canonical_build_freshness_rule_exists`・既知 failure。AGENTS.md Rules 条の集約が原因。本項目は Python 非変更・本項目の不合格ではない）。
+- 試行回数: 1（初回で合格条件を満たす）。UI 変更なし → 画面確認不要（ルール上）。
 
 ## 完了時 Memory Bank 操作
 

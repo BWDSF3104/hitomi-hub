@@ -1,6 +1,5 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	優先順位確定（assess-20261106-1056）。実施開始指示待ち。承認案件: R-04 歴史記録・R-05 命名・R-14 alpha/format・R-16 atomic scope・R-17 B1・R-18 page化。R-18 は対応不要で終了。R-19 実例待ち。known-issue: KI-20261106-04（pytest 既存 failure）。決定: docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md
-docs/ai/tasks/2026-11-06-r01-bounded-cache-put-overwrite-double-count.md	進行中	実施開始指示待ち。合格条件: 同一 key の再 insert で totalBytes が水増ししない（上書き時は old entrySize を引いてから加算）。記録: 2026-11-06-claude-review-20261106-findings.md R-01
 docs/ai/tasks/2026-11-06-r02-go-ispe-window-parity.md	進行中	実施開始指示待ち。合格条件: e_lfanew >= 64 の実在 PE fixture で mz_without_pe_header 非 hit（Python 版 seek 実装と対称）。記録: R-02
 docs/ai/tasks/2026-11-06-r03-7z-magic-last-byte.md	進行中	実施開始指示待ち。合格条件: 正典 magic 37 41 7A BC AF 27 1C の fixture で detect magic = 7z（Go・Python 両側）。記録: R-03
 docs/ai/tasks/2026-11-06-r04-record-file-missing-flag-reset.md	進行中	実施開始指示待ち。合格条件: external_removal 記録後に同 path 再 record で missing_at_verify = 0 へ戻り、verifyMissing が再度検出。記録: R-04

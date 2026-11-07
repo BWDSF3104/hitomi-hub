@@ -1642,3 +1642,70 @@ func TestClientRecordsFetchMetricsForMockFetch(t *testing.T) {
 		t.Errorf("metrics version calls: got %v", metric)
 	}
 }
+
+// R-01 回帰テスト: 同一 key の上書き insert は old entry の entrySize を引いてから
+// new を加算する（正味 accounting）。docs/ai/tasks/2026-11-06-r01-bounded-cache-put-overwrite-double-count.md。
+func TestBoundedCachePutOverwriteReplacesOldEntryAccounting(t *testing.T) {
+	cache := map[string]*searchCacheEntry{}
+	total := 0
+	base := time.Now()
+
+	boundedCachePut(cache, &total, 10, 1000, "a", &searchCacheEntry{ids: []int{1, 2, 3, 4, 5}, fetchedAt: base, lastAccess: base})
+	if total != 40 || len(cache) != 1 {
+		t.Fatalf("baseline wrong: total=%d len=%d", total, len(cache))
+	}
+
+	boundedCachePut(cache, &total, 10, 1000, "a", &searchCacheEntry{ids: []int{6}, fetchedAt: base.Add(time.Second), lastAccess: base.Add(time.Second)})
+	if total != 8 || len(cache) != 1 {
+		t.Errorf("same-key overwrite must replace accounting: total=%d (want 8) len=%d", total, len(cache))
+	}
+}
+
+func TestBoundedCachePutOverwriteDoesNotPrematurelyEvictWithinCap(t *testing.T) {
+	cache := map[string]*searchCacheEntry{}
+	total := 0
+	base := time.Now()
+
+	boundedCachePut(cache, &total, 10, 48, "a", &searchCacheEntry{ids: []int{1, 2, 3, 4, 5}, fetchedAt: base, lastAccess: base})
+	boundedCachePut(cache, &total, 10, 48, "b", &searchCacheEntry{ids: []int{6}, fetchedAt: base, lastAccess: base})
+	if len(cache) != 2 || total != 48 {
+		t.Fatalf("baseline wrong: total=%d len=%d", total, len(cache))
+	}
+
+	boundedCachePut(cache, &total, 10, 48, "a", &searchCacheEntry{ids: []int{7}, fetchedAt: base.Add(time.Second), lastAccess: base.Add(time.Second)})
+	if _, ok := cache["a"]; !ok {
+		t.Error("overwritten key must survive")
+	}
+	if _, ok := cache["b"]; !ok {
+		t.Errorf("survivor within true-bytes cap must not be evicted by inflated accounting: total=%d len=%d", total, len(cache))
+	}
+	if total != 16 || len(cache) != 2 {
+		t.Errorf("net accounting after overwrite: total=%d (want 16) len=%d (want 2)", total, len(cache))
+	}
+}
+
+func TestSearchNozomiPartsTTLRefetchOverwriteKeepsNetAccounting(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig(), searchCacheMaxEntries: 10, searchCacheMaxBytes: 1000, testGateIntervalMS: 1}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return beIDs([]uint32{10, 11, 12, 13, 14}), nil
+	}
+	state := &searchState{area: "tag", tag: "female:yuri", language: "all"}
+	if _, err := c.SearchNozomiParts(state); err != nil {
+		t.Fatal(err)
+	}
+	if c.searchCacheBytes != 40 {
+		t.Fatalf("baseline wrong: bytes=%d", c.searchCacheBytes)
+	}
+
+	// TTL miss は entry を map から消さない。refetch は同一 key 上書き put になる。
+	c.searchCache["tag|female:yuri|all"].fetchedAt = time.Now().Add(-2 * time.Hour)
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return beIDs([]uint32{20}), nil
+	}
+	if _, err := c.SearchNozomiParts(state); err != nil {
+		t.Fatal(err)
+	}
+	if c.searchCacheBytes != 8 || len(c.searchCache) != 1 {
+		t.Errorf("TTL-miss refetch overwrite must keep net accounting: bytes=%d (want 8) len=%d", c.searchCacheBytes, len(c.searchCache))
+	}
+}
