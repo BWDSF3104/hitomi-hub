@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS scan_cache (
     cached_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS scan_meta (
+    path TEXT PRIMARY KEY,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL,

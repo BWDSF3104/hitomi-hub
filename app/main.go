@@ -230,7 +230,7 @@ func resolveRoot(explicit string) string {
 	return cwd
 }
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 // execer は Exec のみ。fake が *sql.Row を作れないため commit 回数テストの interfaces は Exec だけで足りる
 type execer interface {
@@ -320,6 +320,10 @@ func ensureSchema(db *sql.DB) error {
 // 追加する。列追加のみ・既存行を削除しない（同じ D-03 非破壊迁移規約）。
 // schemaVersion 7（saved-as-event-record・decision 2026-11-06）: read_state へ saved_at を
 // 追加する。列追加のみ・既存行を削除しない（同じ D-03 非破壊迁移規約）。
+// schemaVersion 8（R-06・assess-20261106-1056）: path キーの scan_meta を新設する（同一 sha256 の
+// 複数 path で meta が 1 組の上書きにより skip が双方再ハッシュへ退化する点の修正）。追加のみ・
+// 既存表の PK 変更・既存行削除なし（同じ D-03 非破壊迁移規約）。正典 DB は次回 ensureSchema 実行で
+// 自然に揃う。既存 scan_meta 記録のない file は skip 判定できないため再ハッシュ（安全側）。
 func migrateSchema(db *sql.DB, current int) error {
 	if current >= schemaVersion {
 		return nil
@@ -345,6 +349,11 @@ func migrateSchema(db *sql.DB, current int) error {
 	}
 	if current < 7 {
 		if err := ensureReadStateSavedAt(db); err != nil {
+			return err
+		}
+	}
+	if current < 8 {
+		if err := ensureScanMetaTable(db); err != nil {
 			return err
 		}
 	}
@@ -464,6 +473,16 @@ func ensureScanCacheSizeMtime(db *sql.DB) error {
 	return nil
 }
 
+// ensureScanMetaTable は scan_meta（path PRIMARY KEY・size / mtime）を新設する（R-06・schemaVersion 8）。
+// 追加のみ・既存表の PK 変更・既存行削除なし（D-03 非破壊迁移規約）。新 DB は schema.sql 定義で揃う
+// （正典 DB は次回 ensureSchema 実行で自然に揃う）。scan_cache の size / mtime 列は VT verdict 表の
+// 既存定義としてそのまま残す（skip 判定源ではない）。
+func ensureScanMetaTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS scan_meta (
+		path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL)`)
+	return err
+}
+
 const findingsUniqueIndexSQL = "CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_unique ON findings(path, sha256, rule, detail)"
 
 func normalizeIndexSQL(s string) string {
@@ -530,26 +549,26 @@ func cacheStore(db dbExec, sha, verdict, engine, threat, detail string) error {
 	return err
 }
 
-// recordScanMeta は scan 済み file の size / mtime を scan_cache に記録する（A-12 skip 判定）。
-// 既存 VT verdict 行は size / mtime のみを更新し、verdict / cached_at（TTL 判定）を変えない。
-// scan_cache は VT verdict 行でも scan meta 行（verdict = ''）でも skip 判定に使える。
-func recordScanMeta(db dbExec, sha string, size, mtime int64) error {
-	_, err := db.Exec(`INSERT INTO scan_cache (sha256, size, mtime, verdict, engine, threat_name, detail, cached_at)
-		VALUES (?, ?, ?, '', '', '', '', ?)
-		ON CONFLICT(sha256) DO UPDATE SET size = excluded.size, mtime = excluded.mtime`,
-		sha, size, mtime, nowISO())
+// recordScanMeta は scan 済み file の size / mtime を path キーの scan_meta に記録する（A-12 skip
+// 判定・R-06）。同一 sha256 の複数 path は path ごとに meta を持つため、後登録が前登録を上書きしない。
+// scan_cache は VT verdict 表（sha256 キー）として維持し、meta 記録は書かない（cacheLookup 意味不变）。
+// 記録のない path は skip 判定できないため再ハッシュ（安全側）。
+func recordScanMeta(db dbExec, path string, size, mtime int64) error {
+	_, err := db.Exec(`INSERT INTO scan_meta (path, size, mtime) VALUES (?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime`,
+		path, size, mtime)
 	return err
 }
 
-// scanSkipStatus は A-12 の skip 判定。scan_cache(sha256,size,mtime) を path 記録（files）
-// 経由で引き、size / mtime が一致すれば unchanged（scan_status は維持）。不一致
-// （size / mtime 差異・列 NULL・record なし・external_removal）は再ハッシュ（安全側）。
+// scanSkipStatus は A-12 の skip 判定（R-06: path キーの scan_meta を path 直接参照）。size / mtime
+// が一致すれば unchanged（scan_status は files から維持）。不一致（size / mtime 差異・record なし・
+// external_removal）は再ハッシュ（安全側）。
 // skip は findings 再 insert も VT gate も走らせない（gate / quota 回数を増やさない）。
 func scanSkipStatus(db dbExec, rel string, size, mtime int64) (string, bool) {
 	var storedSize, storedMtime sql.NullInt64
 	var status string
-	err := db.QueryRow(`SELECT sc.size, sc.mtime, f.scan_status FROM scan_cache sc
-		JOIN files f ON f.sha256 = sc.sha256 WHERE f.path = ?`, rel).
+	err := db.QueryRow(`SELECT sm.size, sm.mtime, f.scan_status FROM scan_meta sm
+		JOIN files f ON f.path = sm.path WHERE sm.path = ?`, rel).
 		Scan(&storedSize, &storedMtime, &status)
 	if err == sql.ErrNoRows {
 		return "", false
@@ -888,7 +907,7 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 			return status
 		}
 	}
-	if err := recordScanMeta(tx, sha, info.Size(), info.ModTime().Unix()); err != nil {
+	if err := recordScanMeta(tx, rel, info.Size(), info.ModTime().Unix()); err != nil {
 		logScanError(err)
 		return status
 	}

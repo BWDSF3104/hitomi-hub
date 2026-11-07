@@ -2,9 +2,9 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 実施開始指示待ち。合格条件: 同一 sha256 の 2 path（Galleries と acquisition）を 1 scan 後 2 scan で双方 hash 計算 0。key に path を含めるか path 別 meta 表。記録: R-06（A-12 の残存点）
+**Next Action**: 完了（A1 path-key scan_meta 実装・合格条件テスト固定 PASS・CLI 実測 run2双方 hash 0）
 
 ## 意図 / 背景
 
@@ -47,7 +47,26 @@ A-12（`docs/ai/tasks/2026-11-03-a12-sha256-every-scan.md`）は scan で size/m
 
 推定規模: 小（schema.sql・migrateSchema・`recordScanMeta`・`scanSkipStatus`・固定テスト 1 件の更新）。
 
+### 実装（2026-11-07・採用案 A1）
+
+- 採用: 推奨 A1（path キー meta 表 `scan_meta(path PRIMARY KEY, size, mtime)` 新設）。根拠: 追加のみで D-03 非破壊迁移規約に収まる。`scan_cache` は VT verdict 表として sha256 キー維持。
+- 変更点: schema.sql へ `scan_meta` 追加（新表・既存表 PK 変更なし）。`schemaVersion` 7→8・`migrateSchema` に `ensureScanMetaTable`（CREATE TABLE IF NOT EXISTS のみ）追加。`recordScanMeta` を path キーの scan_meta upsert へ、`scanSkipStatus` を path 直接参照（scan_meta JOIN files）へ変更。呼び出し側 `processFileWithYara` は rel path を渡す。
+- 記録と実コードの差異（軽微・実装継続）: 記録の `src/schema.sql` 参照は正典構造記載由来。実ファイルはルート `schema.sql`（`TestDataFilesAtRoot`・`ensureSchema` の dataDir 参照先）。scan_cache 定義の行番号 31-40 は実ファイルと一致。
+- 固定テスト: `TestProcessFileSkipsUnchangedFileBySizeAndMtime` の「record なし（行削除）」源を scan_cache → scan_meta（path キー）へ更新（記録済みの実施時作業）。R-06 合格条件固定テストを 1 件追加（同一 sha256 の 2 path・1 scan 後 2 scan で双方 hash 0）。
+- `scan_test.go:622` のコメント（「Go 側は scan meta 行（verdict=''）を常に書く」）は本変更後 stale になるが、アサート（pass verdict 行なし）は有効なため他項目テストには触れない（scan meta 行は scan_meta へ移動）。
+
 ## Verification
+
+### 実装検証（2026-11-07・試行 1 回で合格）
+
+- `go vet .`（app）: clean。
+- `go test -count=1 -timeout 300s .`（app）: ok 25.808s（全 PASS）。内訳確認（単独 -run）: `TestProcessFileSkipsPerPathForSameSha256AcrossTwoPaths`（R-06 合格条件固定・追加）PASS 0.04s・`TestProcessFileSkipsUnchangedFileBySizeAndMtime`（源更新 scan_meta へ）PASS 0.05s・`TestProcessFileRehashesOnSizeMismatchAndExternalRemoval` PASS・`TestMigrateSchemaAddsScanCacheSizeMtimeWithoutDeletingRows` PASS（scan_cache 列追加迁移不変）。
+- 追加テストの合格条件固定: 同一 sha256 の 2 path（同一 bytes・mtime 差）→ scan 1 で hash 2・scan 2 で hash 0（双方 skip・skipped=2・findings 同一・scan_meta 2 行で mtime を path ごとに保持）。
+- `python -m pytest tests/ -v`（root）: 56 passed・1 FAILED（12.09s）。失敗は現存既知 failure `test_canonical_build_freshness_rule_exists`（KI-20261106-04・AGENTS.md pointer 欠落）。R-06 と無関係（本項目で修復しない・AGENTS.md は write-protected）。pytest は schema.sql の scan_meta 追加（ensure_schema の executescript）で影響なし（Python 参照実装に skip 分岐なし）。
+- CLI 実機確認（throwaway build `hub.exe`・scratch `docs/ai/tmp/assess-20261106-1056/implement-r06/`・`--no-vt`・YARA off（config.example.json yr null）・scratch data-dir へ schema.sql・config.example.json コピー・正典 DB・完成フォルダ未使用）: 同一内容 61 B の 2 path（`Galleries\110001\dup.cbz`・`Galleries\110002\dup.cbz`・mtime 差 90 s）。run1 `skipped=0`（hash 2）。run2 `skipped=2` → 双方 hash 計算 0（合格条件充足・修正前は steady state で skipped=0）。run3（dup1 mtime 変更のみ）`skipped=1`・rehash 1: dup2 の path 別 meta が保持され skip 維持（sha 1 組 meta の flip 影響がないことの実測）。run4 安定後 `skipped=2`。出力は run1→run4 の順で一致。脚本 `r06_check.ps1`・output 記録（scratch 内）。画面確認: UI 非関連のため該当なし。
+- 正典 build（output/hitomi-hub/hub.exe）の再 build は本項目の合格条件に既定されていない（UI 非関連・Commit Checklist の UI 条非該当）。
+
+### 調査時の検証（2026-11-06）
 
 - `go vet .`: clean（app・2026-11-06）
 - `go test -count=1 -timeout 300s .`（app）: ok 25.963s（全 PASS・既存テストが本挙動を固定していないことを suite pass で確認）

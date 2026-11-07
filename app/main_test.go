@@ -975,12 +975,13 @@ func TestProcessFileSkipsUnchangedFileBySizeAndMtime(t *testing.T) {
 		t.Errorf("findings must stay identical after mtime mismatch rehash")
 	}
 
-	// scan_cache record なし（行削除）は再ハッシュ（安全側）
-	sha, err := Sha256File(path)
+	// scan_meta record なし（行削除）は再ハッシュ（安全側）。R-06（schemaVersion 8）で meta 源は
+	// path キーの scan_meta（scan_cache は VT verdict 表のみ）
+	rel, err := filepath.Rel(dir, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("DELETE FROM scan_cache WHERE sha256 = ?", sha); err != nil {
+	if _, err := db.Exec("DELETE FROM scan_meta WHERE path = ?", rel); err != nil {
 		t.Fatal(err)
 	}
 	summary4 := map[string]int{}
@@ -988,7 +989,7 @@ func TestProcessFileSkipsUnchangedFileBySizeAndMtime(t *testing.T) {
 		t.Errorf("missing record status: got %s", status)
 	}
 	if hashCalls != 3 {
-		t.Errorf("missing scan_cache record must rehash: hashCalls %d want 3", hashCalls)
+		t.Errorf("missing scan_meta record must rehash: hashCalls %d want 3", hashCalls)
 	}
 	if findingsSnapshot(t, db) != findings1 {
 		t.Errorf("findings must stay identical after missing record rehash")
@@ -1065,6 +1066,96 @@ func TestProcessFileRehashesOnSizeMismatchAndExternalRemoval(t *testing.T) {
 	}
 	if summary4["skipped"] != 0 {
 		t.Errorf("external_removal must not be counted as skipped: got %v", summary4)
+	}
+}
+
+// R-06 合格条件固定（assess-20261106-1056）: 同一 sha256 の 2 path は meta を path ごとに持つ。
+// 1 scan 後の 2 scan で双方の hash 計算回数は 0（skip）。修正前の sha256 1 組 meta の上書き
+// では steady state で双方再ハッシュ（skip 完全喪失）。
+func TestProcessFileSkipsPerPathForSameSha256AcrossTwoPaths(t *testing.T) {
+	db := openTestDB(t)
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+
+	// 同一 bytes（同一 sha256）の 2 path。mtime は path ごとに異なる（上書きでは一方必ず不一致）
+	path1 := makeZip(t, dir1, map[string]string{"ok.txt": "y"})
+	data, err := os.ReadFile(path1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path2 := filepath.Join(dir2, "second.cbz") // path PK（rel）衝突を避ける
+	if err := os.WriteFile(path2, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t1 := time.Now().Add(-3 * time.Hour)
+	t2 := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path1, t1, t1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path2, t2, t2); err != nil {
+		t.Fatal(err)
+	}
+
+	hashCalls := 0
+	origHash := hashFunc
+	hashFunc = func(p string) (string, error) {
+		hashCalls++
+		return origHash(p)
+	}
+	defer func() { hashFunc = origHash }()
+
+	c := cfg()
+	c.Yr = ""
+
+	// scan 1: 双方 hash・path 別 meta（scan_meta）記録
+	summary1 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir1, path1, summary1, nil); status != "pass" {
+		t.Fatalf("run 1 path1 status: got %s", status)
+	}
+	if status := processFile(db, c, &RateState{}, dir2, path2, summary1, nil); status != "pass" {
+		t.Fatalf("run 1 path2 status: got %s", status)
+	}
+	if hashCalls != 2 {
+		t.Fatalf("run 1 hash calls: got %d want 2", hashCalls)
+	}
+	findings1 := findingsSnapshot(t, db)
+
+	// scan 2: 双方 hash 計算 0（skip）。findings / scan_status は 1 回目と同一
+	summary2 := map[string]int{}
+	if status := processFile(db, c, &RateState{}, dir1, path1, summary2, nil); status != "pass" {
+		t.Errorf("run 2 path1 status: got %s", status)
+	}
+	if status := processFile(db, c, &RateState{}, dir2, path2, summary2, nil); status != "pass" {
+		t.Errorf("run 2 path2 status: got %s", status)
+	}
+	if hashCalls != 2 {
+		t.Errorf("per-path meta must skip both paths: hashCalls %d want 2 (scan 2 hash count 0)", hashCalls)
+	}
+	if summary2["skipped"] != 2 {
+		t.Errorf("run 2 summary must count both skipped: got %v", summary2)
+	}
+	if findingsSnapshot(t, db) != findings1 {
+		t.Errorf("findings must be identical to run 1")
+	}
+
+	// scan_meta は path ごとに 2 行・mtime を上書きしない
+	rel1, err := filepath.Rel(dir1, path1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel2, err := filepath.Rel(dir2, path2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m1, m2 int64
+	if err := db.QueryRow("SELECT mtime FROM scan_meta WHERE path = ?", rel1).Scan(&m1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT mtime FROM scan_meta WHERE path = ?", rel2).Scan(&m2); err != nil {
+		t.Fatal(err)
+	}
+	if m1 != t1.Unix() || m2 != t2.Unix() {
+		t.Errorf("scan_meta must keep per-path mtime: got %d/%d want %d/%d", m1, m2, t1.Unix(), t2.Unix())
 	}
 }
 
