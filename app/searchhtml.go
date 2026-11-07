@@ -196,6 +196,19 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 	return copyInts(stored), nil
 }
 
+// searchResultCacheKey は R-10 の結果 cache key（normalized terms + resolved language）。
+// order term は query 文字列の一部なので key に含まれる（D-09 の dataset 選択と一致）。
+// resolved language を使う（raw lang ではなく `language:` term の dataset 選択と一致）。
+// term boundary を保つ separator を使う（results.js:17/30 の whitespace split は `_` 置換と
+// 別工程なので `big_breasts`（1 term・space 形）と `big breasts`（2 term）は別 query・集合が
+// 違う・space 区切りだと衝突するためテスト固定）。parts は `strings.Fields` 由来なので `\n`
+// を含まない（key lang も Fields collapse）→ `\n` 区切りは content 衝突なし一意。
+// background は fetch lane で結果内容ではないので key に入れない（page 移動・prefetch・
+// firstStatus 共有の条件）。random order は hit を freeze しない（key を作らない・呼び出し側で除外）。
+func searchResultCacheKey(terms []string, resolvedLang string) string {
+	return strings.Join(terms, "\n") + "\n" + strings.Join(strings.Fields(resolvedLang), " ")
+}
+
 func (c *Client) termIDs(state *searchState, term string) ([]int, error) {
 	term = normalizeSearchTerm(term)
 	term = strings.TrimPrefix(term, "-")
@@ -391,7 +404,8 @@ func buildSearchState(terms []string, lang string, background bool) (*searchStat
 // language を変え、最初の term fetch へ反映する（C-04）。前置 term で fetch 済みの同じ area/tag を
 // 新 language で再 fetch しない。`search.html?furry` は部分一致ではなく、index に exact key が
 // ある term だけ返す。cache は searchCache 単一路径・copyInts で immutable（複数 caller 共有で
-// 順序が壊れない）。
+// 順序が壊れない）。R-10 の最終結果 cache（(query, lang)・短 TTL・bounded・random 除外）は
+// この単一経路上で page 移動・prefetch・firstStatus と共有し、term cache の上層として維持される。
 func (c *Client) searchAllIDs(query, lang string, background bool) ([]int, error) {
 	terms := []string{}
 	for _, rawTerm := range strings.Fields(query) {
@@ -412,6 +426,26 @@ func (c *Client) searchAllIDs(query, lang string, background bool) ([]int, error
 			}
 			break
 		}
+	}
+
+	// R-10（正典 §8 の最終結果層への延長・decision §8 107/113 行）: (query, lang) 単位で
+	// 最終結果を短 TTL（正典 convention 5 分・negativeNoFullCacheTTL）cache し、page 移動
+	// （SearchHTML）・UI prefetch・firstStatus がこの単一路径で共有する。既存 term 単位
+	// searchCache は維持（本層はその上に載る）。bounded（entry 数 + bytes cap）は C-05/A-14
+	// 流儀・hit は copy 返却（caller mutation で cache 本体が壊れない不変条件）。
+	// random order は除外（hit を freeze しない・decision 2026-11-05-jump-first-status-page-random-order-disabled
+	// の「呼出ごとに変わる」意味を保持）。background は key に入れない（fetch lane）。
+	cacheable := state.orderbydir != "random"
+	cacheKey := ""
+	if cacheable {
+		cacheKey = searchResultCacheKey(terms, state.language)
+		c.searchResultCacheMu.Lock()
+		if entry, ok := c.searchResultCache[cacheKey]; ok && time.Since(entry.storedAt) < searchResultCacheTTL {
+			entry.lastAccess = time.Now()
+			c.searchResultCacheMu.Unlock()
+			return copyInts(entry.ids), nil
+		}
+		c.searchResultCacheMu.Unlock()
 	}
 
 	var results []int
@@ -499,6 +533,16 @@ func (c *Client) searchAllIDs(query, lang string, background bool) ([]int, error
 	}
 
 	applySearchOrder(results, state)
+	if cacheable {
+		// hit で order を再適用しない（cache に最終順序済みで保存・二重 reverse 禁止）。
+		c.searchResultCacheMu.Lock()
+		if c.searchResultCache == nil {
+			c.searchResultCache = map[string]*searchResultCacheEntry{}
+		}
+		now := time.Now()
+		c.putSearchResultCacheLocked(cacheKey, &searchResultCacheEntry{ids: copyInts(results), storedAt: now, lastAccess: now})
+		c.searchResultCacheMu.Unlock()
+	}
 	return results, nil
 }
 

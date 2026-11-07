@@ -698,6 +698,358 @@ func TestSearchHTMLPopularOrderAscReversesOrderDatasetOncePerCanonicalHitomi(t *
 	}
 }
 
+func TestSearchResultCacheSharedAcrossPageCallsAndReturnsCopy(t *testing.T) {
+	// R-10 固定: page 移動（SearchHTML 再呼出）は (query, lang) 結果 cache hit で共有する
+	// （正典 §8「page slice は cache から取る」・113 行の最終結果層）。hit は copy 返却
+	// （caller slice mutation で cache 本体が壊れない不変条件・既存 57-64 行流儀）。
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return nil, nil
+	}}
+
+	ids, total, err := c.SearchHTML("female:yuri", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 10 || ids[1] != 20 || ids[2] != 30 {
+		t.Fatalf("cold call: total %d ids %v", total, ids)
+	}
+	entry, ok := c.searchResultCache["female:yuri\nall"]
+	if !ok {
+		t.Fatalf("cold call must store result cache entry: %v", c.searchResultCache)
+	}
+	if len(entry.ids) != 3 || entry.ids[0] != 10 || entry.ids[1] != 20 || entry.ids[2] != 30 {
+		t.Fatalf("stored entry must hold full ordered result: %v", entry.ids)
+	}
+
+	// hit 経路の実証: cache 本体を sentinel へ置換した呼出が sentinel を返す = 再計算
+	// ではなく result cache hit（term cache 再計算なら [10,20,30] になる）。
+	entry.ids = []int{999}
+	ids2, total2, err := c.SearchHTML("female:yuri", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total2 != 1 || len(ids2) != 1 || ids2[0] != 999 {
+		t.Fatalf("page call must hit result cache, not recompute: total %d ids %v", total2, ids2)
+	}
+	if fetches != 1 {
+		t.Fatalf("result cache hit must not refetch: fetches %d", fetches)
+	}
+
+	ids2[0] = 1000
+	ids3, total3, err := c.SearchHTML("female:yuri", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total3 != 1 || len(ids3) != 1 || ids3[0] != 999 {
+		t.Fatalf("hit must return copy (cache must not be mutated by caller slice): total %d ids %v", total3, ids3)
+	}
+}
+
+func TestSearchResultCacheKeyNormalizedQueryAndResolvedLanguage(t *testing.T) {
+	// R-10 固定: key は normalized query + resolved language。raw 綴り（大文字・`_`）と
+	// resolved lang（raw lang ではなく `language:` term から解決）を固定する。random 除外・
+	// background なしは別テストで固定。
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		switch {
+		case strings.Contains(rawurl, "/n/tag/female:big%20breasts-all.nozomi"):
+			return beIDs([]uint32{10, 20}), nil
+		case strings.Contains(rawurl, "/n/tag/female:yuri-english.nozomi"):
+			return beIDs([]uint32{20, 30}), nil
+		default:
+			return nil, nil
+		}
+	}}
+
+	if _, _, err := c.SearchHTML("FEMALE:Big_Breasts", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.searchResultCache["female:big breasts\nall"]; !ok {
+		t.Fatalf("key must be normalized query + resolved lang: %v", c.searchResultCache)
+	}
+	if _, ok := c.searchResultCache["FEMALE:Big_Breasts\nall"]; ok {
+		t.Error("raw-spelling key must not exist")
+	}
+	if _, _, err := c.SearchHTML("FEMALE:Big_Breasts", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.SearchHTML("female:yuri language:english", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.searchResultCache["female:yuri\nlanguage:english\nenglish"]; !ok {
+		t.Fatalf("resolved language must be the key lang (language term), not raw lang: %v", c.searchResultCache)
+	}
+	if _, ok := c.searchResultCache["female:yuri language:english\nenglish"]; ok {
+		t.Error("term boundary must be preserved by the key separator (space join collision forbidden)")
+	}
+	if _, ok := c.searchResultCache["female:yuri\nlanguage:english\nall"]; ok {
+		t.Error("raw lang key must not exist when language term resolves english")
+	}
+	if len(c.searchResultCache) != 2 || fetches != 2 {
+		t.Fatalf("normalized re-call must hit same key (no extra entry or refetch): entries %d fetches %d", len(c.searchResultCache), fetches)
+	}
+	if searchResultCacheKey([]string{normalizeSearchTerm("big_breasts")}, "all") == searchResultCacheKey([]string{"big", "breasts"}, "all") {
+		t.Error("1-term underscore form (normalized) and 2-term whitespace form must not share a key (results.js:17/30 separate stages)")
+	}
+}
+
+func TestSearchResultCacheExcludesRandomOrder(t *testing.T) {
+	// R-10 固定: random order は結果 cache から除外（hit を freeze しない・decision
+	// 2026-11-05-jump-first-status-page-random-order-disabled の「呼出ごとに変わる」意味を保持）。
+	// term cache（network 非接触）は維持され、呼出は error にならない。
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return nil, nil
+	}}
+
+	ids1, total1, err := c.SearchHTML("female:yuri orderby:random", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total1 != 3 || len(ids1) != 3 {
+		t.Fatalf("random order result must be returned: total %d ids %v", total1, ids1)
+	}
+	if len(c.searchResultCache) != 0 {
+		t.Fatalf("random order must not be cached: %v", c.searchResultCache)
+	}
+	ids2, total2, err := c.SearchHTML("female:yuri orderby:random", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total2 != 3 || len(ids2) != 3 {
+		t.Fatalf("second random call: total %d ids %v", total2, ids2)
+	}
+	if len(c.searchResultCache) != 0 {
+		t.Fatalf("random order must stay excluded from result cache: %v", c.searchResultCache)
+	}
+	if fetches != 1 {
+		t.Fatalf("random must share term cache without refetch: fetches %d", fetches)
+	}
+}
+
+func TestSearchResultCacheKeyIgnoresBackgroundLane(t *testing.T) {
+	// R-10 固定: background は fetch lane で結果内容ではない。key におけない（UI prefetch
+	// は background・page 移動 foreground・firstStatus foreground が単一路径で共有する条件）。
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return nil, nil
+	}}
+
+	// background（prefetch相当）で cold insert。
+	if _, _, err := c.SearchHTML("female:yuri", "all", 1, 25, true); err != nil {
+		t.Fatal(err)
+	}
+	key := searchResultCacheKey([]string{"female:yuri"}, "all")
+	if key != "female:yuri\nall" {
+		t.Fatalf("key must not include background lane: %q", key)
+	}
+	// foreground（page 移動相当）で同一 entry を hit。
+	ids, total, err := c.SearchHTML("female:yuri", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 10 {
+		t.Fatalf("background-inserted entry must be shared: total %d ids %v", total, ids)
+	}
+	if len(c.searchResultCache) != 1 || fetches != 1 {
+		t.Fatalf("shared key must not fork per lane or refetch: entries %d fetches %d", len(c.searchResultCache), fetches)
+	}
+}
+
+func TestSearchResultCacheDoesNotReApplyOrderOnHit(t *testing.T) {
+	// R-10 固定: cache に最終順序済みで保存し、hit で order を再適用しない
+	// （二重 reverse 禁止・既存 TestApplySearchOrderDoesNotDoubleReverseAsc 流儀）。
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return nil, nil
+	}}
+
+	ids1, total1, err := c.SearchHTML("female:yuri orderbydirection:asc", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total1 != 3 || len(ids1) != 3 || ids1[0] != 30 || ids1[1] != 20 || ids1[2] != 10 {
+		t.Fatalf("asc must reverse once on cold call: total %d ids %v", total1, ids1)
+	}
+	entry, ok := c.searchResultCache["female:yuri\norderbydirection:asc\nall"]
+	if !ok {
+		t.Fatalf("asc order term must be in the key: %v", c.searchResultCache)
+	}
+	if len(entry.ids) != 3 || entry.ids[0] != 30 || entry.ids[1] != 20 || entry.ids[2] != 10 {
+		t.Fatalf("stored entry must hold final ordered result: %v", entry.ids)
+	}
+
+	ids2, total2, err := c.SearchHTML("female:yuri orderbydirection:asc", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total2 != 3 || len(ids2) != 3 || ids2[0] != 30 || ids2[1] != 20 || ids2[2] != 10 {
+		t.Fatalf("hit must not re-apply asc order (double reverse): total %d ids %v", total2, ids2)
+	}
+	if fetches != 1 {
+		t.Fatalf("hit must not refetch: fetches %d", fetches)
+	}
+}
+
+func TestSearchResultCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
+	// R-10 固定: bounded（entry 数 + bytes cap）は C-05/A-14 流儀。hit で access order 更新、
+	// insert 後 cap 超過で最古 access eviction、memory は cap 以下、eviction 後は再計算
+	// （term cache が cover するので network 呼出しは増えない）。
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), searchResultCacheMaxEntries: 2, searchResultCacheMaxBytes: 1024, testGateIntervalMS: 1}
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		switch {
+		case strings.Contains(rawurl, "female:yuri"):
+			return beIDs([]uint32{10}), nil
+		case strings.Contains(rawurl, "female:cosplay"):
+			return beIDs([]uint32{20, 21}), nil
+		case strings.Contains(rawurl, "female:lolita"):
+			return beIDs([]uint32{30}), nil
+		case strings.Contains(rawurl, "female:futanari"):
+			return beIDs([]uint32{40}), nil
+		}
+		return nil, nil
+	}
+
+	// Windows clock granularity can tie same-instant timestamps. Fix access order
+	// explicitly after each insert so LRU eviction order is deterministic.
+	base := time.Now()
+	if _, _, err := c.SearchHTML("female:yuri", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	c.searchResultCache["female:yuri\nall"].lastAccess = base.Add(-30 * time.Second)
+	if _, _, err := c.SearchHTML("female:cosplay", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	c.searchResultCache["female:cosplay\nall"].lastAccess = base.Add(-20 * time.Second)
+	if _, _, err := c.SearchHTML("female:lolita", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	c.searchResultCache["female:lolita\nall"].lastAccess = base.Add(-10 * time.Second)
+	if len(c.searchResultCache) != 2 {
+		t.Fatalf("entry limit 2 should evict oldest entry: len %d", len(c.searchResultCache))
+	}
+	if _, ok := c.searchResultCache["female:yuri\nall"]; ok {
+		t.Error("oldest entry should be evicted when entry limit is crossed")
+	}
+	if _, ok := c.searchResultCache["female:cosplay\nall"]; !ok {
+		t.Error("second entry should remain")
+	}
+	if _, ok := c.searchResultCache["female:lolita\nall"]; !ok {
+		t.Error("newest entry should remain")
+	}
+	if c.searchResultCacheBytes > c.searchResultCacheMaxBytes {
+		t.Errorf("result cache memory must stay below cap: bytes %d", c.searchResultCacheBytes)
+	}
+
+	// LRU: hit updates access order. Insert futanari must evict lolita (stale access),
+	// not cosplay (accessed).
+	if _, _, err := c.SearchHTML("female:cosplay", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("result cache hit must not refetch: fetches %d", fetches)
+	}
+	if _, _, err := c.SearchHTML("female:futanari", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.searchResultCache["female:lolita\nall"]; ok {
+		t.Error("stale-access entry must be evicted by LRU order")
+	}
+	if _, ok := c.searchResultCache["female:cosplay\nall"]; !ok {
+		t.Error("recently accessed entry must survive LRU eviction")
+	}
+	if _, ok := c.searchResultCache["female:futanari\nall"]; !ok {
+		t.Error("newest entry should remain")
+	}
+
+	// Evicted key is not a TTL hit anymore: it recomputes via term cache (no network).
+	// Fix access order explicitly again so the eviction target of the recompute insert is
+	// deterministic against Windows clock granularity ties.
+	c.searchResultCache["female:cosplay\nall"].lastAccess = base.Add(-4 * time.Second)
+	c.searchResultCache["female:futanari\nall"].lastAccess = base.Add(-3 * time.Second)
+	_, total, err := c.SearchHTML("female:yuri", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("evicted key must recompute from term cache: total %d", total)
+	}
+	if fetches != 4 {
+		t.Errorf("result cache must not add network fetches: fetches %d bytes %d", fetches, c.searchResultCacheBytes)
+	}
+	if len(c.searchResultCache) > 2 || c.searchResultCacheBytes > c.searchResultCacheMaxBytes {
+		t.Errorf("memory must stay below cap after recompute insert: len %d bytes %d", len(c.searchResultCache), c.searchResultCacheBytes)
+	}
+	if _, ok := c.searchResultCache["female:yuri\nall"]; !ok {
+		t.Error("recompute must re-store the result cache entry")
+	}
+	if _, ok := c.searchResultCache["female:cosplay\nall"]; ok {
+		t.Error("oldest access entry must be evicted by the recompute insert")
+	}
+}
+
+func TestSearchResultCacheExpiresAfterShortTTL(t *testing.T) {
+	// R-10 固定: 短 TTL は正典 convention 値（5 分・negativeNoFullCacheTTL）で、TTL 超過後は
+	// hit せず再計算（C-05/A-14 TTL cache 意味・invented number 禁止）。TTL は term dataset
+	// staleness（searchCacheTTL 1h）を超えない。
+	if searchResultCacheTTL != negativeNoFullCacheTTL {
+		t.Fatalf("result cache TTL must be the existing 5-minute convention, not an invented value: %v", searchResultCacheTTL)
+	}
+	fetches := 0
+	c := &Client{cfg: defaultHitomiConfig(), testGateIntervalMS: 1, fetch: func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		fetches++
+		if strings.Contains(rawurl, "/n/tag/female:yuri-all.nozomi") {
+			return beIDs([]uint32{10, 20, 30}), nil
+		}
+		return nil, nil
+	}}
+
+	if _, _, err := c.SearchHTML("female:yuri", "all", 1, 25, false); err != nil {
+		t.Fatal(err)
+	}
+	entry := c.searchResultCache["female:yuri\nall"]
+	entry.ids = []int{999} // sentinel: hit で [999]、再計算で [10,20,30] を区別する
+	entry.storedAt = time.Now().Add(-6 * time.Minute)
+
+	ids, total, err := c.SearchHTML("female:yuri", "all", 1, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(ids) != 3 || ids[0] != 10 || ids[1] != 20 || ids[2] != 30 {
+		t.Fatalf("entry over TTL must recompute, not return stale hit: total %d ids %v", total, ids)
+	}
+	stored := c.searchResultCache["female:yuri\nall"]
+	if stored == entry {
+		t.Error("recompute must re-store the result cache entry over the same key")
+	}
+	if time.Since(stored.storedAt) > time.Second {
+		t.Error("re-stored entry must have a fresh storedAt within TTL")
+	}
+	if fetches != 1 {
+		t.Fatalf("recompute must use term cache without refetch: fetches %d", fetches)
+	}
+}
+
 func TestThumbnailURLMatchesVerifiedTNPath(t *testing.T) {
 	// TN base は format で決まる（実測 200: `77656270626967746e` / `61766966626967746e`）。
 	// `746e626967746e` は base として存在せず 404。subdomain は `a`/`b` + `tn`（gg.m で決まる）。

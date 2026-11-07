@@ -60,6 +60,11 @@ const indexVersionTTL = time.Hour
 const searchCacheTTL = time.Hour
 const topCacheTTL = time.Hour
 
+// R-10（2026-11-06 調査記録・正典 convention 値からの選択）: (query, lang) 単位の最終結果
+// cache の短 TTL。既存 convention `negativeNoFullCacheTTL`（5 分）を採用（invented number なし）。
+// staleness は最大で underlying term dataset の staleness（searchCacheTTL 1h）まで（記録照合済み）。
+const searchResultCacheTTL = negativeNoFullCacheTTL
+
 // Phase 3（decision 2026-11-05）: gallery 情報永続キャッシュの TTL。gallery のメタ情報は
 // 基本的に不変という前提。TTL 切れは remote 再取得、remote 失敗時のみ stale 暫定表示。
 const galleryInfoCacheTTL = 30 * 24 * time.Hour
@@ -136,6 +141,16 @@ type searchCacheEntry struct {
 func (e *searchCacheEntry) entrySize() int { return len(e.ids) * 8 }
 func (e *searchCacheEntry) lastAccessed() time.Time { return e.lastAccess }
 
+// R-10: (query, lang) 単位の最終結果 cache entry。entrySize は既存 convention（ids*8）。
+type searchResultCacheEntry struct {
+	ids        []int
+	storedAt   time.Time
+	lastAccess time.Time
+}
+
+func (e *searchResultCacheEntry) entrySize() int { return len(e.ids) * 8 }
+func (e *searchResultCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+
 type indexTopCacheEntry struct {
 	node       *bnode
 	fetchedAt  time.Time
@@ -205,6 +220,11 @@ type Client struct {
 	searchCacheBytes int
 	searchCacheMaxEntries int
 	searchCacheMaxBytes   int
+	searchResultCache   map[string]*searchResultCacheEntry
+	searchResultCacheMu sync.Mutex
+	searchResultCacheBytes int
+	searchResultCacheMaxEntries int
+	searchResultCacheMaxBytes   int
 	indexTopCache   map[string]*indexTopCacheEntry
 	indexTopCacheMu sync.Mutex
 	indexTopCacheBytes int
@@ -231,6 +251,13 @@ type Client struct {
 func (c *Client) putSearchCacheLocked(key string, entry *searchCacheEntry) {
 	maxEntries, maxBytes := boundedMax(c.searchCacheMaxEntries, c.searchCacheMaxBytes, defaultSearchCacheMaxEntries, defaultSearchCacheMaxBytes)
 	boundedCachePut(c.searchCache, &c.searchCacheBytes, maxEntries, maxBytes, key, entry)
+}
+
+// R-10: 結果 cache の既定 cap は既存 searchCache convention 値（invented number なし）。
+// 単 entry が cap 超なら boundedCachePut の即 eviction（既存 convention・C-05 記録 19 行）で cache されない。
+func (c *Client) putSearchResultCacheLocked(key string, entry *searchResultCacheEntry) {
+	maxEntries, maxBytes := boundedMax(c.searchResultCacheMaxEntries, c.searchResultCacheMaxBytes, defaultSearchCacheMaxEntries, defaultSearchCacheMaxBytes)
+	boundedCachePut(c.searchResultCache, &c.searchResultCacheBytes, maxEntries, maxBytes, key, entry)
 }
 
 func (c *Client) putIndexDataCacheLocked(key string, entry *indexDataCacheEntry) {

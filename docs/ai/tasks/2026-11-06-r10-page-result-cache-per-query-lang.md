@@ -2,7 +2,7 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: 実施開始指示待ち。案: (query, lang) 単位で最終結果を短 TTL キャッシュし page移動・prefetch・firstStatus で共有。既存 term 単位 searchCache は維持。記録: R-10
 
@@ -80,14 +80,26 @@
 - リスク: 低〜中。新 cache の bounded・copy 不変条件・hit で order 再適用禁止・random 除外・resolved lang key をテストで固定すれば決定的。R-01 accounting への依存。
 - 依存: R-01（helper 修正先行が望ましい）。既存 term cache（searchCache）維持前提。R-11（term 逐次取得）とは独立・併存可。
 
+### 実装＋固定テスト（2026-11-08・実作業）
+
+- 採用判断（段階1・記録の推奨案）: 案 A（bounded・短 TTL・random 除外）。持帰りはなし。
+  - TTL: `searchResultCacheTTL = negativeNoFullCacheTTL`（正典 convention 5 分・invented number なし）
+  - key: normalized terms + resolved language（`searchResultCacheKey`）。separator は `\n`（term boundary 保存）。`\n` は whitespace で、`strings.Fields` 由来の parts（term・key lang）には入らないため content 衝突なし一意。space 区切りは `big_breasts`（1 term・space 形）と `big breasts`（2 term）を衝突させ、既存固定テスト `TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi` の FAIL で検出（試行1）→ 原因分析: term boundary 非保存 → `\n` 区切りへ修正 → 再検証合格（試行2）。key に background を入れない（fetch lane）。random order（`orderbydir:random`）は cache しない（key を作らない・decision 2026-11-05-jump-first-status-page-random-order-disabled の「呼出ごとに変わる」意味を保持・正典変更なし）。
+  - bounded: C-05/A-14 流儀（entry 数 + bytes cap・hit で access order・insert 後 cap 超過で最古 access eviction・単 entry cap 超は即 eviction）。cap 既定は既存 searchCache convention 値（256/8 MiB・invented number なし・`putSearchResultCacheLocked`）。R-01 の `boundedCachePut`（`ef7631d`）をそのまま使用（R-01 変更に非接触。TTL 切れ key の再 store は上書き経路 → R-01 accounting の適用範囲内）。
+  - hit は copy 返却（copy 不変条件）。hit で order 再適用なし（cache に最終順序済みで保存・二重 reverse 禁止）。単 entry の空結果は既存の early return（cache しない）を維持（挙動変更なし）。
+- 変更ファイル: `app/hitomi.go`（TTL 定数・entry 型・Client フィールド・put helper）、`app/searchhtml.go`（`searchResultCacheKey`・`searchAllIDs` 内 hit/cold 層。単一路径なので page 移動・prefetch・firstStatus が共有）、`app/searchhtml_test.go`（新規 7 件のみ・既存テスト無変更）。UI・gate・schema・viewer・download 非接触。
+- 新規テスト: `TestSearchResultCacheSharedAcrossPageCallsAndReturnsCopy`（page 移動共有・hit 経路実証・copy 不変条件）、`TestSearchResultCacheKeyNormalizedQueryAndResolvedLanguage`（正規化・resolved lang・term boundary）、`TestSearchResultCacheExcludesRandomOrder`、`TestSearchResultCacheKeyIgnoresBackgroundLane`、`TestSearchResultCacheDoesNotReApplyOrderOnHit`、`TestSearchResultCacheEvictsLRUEntriesWhenOverEntryLimit`（bounded・LRU・memory cap）、`TestSearchResultCacheExpiresAfterShortTTL`（TTL=5 分 convention・超過後再計算）。
+- 試行1: 実装後 `go vet` clean だが `TestSearchHTMLPlainTermUnderscoreUsesSpaceFormKeyPerCanonicalHitomi` FAIL（key の space 区切り衝突・上記）。試行2: separator 修正 → 全通過。試行回数 2。
+
 ## Verification
 
-- 実測コマンド（本項目）: `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean、test ok `25.774s`（コード変更なし・既存テスト全通過。`TestSearchNozomiPartsUsesTTLCacheAndCopies`・`TestFirstStatusSharedSearchCacheNoRefetch` 含む）。経過: 約 26 s。
+- 実測コマンド（本項目・実装後): `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean、test ok `24.781s`（既存＋新規全通過）。新規 7 件個別（`-run "TestSearchResultCache" -v`）→ 7/7 PASS。安定化確認: 新規＋既存固定（`TestSearchNozomiPartsUsesTTLCacheAndCopies`・`TestFirstStatusSharedSearchCacheNoRefetch`・`TestSearchCacheEvictsLRUEntriesWhenOverEntryLimit`・`TestApplySearchOrderDoesNotDoubleReverseAsc`）を `-count=2` → 全 PASS（LRU の clock tie は既存流儀どおり lastAccess 明示オフセットで決定化）。経過 1.345s。
 - `python -m pytest tests/ -v`（ルート）→ 54 passed・1 failed `9.96s`。failed は `tests/test_canonical_build_freshness.py::test_canonical_build_freshness_rule_exists`（AGENTS.md の Rules 条が commit `e018c1c` で `docs/ai/rules/confirmation-test-rule.md` へ集約され、テストが照合する literal `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md` が AGENTS.md から消えている）。本項目のコード変更・テスト変更はなし（既存状態の失敗・R-10 と非接触）。known-issues 化处理は本項目スコープ外（本記録のみ編集可のため、親へ board INFO で報告）。
+- 実装後 `python -m pytest tests/ -v`（ルート）→ 56 passed・1 failed `12.26s`（2026-11-08）。同一の既存 known failure `test_canonical_build_freshness_rule_exists`（`KI-20261106-04`・本項目の不合格ではない・Python 非変更）。passed が 54→56 は他項目（R-12 等）のテスト追加によるベースライン増加。本項目の不合格点なし。
 - 実測スクリプト: `docs/ai/tmp/assess-20261106-1056/main.go`（mock dataset・外部 API 呼出しなし・正典関数 verbatim copy）。結果は「実測」欄の表（page あたり 20–28 ms → hit ≤0.1 ms）。
 - 正典 pointer 実測（2026-11-06 13:17・訂正）: 指示の 2 path を read（File not found）＋ Glob `docs/ai/tasks/2026-11-03-a14*`・`docs/ai/tasks/2026-11-03-d13*`（0 件）。実体なしを確定。照合内容（freshness check が cache へ降格＝TTL hit・per-call 確認なし、top cache は TTL、page slice は cache から取る）は実在正典側（c05-cache-limits・decision §8 107 行・`app/searchindex.go:236-245` の top cache TTL）で確認済み（上記「正典照合」欄）。
 - 画面確認: 該当なし（server 側 cache 項目・UI 変更なし）。Google Drive 保存なし。
-- `git status --short`: 本項目で変更したのは本タスク記録のみ（コード・テスト・UI 無変更）。
+- `git status --short`: 調査段階は本タスク記録のみ。実装段階の変更は `app/hitomi.go`・`app/searchhtml.go`・`app/searchhtml_test.go`（新規テスト）と本タスク記録（UI 無変更）。
 
 ## 完了時 Memory Bank 操作
 
