@@ -2,7 +2,7 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
 **Next Action**: 実施開始指示待ち。合格条件: e_lfanew >= 64 の実在 PE fixture で mz_without_pe_header 非 hit（Python 版 seek 実装と対称）。記録: R-02
 
@@ -48,12 +48,38 @@
 - 影響は scan findings（DB findings 記録）の hit/非 hit の向きのみ。schema・YARA・VT・viewer・UI への波及なし。YARA 規則 `MZ_Header_At_Offset0` は `$mz at 0` のみで「PE 判定は scan.py に残す」と description に明記（`rules/structural.yar:22-33`・D-04 確認済み）。「MZ の有無」と「PE signature の実在」の互补関係は維持され、規則変更は不要。
 - UI 関連項目ではない → 画面確認はルール上不要（実装変更なしのため未実施）。
 
+### 変更内容（実施 2026-11-07・案 A 採用）
+
+- `app/scan.go` `IsPE(path string, head []byte) bool`（Python `src/scan.py:88-105` と対称）: `e_lfanew + 4 <= len(head)` は head slice 判定（従来経路維持）、窓外は `os.Open` → `Seek(io.SeekStart)` → 4 bytes 読みで `PE\x00\x00` 判定。open 失敗・seek 失敗・read 不足（EOF 超え）は false。`e_lfanew <= 0`・`len(head) < 64`・`MZ` 非頭は false のまま（Python 一致）。
+- 呼び出し 1 箇所を `IsPE(path, head)` へ更新（`app/scan.go:222`・実施前は `app/scan.go:200`）。
+- `app/scan_test.go` にテスト追加（Python `tests/test_scan.py:117-150` の 4 テストを模し、加えて境界 0x40 と EOF 超え）: `makePEStub` + `TestPEWindowParityWithPythonReference`（6 ケース）+ `TestIsPEUsesPathOnlyForWindowOutside`（窓内経路は path 依存なし・窓外 path open・64 バイト未満 head は false・`e_lfanew` 0 は false）。
+- 採用した判断: 推奨案 A（記録の推奨案）。「実装開始指示待ち」の状態は本実行（実作業担当としての委譲）で解除。案 B（窓拡大）は正典の参照実装ミラー方針に反するため不採用。
+
 ## Verification
 
 - 実測（正典 Python 実行・Go copy 実行）: 上表の 6 fixture（`docs/ai/tmp/assess-20261106-1056/r02_scan_check.py`・`r02_go_check.go`）。分岐 2 件（f1・f5）・一致 4 件。f5 は 61 生成時に e_lfanew フィールド重複を検出、64 に修正し再実測（`r02_debug_f5.py` の解析で確認）。実装は変更していない（変更したのは本記録とスクラッチのみ）。
 - `go vet . && go test -count=1 -timeout 300s .`（app・2026-11-06 20:09:02〜20:09:32・全 30 s・go test 内部 25.682 s）: **ok**（既存テスト全通過。`IsPE` 固定テストは現状なし）。
 - `python -m pytest tests/ -v`（ルート・2026-11-06 20:09:03〜20:09:18・13.81 s）: **54 passed / 1 failed**。D-04 の 4 テスト（`test_pe_signature_beyond_head_window_is_not_mz_hit` ほか）は通過。失敗 1 件（`test_canonical_build_freshness_rule_exists`）は AGENTS.md の pointer 検査で、R-02 と無関係の既存失敗（照合開始時点で HEAD 側に該当 pointer 条なし・decision ファイルは存在。R-02 の合格条件には影響しない）。
 - 照合開始時点の git status: 他項目のタスク記録変更あり（R-01・findings 記録）。R-02 以外には触れていない。
+
+### 実施後の検証（2026-11-07）
+
+- `go vet . && go test -count=1 -timeout 300s .`（app・2026-11-07 23:17〜23:19・go test 内部 25.145 s）: **ok**（全テスト通過。追加テスト `TestPEWindowParityWithPythonReference`・`TestIsPEUsesPathOnlyForWindowOutside` 含む。`gofmt -l` の残差分は既存ファイルの整形で本項目の変更分は差分なし）。
+- 合格条件（`e_lfanew >= 64` の実在 PE fixture で `mz_without_pe_header` 非 hit）: 追加テストの 6 ケースで Go 実装と Python 正典実装の帰結が一致。同一 fixture 生成条件（`docs/ai/tmp/assess-20261106-1056/r02_impl_parity.py`）で Python 正典 `scan_file` を実測し、Go テスト（実コード）と比較:
+
+| case | e_lfanew | sig | Go（ScanFile 実測） | Python（正典 scan_file 実測） | 一致 |
+|---|---|---|---|---|---|
+| beyond-window | 0x80 | 有 | 非 hit / not_evaluated | 非 hit / not_evaluated | yes |
+| boundary-64 | 0x40（窓外の最小） | 有 | 非 hit / not_evaluated | 非 hit / not_evaluated | yes |
+| within-window | 0x38 | 有 | 非 hit / not_evaluated | 非 hit / not_evaluated | yes |
+| 窓外宣言・signature なし | 0x80 | 無 | hit | hit | yes |
+| 真の MZ-only | 0 | 無 | hit | hit | yes |
+| EOF 超え | 0x20000000 | 無 | hit | hit | yes |
+
+- `python -m pytest tests/ -v`（ルート・2026-11-07 23:20・12.59 s）: **55 passed / 1 failed**。失敗は既存 known-issue の `test_canonical_build_freshness_rule_exists`（AGENTS.md pointer 検査・R-02 と無関係・本項目の不合格ではない）。D-04 の 4 テストは通過。Python 側コードは変更していない。
+- 試行回数: 1。初回 `go test` でテスト helper（`makePEStub`）の fixture サイズ生成バグ（窓外 case が 64 バイトで生成され signature 書き込みスキップ）を検出、helper を修正して再実行し全通過。実装本体の修正はなし。
+- 実機確認（canonical build・served 画面）: 本項目は UI・viewer・download・full image 経路に触れないため適用外（作業前チェックの該当条は full image/viewer/download タスク向け）。scan 判定の証跡は上表の実測。
+- R-03（7z magic 最終バイト・`829d08a`）には触れていない（`DetectMagic`・`rules/structural.yar` 変更なし）。
 
 ## 優先順位付けに効く要素
 

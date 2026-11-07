@@ -92,7 +92,10 @@ func DetectMagic(head []byte) string {
 	return "unknown"
 }
 
-func IsPE(head []byte) bool {
+// IsPE は Python 参照実装 src/scan.py is_pe と対称（D-04・R-02）。
+// e_lfanew が窓内（head）なら head slice、窓外なら path を seek して 4 bytes 読む。
+// open 失敗・seek 失敗・read 不足は false。e_lfanew <= 0 と len(head) < 64 は false。
+func IsPE(path string, head []byte) bool {
 	if len(head) < 2 || string(head[:2]) != "MZ" {
 		return false
 	}
@@ -100,10 +103,29 @@ func IsPE(head []byte) bool {
 		return false
 	}
 	e_lfanew := int(head[0x3C]) | int(head[0x3D])<<8 | int(head[0x3E])<<16 | int(head[0x3F])<<24
-	if e_lfanew <= 0 || e_lfanew+4 > len(head) {
+	if e_lfanew <= 0 {
 		return false
 	}
-	return string(head[e_lfanew:e_lfanew+4]) == "PE\x00\x00"
+	var signature []byte
+	if e_lfanew+4 <= len(head) {
+		signature = head[e_lfanew : e_lfanew+4]
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return false
+		}
+		defer f.Close()
+		if _, err := f.Seek(int64(e_lfanew), io.SeekStart); err != nil {
+			return false
+		}
+		buf := make([]byte, 4)
+		read, err := f.Read(buf)
+		if err != nil {
+			return false
+		}
+		signature = buf[:read]
+	}
+	return string(signature) == "PE\x00\x00"
 }
 
 func ExtOf(path string) string {
@@ -197,7 +219,7 @@ func ScanFile(path string, cfg Config) (string, string, []string, string) {
 	if expected != nil && !expected[magic] {
 		findings = append(findings, "magic_mismatch:"+ext+"_vs_"+magic)
 	}
-	if magic == "pe" && !IsPE(head) {
+	if magic == "pe" && !IsPE(path, head) {
 		findings = append(findings, "mz_without_pe_header")
 	}
 	if magic == "zip" && scanTargets[ext] {

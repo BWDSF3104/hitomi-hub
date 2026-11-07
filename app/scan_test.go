@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,92 @@ func TestDetectMagic(t *testing.T) {
 		if got := DetectMagic(head); got != want {
 			t.Errorf("magic %q: got %s", want, got)
 		}
+	}
+}
+
+func makePEStub(t *testing.T, dir string, e_lfanew int, peSig bool, size int) string {
+	t.Helper()
+	if size == 0 {
+		size = e_lfanew + 4
+		if size < 64 {
+			size = 64
+		}
+	} else if size < 64 {
+		size = 64
+	}
+	path := filepath.Join(dir, fmt.Sprintf("pe_%x.bin", e_lfanew))
+	data := make([]byte, size)
+	data[0] = 'M'
+	data[1] = 'Z'
+	for i := 0; i < 4; i++ {
+		data[0x3C+i] = byte((e_lfanew >> (8 * i)) & 0xff)
+	}
+	if peSig && e_lfanew+4 <= size {
+		copy(data[e_lfanew:e_lfanew+4], []byte("PE\x00\x00"))
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// R-02: Go IsPE が Python 参照実装（D-04 seek 判定）と対称。tests/test_scan.py の
+// make_pe_stub / D-04 4 テストを模する。合格条件: e_lfanew >= 64 の実在 PE fixture で
+// mz_without_pe_header 非 hit。
+func TestPEWindowParityWithPythonReference(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name     string
+		e_lfanew int
+		peSig    bool
+		size     int
+		wantHit  bool
+	}{
+		{"beyond-window", 0x80, true, 0, false},
+		{"boundary-64", 0x40, true, 0, false},
+		{"within-window-regression", 0x38, true, 0, false},
+		{"beyond-window-claim-without-sig", 0x80, false, 0, true},
+		{"true-mz-only", 0, false, 0, true},
+		{"beyond-eof", 0x20000000, false, 64, true},
+	}
+	for _, tc := range cases {
+		path := makePEStub(t, dir, tc.e_lfanew, tc.peSig, tc.size)
+		_, magic, findings, status := ScanFile(path, cfg())
+		if magic != "pe" {
+			t.Errorf("%s: magic: got %s", tc.name, magic)
+		}
+		hit := len(findings) != 0
+		if hit != tc.wantHit {
+			t.Errorf("%s: findings: got %v want hit %v", tc.name, findings, tc.wantHit)
+		}
+		wantStatus := "not_evaluated"
+		if tc.wantHit {
+			wantStatus = "hit"
+		}
+		if status != wantStatus {
+			t.Errorf("%s: status: got %s want %s", tc.name, status, wantStatus)
+		}
+	}
+}
+
+// IsPE は窓外判定で path を使う。head 窓内のみ（e_lfanew+4 <= len(head)）は path を
+// open しない（呼び出しコストの増加分は窓外 fixture のみ）。
+func TestIsPEUsesPathOnlyForWindowOutside(t *testing.T) {
+	dir := t.TempDir()
+	outside := makePEStub(t, dir, 0x80, true, 0)
+	if !IsPE(outside, readHead(outside, 64)) {
+		t.Fatalf("outside-window: got false")
+	}
+	inside := makePEStub(t, dir, 0x38, true, 0)
+	if !IsPE(filepath.Join(dir, "does-not-exist.bin"), readHead(inside, 64)) {
+		t.Fatalf("inside-window with unreadable path: got false, window path must not depend on path")
+	}
+	if IsPE(filepath.Join(dir, "does-not-exist.bin"), readHead(inside, 64)[:63]) {
+		t.Errorf("head shorter than 64 must be false")
+	}
+	zero := makePEStub(t, dir, 0, false, 0)
+	if IsPE(zero, readHead(zero, 64)) {
+		t.Errorf("e_lfanew 0 must be false")
 	}
 }
 
