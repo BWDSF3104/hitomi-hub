@@ -31,7 +31,7 @@ def test_search_visible_priority_order_and_promotion():
         "renderSearchCard high priority opts emit eager fetchpriority for visible covers",
         "loadSearchCards uses first visible display-area cards for high priority covers",
         "loadSearchCards passes highPriority to renderSearchCard and loadSearchCardCover",
-        "restoreSearchState uses the same loadSearchCards path",
+        "page-load card fetch stays single-run because restoreSearchState renders only and runSearch owns the card run",
         "display-area cards are processed before ids-order-earlier cards outside the display area",
         "visible card 103 beats ids-order-earlier off-area cards 101 and 102",
         "one request per card keeps the total request count unchanged",

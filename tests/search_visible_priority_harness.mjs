@@ -6,6 +6,8 @@ const { failures, passed, check } = createChecker();
 
 const helperBlock = bodyIn(searchHtml, "function placeholderElement(results, id) {", "async function loadSearchCards(ids, searchGen = searchGeneration) {");
 const loadBlock = bodyIn(searchHtml, "async function loadSearchCards(ids, searchGen = searchGeneration) {", "\nfunction debounceLists() {");
+const restoreBlock = bodyIn(searchHtml, "function restoreSearchState() {", "\nfunction searchTotalPages(total) {");
+const runBlock = bodyIn(searchHtml, "async function runSearch() {", "\nfunction applyPrefetchCardKnowledge(card, gen) {");
 
 check(searchHtml.includes("const SEARCH_CARD_CONCURRENCY = 8;"), "worker concurrency constant is 8");
 check(searchHtml.includes("const FIRST_VISIBLE_EAGER_COVER_COUNT = 8;"), "first visible cover eager count is 8");
@@ -22,7 +24,7 @@ check(!helperBlock.includes("setInterval(") && !loadBlock.includes("setInterval(
 check(loadBlock.includes("if (searchGen !== searchGeneration) return;") && loadBlock.includes("const li = results.querySelector(\"[data-search-id='\" + id + \"']\");"), "search generation guard and card selector kept");
 check(loadBlock.includes("const cardStart = performance.now();") && loadBlock.includes("recordPerfCache(card._x_cache);") && loadBlock.includes("renderPerfStatus();"), "per-card perf timing kept");
 check(loadBlock.includes("const workerCount = Math.min(SEARCH_CARD_CONCURRENCY, ids.length);") && loadBlock.includes("await Promise.all(workers);"), "bounded workers kept");
-check(searchHtml.includes("loadSearchCards(ids, searchGeneration);"), "restoreSearchState uses the same loadSearchCards path");
+check(!restoreBlock.includes("loadSearchCards(") && runBlock.includes("await loadSearchCards(ids, searchGen);"), "page-load card fetch stays single-run because restoreSearchState renders only and runSearch owns the card run");
 
 const stubs = `
 let searchGeneration = 1;

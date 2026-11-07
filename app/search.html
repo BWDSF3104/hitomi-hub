@@ -465,7 +465,6 @@ function restoreSearchState() {
   if (count) count.textContent = (state.total || 0) + " 件・ページ " + (state.page || 1);
   setStatus(status, "検索結果復元: " + state.query);
   results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
-  loadSearchCards(ids, searchGeneration);
 }
 function searchTotalPages(total) {
   return Math.max(1, Math.ceil(Number(total || 0) / 25));

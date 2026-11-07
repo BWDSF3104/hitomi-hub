@@ -2,9 +2,9 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 実施開始指示待ち。合格条件: ページロードで card fetch が 1 回だけ（searchGeneration が restore 分を進めない）。cold 確認の汚染源としても記録。記録: R-12
+**Next Action**: 完了確認済み（案 A 実装・harness re-anchor・served 画面で単発 25 requests 実測）。Drive 保存: I:\マイドライブ\kilo\2026-11-06-r12-startup-double-search
 
 ## 意図 / 背景
 
@@ -34,6 +34,14 @@
 - Load B（reload・state あり）: startup card requests 33（restore 分 8 が `/api/search` 応答前、search run 25、先頭 8 id が二重 fetch）。`perf-status` は「カード 25・cache=25」、status「検索完了・カード表示済み 25件」→ restore 分が棄てられていることを served 画面で確認。
 - served 画面での「単発」確認は未確認（正典 source を変更していないため canonical build は現行二重実行を served する。単発の数値は harness スクラッチのみ）。実装後に実装段階で served 確認が必要。
 - Google Drive 保存先: `I:\マイドライブ\kilo\2026-11-06-r12-startup-double-search\`（`r12-startup-single-run-before-20261106.png`・`r12-startup-double-run-after-20261106.png`・`r12-startup-card-fetch-confirmation-20261106.txt`）。local copy は `kilo-safe-remove` でゴミ箱へ送った。
+
+### 実装（案 A・試行1）
+
+- `app/search.html` の `restoreSearchState()` から card fetch 呼び出し（旧 468 行 `loadSearchCards(ids, searchGeneration);`）を削除し、render 専にした。startup の card fetch は `runSearch()` の単発 run のみ（承認範囲=案 A。案 B は実施しない）。
+- テスト re-anchor: `tests/search_visible_priority_harness.mjs` の check を「page-load card fetch stays single-run because restoreSearchState renders only and runSearch owns the card run」へ変更（`restoreBlock` に `loadSearchCards(` がないこと + `runBlock` の `await loadSearchCards(ids, searchGen);` を照合）。`tests/test_search_visible_priority.py` の required label を同名へ更新。
+- 単発回数を実測する harness を既存流儀（`tests/harness_lib.mjs` 方式・node）で追加: `tests/r12_startup_single_run_harness.mjs` + `tests/test_r12_startup_single_run.py`。
+- 試行回数 1（初回で合格条件を満たす。不合格試行なし）。
+- 影響確認: `TestEmbeddedUIPreservesSearchStateAcrossReload`（initBody）と `TestEmbeddedUIRestoresSearchPageStatusFromSavedTotal`（restoreBody の total 表示・renderSearchPageStatus）は文字列要求を維持して合格。guard・IntersectionObserver・perf 指標・TN cover・prefetch・DB 書き込み口・list debounce は非接触。data lane gate 消費が load ごとに 8 件減る（R-11 gate 意味への接触なし）。
 
 ### 有効性
 
@@ -67,10 +75,23 @@
 - `python -m pytest tests/ -v` → 54 passed・13.75s、1 failed。failed は `test_canonical_build_freshness_rule_exists`（R-12 範囲外・本調査で変更していない既存不整合: AGENTS.md Rules pointer が 2026-11-06 の `docs/ai/rules/confirmation-test-rule.md` 集約で単一 pointer 化され、test が要求する `docs/ai/decisions/2026-11-04-search-viewer-separation-approach-approved.md` pointer 文字列を持たない。freshness の byte embed test `test_canonical_executable_embeds_current_pages` は合格）。推測ではなく実測結果の記録として区別する。
 - canonical build（fresh）+ canonical server（port 8731・p3_canonical_fresh・pid 25208・稼働継続・decision 2026-11-01-server-exe-keep-running）で served 画面確認。window size 1665x932（実測・before/after 同一）。cold claim はせず warm として記録。served 実測: state なし load = card requests 25（単発）、state あり reload = 33（restore 分 8 が search 応答前、先頭 8 id 二重）。served 画面の単発確認は未確認（正典 source 未変更・実装段階）。
 - Drive 保存先: `I:\マイドライブ\kilo\2026-11-06-r12-startup-double-search\`（before/after png + confirmation txt）。local screenshot copy は `kilo-safe-remove` でゴミ箱へ送った。repo に binary 保存なし。
-- コード・既存テスト変更なし。変更は本記録と `docs/ai/tmp/assess-20261106-1056/`（スクラッチ）のみ。
+- コード・既存テスト変更なし（調査段階）。変更は本記録と `docs/ai/tmp/assess-20261106-1056/`（スクラッチ）のみ。
+
+### 実装段階の実測（2026-11-07・試行1）
+
+- `node tests/r12_startup_single_run_harness.mjs` → 16 checks passed（state あり page load: card requests 25・runs 1・restore 分 0・duplicate 0・/api/search 応答前発火 0、state なし: 25 requests・単発）。
+- `node tests/search_visible_priority_harness.mjs` → 24 checks passed（re-anchor した single-run check を含む）。
+- `app` で `go vet . && go test -count=1 -timeout 300s .` → 合格（25.192s。`TestEmbeddedUIPreservesSearchStateAcrossReload`・restoreBody の page status 要求は維持）。
+- `python -m pytest tests/ -v` → 55 passed・2 failed。区別: `test_canonical_build_freshness_rule_exists` は既存 failure（AGENTS.md pointer 不整合・R-12 範囲外・AGENTS.md は変更していない）。`test_canonical_executable_embeds_current_pages` は修正直後の stale canonical exe で failed → fresh canonical build 後（server stop → build → 同じ exe で起動）に再実行して PASSED。
+- served 画面確認（`docs/ai/rules/confirmation-test-rule.md` の流儀・同一 window size 1665x932 inner / 1678x1025 outer・full page 同一被写体・Playwright browser tool）:
+  - before（修正前 app からの canonical exe・fresh instance pid 19004・state あり reload）: startup card requests 33（restore 分 8 が `/api/search` 応答前、duplicate 8）。cards 25・perf「カード 25 cache=25」→ restore 分棄て。
+  - after（修正後・fresh canonical build + fresh instance pid 21136・state あり reload）: startup card requests 25・duplicate 0・`/api/search` 応答前発火 0（search t=20ms・first card t=70ms）。cards 25・status「検索完了・カード表示済み 25件」→ 合格条件を served 画面で実測。
+  - after（state なし初回ロード・fresh instance + localStorage clear）: card requests 25・単発・応答前発火 0（perf cache miss=25）。
+  - cold claim: state なし load は fresh instance + cleared origin。state あり reload は同一 instance への 2 回目測定なので warm として記録。
+- Google Drive 保存先: `I:\マイドライブ\kilo\2026-11-06-r12-startup-double-search\`（`r12-loadB-state-reload-before-20261107.png`・`r12-loadB-state-reload-after-20261107.png`・`r12-loadA-stateless-after-20261107.png`・`r12-startup-single-run-implementation-confirmation-2026-11-07.txt`）。local screenshot copy は `kilo-safe-remove` でゴミ箱へ送った。repo に binary 保存なし。
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除（task_manager end で削除済み）
+- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）→ 該当なし（R-12 の known-issue ファイルはなし。既存 `KI-20261106-04-canonical-build-freshness-pointer-missing.md` は本項目の解決対象ではなく AGENTS.md pointer 不整合のまま）
+- [ ] `backlog.md` の完了項目を削除（該当する場合）→ 該当なし（R-12 は backlog 項目ではなく findings 項目）
