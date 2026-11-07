@@ -751,7 +751,11 @@ func recordSavedEventOnCompletedRun(db *sql.DB, galleryID int, results []downloa
 	return true
 }
 
-func downloadFilesParallel(client *Client, target string, entries []FileEntry, format string, maxConcurrent int, expected map[string]int64) []downloadEntryResult {
+// downloadFilesParallel は R-16 で shared core writeAtomically を使う（temp は target フォルダ内・
+// CreateTemp 一意名・write → close → rename・write/close/rename 失敗で壊れた target が残らず temp cleanup）。
+// worker path は一意（B2 実測）なので singleflight 不要。existing target への rename 上書きで size
+// 不一致 self-repair を維持（worker 内 DB size 一致 skip（A-10）は非触）。seam は失敗注入テスト用（nil 可）。
+func downloadFilesParallel(client *Client, target string, entries []FileEntry, format string, maxConcurrent int, expected map[string]int64, seam *atomicWriteSeam) []downloadEntryResult {
 	if len(entries) == 0 {
 		return []downloadEntryResult{}
 	}
@@ -793,7 +797,7 @@ func downloadFilesParallel(client *Client, target string, entries []FileEntry, f
 				results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: err.Error()}
 				continue
 			}
-			if err := os.WriteFile(path, body, 0o644); err != nil {
+			if err := writeAtomically(seam, path, format, body); err != nil {
 				results[idx] = downloadEntryResult{page: idx + 1, path: path, hash: entry.Hash, err: err.Error()}
 				continue
 			}
@@ -1190,7 +1194,7 @@ func main() {
 			limit = f.limit
 		}
 
-		results := downloadFilesParallel(client, target, info.Files[:limit], format, 8, recordedSizes(db, root, info.ID))
+		results := downloadFilesParallel(client, target, info.Files[:limit], format, 8, recordedSizes(db, root, info.ID), nil)
 		written := 0
 		skipped := 0
 		for _, result := range results {

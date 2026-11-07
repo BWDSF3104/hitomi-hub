@@ -33,9 +33,10 @@ func TestBackgroundPrefetchMarkerRecordedSeparatelyInMetrics(t *testing.T) {
 	galleryJSON := `var galleryinfo = {"id":"125","title":"kemo","language":"japanese","type":"doujinshi",` +
 		`"files":[{"hash":"` + sampleHash + `","name":"001.jpg","width":1813,"height":2542}]}`
 	v, _ := newTestViewer(t, galleryJSON)
+	// R-16: TN 書き込み（shared core・magic 照合）で tn-cache hit が成立する webp magic fixture。
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		if classifyFetchURL(rawurl) == "image" {
-			return []byte("tn"), nil
+			return webpMagicBytes("tn"), nil
 		}
 		return []byte(galleryJSON), nil
 	}

@@ -1092,13 +1092,15 @@ func TestDownloadFilesParallelWritesResultsInOriginalOrder(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}
 	c.cfg.MinIntervalMS = 1000
 	c.cfg.ImageMinIntervalMS = 1
+	// R-16: download 書き込みは shared core（magic 照合）を通る。fixture は webp magic bytes。
+	payload := webpMagicBytes("x")
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
-		return []byte("x"), nil
+		return payload, nil
 	}
 
 	target := t.TempDir()
 	entries := []FileEntry{{Hash: "a"}, {Hash: "b"}, {Hash: "c"}}
-	results := downloadFilesParallel(c, target, entries, "webp", 4, nil)
+	results := downloadFilesParallel(c, target, entries, "webp", 4, nil, nil)
 	if len(results) != 3 {
 		t.Fatalf("results: got %d", len(results))
 	}
@@ -1116,7 +1118,7 @@ func TestDownloadFilesParallelWritesResultsInOriginalOrder(t *testing.T) {
 			t.Errorf("result %d path: got %q", i, result.path)
 		}
 		data, err := os.ReadFile(result.path)
-		if err != nil || string(data) != "x" {
+		if err != nil || string(data) != string(payload) {
 			t.Errorf("result %d file: err %v data %q", i, err, string(data))
 		}
 	}
@@ -1143,10 +1145,12 @@ func recordTestFileSize(db *sql.DB, rel string, galleryID sql.NullInt64, size in
 func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}
 	calls := 0
-	content := "x"
+	// R-16: webp magic fixture（shared core の magic 照合を通る）。
+	payload1 := webpMagicBytes("x")
+	content := payload1
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
-		return []byte(content), nil
+		return content, nil
 	}
 	db := openTestDB(t)
 	if err := upsertGallery(db, &GalleryInfo{ID: 125, Title: "t", Language: "all"}, "Galleries/125"); err != nil {
@@ -1160,19 +1164,19 @@ func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testin
 	entries := []FileEntry{{Hash: "a"}}
 
 	// 1 run: no recorded size yet -> fetch and write. scan 相当の記録後、size 一致。
-	results := downloadFilesParallel(c, target, entries, "webp", 1, nil)
+	results := downloadFilesParallel(c, target, entries, "webp", 1, nil, nil)
 	if len(results) != 1 || results[0].skipped || results[0].err != "" {
 		t.Fatalf("run 1: got %v", results)
 	}
 	if calls != 1 {
 		t.Fatalf("run 1 image calls: got %d", calls)
 	}
-	if err := recordTestFileSize(db, filepath.Join(galleryDir(root, 125), "a.webp"), sql.NullInt64{Int64: 125, Valid: true}, 1); err != nil {
+	if err := recordTestFileSize(db, filepath.Join(galleryDir(root, 125), "a.webp"), sql.NullInt64{Int64: 125, Valid: true}, int64(len(payload1))); err != nil {
 		t.Fatal(err)
 	}
-	content = "z" // 2 run で fetch したら内容が変わる。skip なら内容保持のはず。
+	content = webpMagicBytes("z") // 2 run で fetch したら内容が変わる。skip なら内容保持のはず。
 
-	results = downloadFilesParallel(c, target, entries, "webp", 1, recordedSizes(db, root, 125))
+	results = downloadFilesParallel(c, target, entries, "webp", 1, recordedSizes(db, root, 125), nil)
 	if len(results) != 1 || !results[0].skipped || results[0].err != "" {
 		t.Fatalf("run 2 must report skipped: got %v", results)
 	}
@@ -1180,7 +1184,7 @@ func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testin
 		t.Errorf("run 2 must not call remote fetch: calls %d", calls)
 	}
 	data, err := os.ReadFile(results[0].path)
-	if err != nil || string(data) != "x" {
+	if err != nil || string(data) != string(payload1) {
 		t.Errorf("skipped file must keep original content: err %v data %q", err, string(data))
 	}
 }
@@ -1188,9 +1192,10 @@ func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testin
 func TestDownloadFilesParallelRefetchesOnSizeMismatchMissingOrUnrecorded(t *testing.T) {
 	c := &Client{cfg: defaultHitomiConfig()}
 	calls := 0
+	payloadZ := webpMagicBytes("z") // R-16: shared core の magic 照合を通る fixture。
 	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
-		return []byte("z"), nil
+		return payloadZ, nil
 	}
 	db := openTestDB(t)
 	if err := upsertGallery(db, &GalleryInfo{ID: 126, Title: "t", Language: "all"}, "Galleries/126"); err != nil {
@@ -1219,7 +1224,7 @@ func TestDownloadFilesParallelRefetchesOnSizeMismatchMissingOrUnrecorded(t *test
 		}
 	}
 
-	results := downloadFilesParallel(c, target, entries, "webp", 1, recordedSizes(db, root, 126))
+	results := downloadFilesParallel(c, target, entries, "webp", 1, recordedSizes(db, root, 126), nil)
 	if len(results) != 4 {
 		t.Fatalf("results: got %d", len(results))
 	}
@@ -1239,10 +1244,75 @@ func TestDownloadFilesParallelRefetchesOnSizeMismatchMissingOrUnrecorded(t *test
 	}
 	for _, hash := range []string{"mismatch", "missing", "unrecorded"} {
 		data, err := os.ReadFile(filepath.Join(target, hash+".webp"))
-		if err != nil || string(data) != "z" {
+		if err != nil || string(data) != string(payloadZ) {
 			t.Errorf("%s must be re-fetched: err %v data %q", hash, err, string(data))
 		}
 	}
+	// R-16: size 不一致の既存 file は rename 上書きで self-repair（existing skip は core 側にない）。
+	// target folder に `.tmp` 残りがあってはならない。
+	assertNoCacheTempResidue(t, target)
+}
+
+// R-16 download 書込点の失敗注入。合格条件: write / close / rename 失敗で完成フォルダに
+// 壊れた target が残らない・target フォルダ内に `.tmp` 残りが消える（正典 correction の失敗時テスト要求を
+// download 書込点へ拡張）。seam は shared core の test seam（download は nil seam でも動く）。
+func TestDownloadFilesParallelAtomicFailureLeavesNoBrokenTarget(t *testing.T) {
+	for _, stage := range []string{"write", "close", "rename"} {
+		c := &Client{cfg: defaultHitomiConfig()}
+		c.cfg.MinIntervalMS = 1000
+		c.cfg.ImageMinIntervalMS = 1
+		c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+			return webpMagicBytes("p"), nil
+		}
+		seam := &atomicWriteSeam{}
+		injected := errors.New("inject " + stage)
+		hook := func(path string) error { return injected }
+		switch stage {
+		case "write":
+			seam.cacheWriteFailureHook = hook
+		case "close":
+			seam.cacheCloseFailureHook = hook
+		case "rename":
+			seam.cacheRenameFailureHook = hook
+		}
+		target := t.TempDir()
+		results := downloadFilesParallel(c, target, []FileEntry{{Hash: "a"}}, "webp", 1, nil, seam)
+		if len(results) != 1 || results[0].err == "" {
+			t.Fatalf("%s failure must return error: %v", stage, results)
+		}
+		if results[0].err != injected.Error() {
+			t.Errorf("%s result error: got %q want %q", stage, results[0].err, injected.Error())
+		}
+		path := filepath.Join(target, "a.webp")
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("%s failure must not create partial target: %s", stage, path)
+		}
+		assertNoCacheTempResidue(t, target)
+		if seam.cacheWriteAttemptCount != 1 || seam.cacheRenameSuccessCount != 0 {
+			t.Errorf("%s failure counts: attempt %d rename %d", stage, seam.cacheWriteAttemptCount, seam.cacheRenameSuccessCount)
+		}
+	}
+}
+
+// R-16: core の magic 照合は download 書込点にも適用（scan 側 magic_mismatch 検出と整合）。
+// 不一致バイトは error として result に記録され、target を書かない・`.tmp` 残りが消える。
+func TestDownloadFilesParallelMagicMismatchErrorLeavesNoTarget(t *testing.T) {
+	c := &Client{cfg: defaultHitomiConfig()}
+	c.cfg.MinIntervalMS = 1000
+	c.cfg.ImageMinIntervalMS = 1
+	c.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+		return []byte("not an image"), nil
+	}
+	target := t.TempDir()
+	results := downloadFilesParallel(c, target, []FileEntry{{Hash: "a"}}, "webp", 1, nil, nil)
+	if len(results) != 1 || results[0].err == "" || !strings.Contains(results[0].err, "magic mismatch") {
+		t.Fatalf("magic mismatch must be reported as error: %v", results)
+	}
+	path := filepath.Join(target, "a.webp")
+	if _, err := os.Stat(path); err == nil {
+		t.Errorf("magic mismatch must not write target: %s", path)
+	}
+	assertNoCacheTempResidue(t, target)
 }
 
 // A-10 実測（明示テストモード）。docs/ai/decisions/2026-11-01-hitomi-hub-tests-may-call-external-api.md に
@@ -1284,7 +1354,7 @@ func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run1 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, nil)
+	run1 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, nil, nil)
 	written1 := 0
 	summary := map[string]int{}
 	state := &RateState{}
@@ -1311,7 +1381,7 @@ func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
 		t.Fatalf("run 1 evidence: attempted %d written %d download fetch calls %d", len(run1), written1, calls1)
 	}
 
-	run2 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, recordedSizes(db, scratch, info.ID))
+	run2 := downloadFilesParallel(client, target, info.Files[:2], "webp", 4, recordedSizes(db, scratch, info.ID), nil)
 	skipped2 := 0
 	for _, result := range run2 {
 		if result.err != "" {

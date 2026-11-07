@@ -1185,19 +1185,21 @@ func TestViewerThumbProxyTNOnlyDoesNotServeFullCache(t *testing.T) {
 func TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	calls := 0
+	// R-16: TN 書き込みは shared core（magic 照合は request 側の format）を通る。fixture は webp magic bytes。
+	payload := webpMagicBytes("tn")
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls++
-		return []byte("tn"), nil
+		return payload, nil
 	}
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn" {
+	if rec.Code != http.StatusOK || rec.Body.String() != string(payload) || rec.Header().Get("x-cache") != "tn" {
 		t.Fatalf("remote TN thumb: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
 	cacheFile := filepath.Join(v.cacheRoot, "thumbs", sampleHash+".webp.bigtn")
 	data, err := os.ReadFile(cacheFile)
-	if err != nil || string(data) != "tn" {
+	if err != nil || string(data) != string(payload) {
 		t.Fatalf("persistent TN thumb cache: err %v data %q", err, string(data))
 	}
 
@@ -1206,8 +1208,94 @@ func TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit(t *testing.T)
 	if calls != 1 {
 		t.Errorf("TN cache hit should not call network: calls %d", calls)
 	}
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn-cache" {
+	if rec.Code != http.StatusOK || rec.Body.String() != string(payload) || rec.Header().Get("x-cache") != "tn-cache" {
 		t.Errorf("TN cache hit: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+	}
+}
+
+// R-16 合格条件: TN 書き込みの write / close / rename 失敗で壊れた target（thumbs 内）が残らない・
+// `.tmp` 残りが消える・応答（200 / x-cache tn・write より前）は変わらない。seam 注入は viewer shared seam。
+func TestThumbProxyTNWriteFailureLeavesNoBrokenTNCache(t *testing.T) {
+	for _, stage := range []string{"write", "close", "rename"} {
+		v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
+		hook := func(path string) error { return errors.New("inject " + stage) }
+		switch stage {
+		case "write":
+			v.cacheWriteFailureHook = hook
+		case "close":
+			v.cacheCloseFailureHook = hook
+		case "rename":
+			v.cacheRenameFailureHook = hook
+		}
+		payload := webpMagicBytes("tn")
+		v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
+			return payload, nil
+		}
+
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != string(payload) || rec.Header().Get("x-cache") != "tn" {
+			t.Fatalf("%s failure must not change TN response: code %d body %q x-cache %q", stage, rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
+		}
+		tnPath := filepath.Join(v.cacheRoot, "thumbs", sampleHash+".webp.bigtn")
+		if _, err := os.Stat(tnPath); err == nil {
+			t.Errorf("%s failure must not create partial TN target: %s", stage, tnPath)
+		}
+		thumbsDir := filepath.Join(v.cacheRoot, "thumbs")
+		assertNoCacheTempResidue(t, thumbsDir)
+		if v.cacheWriteAttemptCount != 1 || v.cacheRenameSuccessCount != 0 {
+			t.Errorf("%s failure counts: attempt %d rename %d", stage, v.cacheWriteAttemptCount, v.cacheRenameSuccessCount)
+		}
+	}
+}
+
+// R-16: TN write singleflight は shared wrapper（key = cachePath）で R-13 と同じ key 設計（推奨案・段階1）。
+// helper 呼び出し 2 回・actual write 1 回・rename 1 回・混ざり（B2 実測どおり上書きのみ）・residue なし。
+func TestThumbProxyTNWriteSingleflightUsesTNCachePathKey(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	tnPath, err := safeThumbnailCachePath(v.cacheRoot, sampleHash, "webp", "bigtn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := webpMagicBytes("tn")
+
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	joined := make(chan struct{})
+	v.cacheWriteFailureHook = func(path string) error {
+		close(started)
+		<-gate
+		return nil
+	}
+	v.cacheSingleflightJoinHook = func(key string) { close(joined) }
+
+	results := make(chan error, 2)
+	call := func() { results <- v.writeImageCacheAtomically(tnPath, "webp", payload) }
+	go call()
+	<-started
+	go call()
+	<-joined
+	close(gate)
+
+	r1, r2 := <-results, <-results
+	if r1 != nil || r2 != nil {
+		t.Errorf("singleflight results: %v %v", r1, r2)
+	}
+	if v.cacheWriteAttemptCount != 1 {
+		t.Errorf("actual write attempt: got %d want 1", v.cacheWriteAttemptCount)
+	}
+	if v.cacheRenameSuccessCount != 1 {
+		t.Errorf("rename success: got %d want 1", v.cacheRenameSuccessCount)
+	}
+	if got, err := os.ReadFile(tnPath); err != nil || string(got) != string(payload) {
+		t.Errorf("final TN file: err %v data %q", err, string(got))
+	}
+	assertNoCacheTempResidue(t, filepath.Join(v.cacheRoot, "thumbs"))
+	v.cacheWriteMu.Lock()
+	groupSize := len(v.cacheWriteGroup)
+	v.cacheWriteMu.Unlock()
+	if groupSize != 0 {
+		t.Errorf("singleflight group must be empty after completion: %d", groupSize)
 	}
 }
 
@@ -3994,7 +4082,7 @@ func TestImageProxyCacheMissWritesAtomically(t *testing.T) {
 		case "rename":
 			f.cacheRenameFailureHook = hook
 		}
-		if err := f.writeImageCacheAtomically(p, []byte(payload)); err == nil {
+		if err := f.writeImageCacheAtomically(p, "webp", []byte(payload)); err == nil {
 			t.Fatalf("%s failure must return error", stage)
 		}
 		if _, err := os.Stat(p); err == nil {
@@ -4017,7 +4105,7 @@ func TestImageProxyCacheMissWritesAtomically(t *testing.T) {
 	if err := os.WriteFile(p, []byte("existing"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.writeImageCacheAtomically(p, []byte(payload)); err != nil {
+	if err := s.writeImageCacheAtomically(p, "webp", []byte(payload)); err != nil {
 		t.Fatalf("existing target should skip without error: %v", err)
 	}
 	if got, err := os.ReadFile(p); err != nil || string(got) != "existing" {
@@ -4052,7 +4140,7 @@ func TestImageProxyCacheConcurrentWriteSingleflight(t *testing.T) {
 	results := make(chan error, 2)
 	call := func() {
 		calls++
-		results <- v.writeImageCacheAtomically(p, []byte(payload))
+		results <- v.writeImageCacheAtomically(p, "webp", []byte(payload))
 	}
 	go call()
 	<-started
@@ -4122,9 +4210,9 @@ func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
 
 		first := make(chan error, 1)
 		second := make(chan error, 1)
-		go func() { first <- v.writeImageCacheAtomically(p, []byte(payload)) }()
+		go func() { first <- v.writeImageCacheAtomically(p, "webp", []byte(payload)) }()
 		<-started
-		go func() { second <- v.writeImageCacheAtomically(p, []byte(payload)) }()
+		go func() { second <- v.writeImageCacheAtomically(p, "webp", []byte(payload)) }()
 		<-joined
 		close(gate)
 
@@ -4150,7 +4238,7 @@ func TestImageProxyCacheSingleflightFailureDoesNotReportSuccess(t *testing.T) {
 		v.cacheWriteFailureHook = nil
 		v.cacheCloseFailureHook = nil
 		v.cacheRenameFailureHook = nil
-		if err := v.writeImageCacheAtomically(p, []byte(payload)); err != nil {
+		if err := v.writeImageCacheAtomically(p, "webp", []byte(payload)); err != nil {
 			t.Fatalf("%s recovery attempt: %v", stage, err)
 		}
 		if v.cacheWriteAttemptCount != 2 || v.cacheRenameSuccessCount != 1 {
@@ -4179,16 +4267,18 @@ func TestImageProxyCacheStateIsNotTN(t *testing.T) {
 		t.Fatalf("TN cache path escaped thumbs: %s", tnPath)
 	}
 
+	// R-16: TN fixture は webp magic bytes（TN 書き込みは shared core の magic 照合を通る）。
+	tnPayload := webpMagicBytes("tn")
 	v.client.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		if strings.Contains(rawurl, "tn.") {
-			return []byte("tn bytes"), nil
+			return tnPayload, nil
 		}
 		return nil, errors.New("status 404 for " + rawurl)
 	}
 
 	rec := httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "tn bytes" || rec.Header().Get("x-cache") != "tn" {
+	if rec.Code != http.StatusOK || rec.Body.String() != string(tnPayload) || rec.Header().Get("x-cache") != "tn" {
 		t.Fatalf("TN state must stay tn: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
 	if _, err := os.Stat(tnPath); err != nil {
@@ -4492,9 +4582,11 @@ func TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall(t *testing.T) {
 	v2, _ := newTestViewer(t, "")
 	c2 := v2.client
 	var calls2 atomic.Int32
+	// R-16: TN variant boundary。TN 書き込みは shared core（magic 照合）を通るため、tn-cache hit で
+	// group 分離（2 calls）が成立する webp magic fixture。
 	c2.fetch = func(ctx context.Context, rawurl string, rng [2]int64) ([]byte, error) {
 		calls2.Add(1)
-		return beIDs([]uint32{10}), nil
+		return webpMagicBytes("tn"), nil
 	}
 	for i := 0; i < 6; i++ {
 		var variant string

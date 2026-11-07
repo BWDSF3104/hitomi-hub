@@ -2,9 +2,9 @@
 
 **実行固有ID**: assess-20261106-1056
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-06
-**Next Action**: 実施開始指示待ち。full cache の writeImageCacheAtomically（A-07a）を共通化し、TN と downloadFilesParallel（main.go:737）へ適用。合格条件: write/close/rename 失敗で壊れた target が残らない。記録: R-16
+**Next Action**: 実施中（計画確定 2026-11-08）。core writeAtomically 共通化 → TN（thumbProxy）と downloadFilesParallel へ適用・失敗注入テスト。合格条件: write/close/rename 失敗で壊れた target が残らない。記録: R-16
 
 ## 意図 / 背景
 
@@ -65,6 +65,16 @@
 - リスク: 修正自体は低。Windows の open-target rename 失敗（C2）と temp 残りの扱い（クラッシュ時）が運用条件。混ざり実測 0.5%（TN 直書き）は低頻度。
 - 依存: A-07a 正典 helper（test seam 流儀）、R-13（TN singleflight 承認待ち・key 設計）、R-15（TN disk cache 上限・prune 方針）、正典 guard（実施開始指示）。
 
+### 実装計画（確定 2026-11-08・assess-20261106-1056・R-16 scope 拡張はユーザー承認済み）
+
+- 正典前作業チェック（viewer・download 項目として読了・ファイル名明記）: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`・`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`・`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`（正典対照: `docs/ai/decisions/2026-11-02-imageproxy-cache-atomic-write-scope-correction.md`）。承認済み R-16 記載: `docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md`（本項目の scope 拡張はユーザー承認済みとして実装）。
+- 共通化の形（推奨案の採用・段階1）: core 関数 `writeAtomically(seam, targetPath, format, data)` へ正典 helper の機構を集約（magic 照合は format 明示引数・temp は target 同一 dir 内 `os.CreateTemp` 一意名 `.cache-*.tmp`・write → close → rename・close 完了前に rename なし・write/close/rename 失敗時 temp cleanup）。正典不変（magic 照合・temp+rename・close 前 rename なし・失敗時 temp cleanup）は弱めない。
+- seam: `atomicWriteSeam`（cacheWriteMu・cacheWriteAttemptCount・cacheRenameSuccessCount・write/close/rename failure hooks）を viewer に embed（既存テストの `v.cacheWriteMu` 等の参照は promotion で不変）。download 側は seam nil（counter・hook なし）。
+- singleflight wrapper `writeImageCacheAtomically(cachePath, format, data)`: key = cachePath・existing target skip・join result 共有（正典 singleflight spec 維持）。TN はこの wrapper を使用（TN write dedup は R-13 と同じ key 設計 cachePath 単位に揃う・推奨案どおり。R-13 案 A は承認済み（`ba0acd7`）なので追加承認不要）。download は worker path 一意（B2 実測 200/200）のため core 直呼び・existing skip なし（rename 上書きで size 不一致 self-repair 維持。worker 内 DB size 一致 skip は非触）。
+- TN 配線（`thumbProxy`）: 応答順序（write 前の応答）・x-cache（tn / tn-cache）判定・TN display fallback 禁止・TN バイトを full cache に保存しない・reader 表示源化禁止は変更なし。format はリクエスト側から渡す（`filepath.Ext` の variant 接尾 `.bigtn` は magic 照合に使えない・正典条件の追加どおり）。R-15 の `recordAndPruneCacheEntry` は write 成功時（rename 成功）のみ呼ぶ条件で不変。既存 `os.MkdirAll`（thumbs）は core の target dir MkdirAll に統合（同一 dir・thumbs 内）。
+- download 配線（`downloadFilesParallel`）: core 適用（seam 引数追加）。webp/avif の magic 不一致は error として result に記録（scan 側 `magic_mismatch` 検出と整合）。既存テスト mock の非 magic バイト（"x"・"z"）は webp magic payload へ更新が必要（訂正: 記録の「既存テストは temp+rename 化でも通過」は magic 照合の TN・download 適用により不正確。既存テストの fixture 更新を要る）。UI 項目でない（画面確認・Drive 保存該当なし）。
+- 新テスト: TN write/close/rename 失敗注入（壊れた target 残らず・thumbs dir に `.tmp` 残らず・応答 200 tn 維持）、TN write singleflight（key = TN path・helper 2 呼・actual write 1・rename 1・residue なし）、download write/close/rename 失敗注入（target 残らず・residue なし）、download magic 不一致（error・target 残らず）。
+
 ## Verification
 
 - 変更は本記録とスクラッチのみ（`docs/ai/tmp/assess-20261106-1056/r16/`）。ソースコード・既存テスト・実 cache フォルダ・実 DB は未変更。スクラッチ共有フォルダでの package main 衝突により本項目分は `r16/` サブフォルダへ隔離（go.mod・`r16measure.go`）。
@@ -72,6 +82,17 @@
 - `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean（出力なし）、`ok hitomi-hub/app 25.797s`（全通過・コード非変更）。
 - `python -m pytest tests/ -v` → 54 passed・1 failed・10.96 s。failed は R-10 が報告済みの既存 failure（AGENTS.md Rules 条の pointer 集約、`test_canonical_build_freshness_rule_exists`）で R-16 と無関係（R-16 のコード非変更で再現）。
 - 画面確認: 該当なし（UI 項目でない）。Drive 保存なし。
+
+### 実装実施（2026-11-08・計画確定どおり）
+
+- 変更ファイル: `app/viewer.go`（`atomicWriteSeam`・core `writeAtomically`・`writeImageCacheAtomically(cachePath, format, data)`・`writeCacheFileOnce` binding・`thumbProxy` TN 配線）、`app/main.go`（`downloadFilesParallel` seam 引数・worker が core 直呼び）、`app/viewer_test.go`・`app/hitomi_test.go`・`app/metrics_test.go`（fixture webp magic 更新・新テスト 4 件）。
+- `go vet .` → clean。`go test -count=1 -timeout 300s .`（app）→ `ok hitomi-hub/app`（新テスト: TN write failure 残留なし・TN singleflight key = TN cachePath・download failure 残留なし・download magic 不一致 error）。
+- `python -m pytest tests/ -v` → 57 passed・1 failed（既存 failure `test_canonical_build_freshness_rule_exists`・KI-20261106-04・R-16 と無関係）。`test_canonical_executable_embeds_current_pages` PASSED。
+- Canonical build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → 生成済み。
+- CLI download 実機（実在 gallery 4294614・scratch p3_canonical_fresh）: attempted=2・written=2・skipped=0（一致）。ファイル: `2d18a9a8...` 210784 B・`76f4e315...` 183038 B。elapsed 2.21 s。
+- viewer full 実機（canonical server 8731）: `GET /api/image/9d990fde5de572e0cccd806f3f87258f6a7905d0e99a2ddb13254342?format=webp` → 1st 200 `x-cache: miss` 193724 B、2nd 200 `x-cache: cache` 193724 B（`no_full` でない・cache ファイル実寸 193724 B・rename 由来）。`.tmp` 残留: cache 配下・scratch 全体で none。
+- TN 実機: 既存 TN cache hit 確認（`GET /api/thumb/2d18a9a8...?format=webp&gallery=4294614&variant=bigtn` → 200 `x-cache: tn-cache` 55320 B・thumbs 内ファイル 55320 B）。TN 新規 write（tn → tn-cache）は TN upstream が 502 を返せず、確認できなかった → **TN live write は未確認**（テストで固定済みの機構・実機確認は tn-cache 読みのみ）。
+- 合格条件（write/close/rename 失敗で壊れた target が残らない）: テストで確定・実機では full cache write 成功経路（miss→cache・residue なし）と download 一致を確認。TN live write 失敗注入は実機未実施（upstream 502）。
 
 ## 完了時 Memory Bank 操作
 

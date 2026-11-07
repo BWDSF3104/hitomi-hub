@@ -54,13 +54,11 @@ type viewer struct {
 	imageFetchGroup       map[string]*imageFetchCall
 	imageFetchJoinObserver func(hashFormatKey string)
 
-	cacheWriteMu              sync.Mutex
+	// R-16: 正典 core atomic write（writeAtomically）の shared test seam。atomicWriteSeam を embed
+	// することで既存テストの v.cacheWriteMu / hooks / counts 参照は promotion で不変。
+	// downloadFilesParallel は nil または own seam を受け取る（R-16 失敗注入テスト）。
+	atomicWriteSeam
 	cacheWriteGroup           map[string]*cacheWriteCall
-	cacheWriteAttemptCount    int
-	cacheRenameSuccessCount   int
-	cacheWriteFailureHook     func(path string) error
-	cacheCloseFailureHook     func(path string) error
-	cacheRenameFailureHook    func(path string) error
 	cacheSingleflightJoinHook func(key string)
 
 	// R-13: TN / info fetch dedup（案 A・既存流儀: key 単位・mutex・network 中に mutex を保持しない）。
@@ -99,6 +97,18 @@ type infoFetchCall struct {
 type cacheWriteCall struct {
 	done   chan struct{}
 	result error
+}
+
+// atomicWriteSeam は core atomic write（writeAtomically）の shared test seam（A-07a 正典流儀）。
+// counter と hooks は seam が非 nil のときだけ適用。existing target skip は actual attempt に数えない（正典）。
+// viewer（full cache・TN）と downloadFilesParallel（R-16）で同一構造を使う。
+type atomicWriteSeam struct {
+	cacheWriteMu              sync.Mutex
+	cacheWriteAttemptCount    int
+	cacheRenameSuccessCount   int
+	cacheWriteFailureHook     func(path string) error
+	cacheCloseFailureHook     func(path string) error
+	cacheRenameFailureHook    func(path string) error
 }
 
 type imageFetchCall struct {
@@ -404,11 +414,12 @@ func (v *viewer) serveStoredImage(w http.ResponseWriter, r *http.Request, format
 	return true
 }
 
-// writeImageCacheAtomically は full image cache を temp write + close + rename で書く。
-// temp は cachePath と同一ディレクトリ（cacheRoot）内のみ。OS temp dir・scratch/・output/ は使わない。
+// writeImageCacheAtomically は R-16 の shared singleflight wrapper。key は cachePath（full cache・TN で同一設計）。
 // existing target は skip、close 完了前に rename しない。write / close / rename 失敗時は temp を cleanup する。
-// singleflight の対象は write のみ。key は cachePath。waiting side は first actual attempt の result を共有する。
-func (v *viewer) writeImageCacheAtomically(cachePath string, data []byte) error {
+// singleflight の対象は write のみ。waiting side は first actual attempt の result を共有する。
+// format は caller から明示引数（TN は request 側の format を渡す。TN cache path の filepath.Ext は
+// variant 接尾なので format 導出に使えない）。実 write は shared core writeAtomically。
+func (v *viewer) writeImageCacheAtomically(cachePath, format string, data []byte) error {
 	if _, err := os.Stat(cachePath); err == nil {
 		return nil
 	}
@@ -429,7 +440,7 @@ func (v *viewer) writeImageCacheAtomically(cachePath string, data []byte) error 
 	v.cacheWriteGroup[cachePath] = call
 	v.cacheWriteMu.Unlock()
 
-	err := v.writeCacheFileOnce(cachePath, data)
+	err := v.writeCacheFileOnce(cachePath, format, data)
 
 	v.cacheWriteMu.Lock()
 	if v.cacheWriteGroup[cachePath] == call {
@@ -439,6 +450,80 @@ func (v *viewer) writeImageCacheAtomically(cachePath string, data []byte) error 
 	v.cacheWriteMu.Unlock()
 	close(call.done)
 	return err
+}
+
+// writeAtomically は正典 atomic write helper（A-07a）の shared core（R-16 共通化）。
+// viewer（full cache・TN）と downloadFilesParallel（CLI download）が同じ機構を使う。
+// temp は targetPath と同一ディレクトリ内のみ（OS temp dir・scratch/・output/ は使わない）。
+// close 完了前に rename しない。write / close / rename 失敗時は temp を cleanup する（壊れた target が残らない）。
+// core では existing target skip を決めない（skip は wrapper 側の判断。download は existing へ rename 上書きし、
+// size 不一致 self-repair を維持）。Windows semantics: 既存 target への rename は上書き（C1 実測）、
+// open 中 target への rename は失敗し得る（C2 実測）— どちらも error result で吸収する。
+// counter・hooks は seam（atomicWriteSeam）が非 nil のときだけ適用。existing target skip は actual attempt に数えない（正典）。
+func writeAtomically(seam *atomicWriteSeam, targetPath, format string, data []byte) error {
+	if !matchesFormatMagic(format, data) {
+		return fmt.Errorf("cache magic mismatch for format %q", format)
+	}
+
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	if seam != nil {
+		seam.cacheWriteMu.Lock()
+		seam.cacheWriteAttemptCount++
+		seam.cacheWriteMu.Unlock()
+	}
+
+	tmp, err := os.CreateTemp(dir, ".cache-*.tmp")
+	if err != nil {
+		return err
+	}
+	cleanupTemp := func() {
+		_ = os.Remove(tmp.Name())
+	}
+
+	if seam != nil && seam.cacheWriteFailureHook != nil {
+		if hookErr := seam.cacheWriteFailureHook(tmp.Name()); hookErr != nil {
+			_ = tmp.Close()
+			cleanupTemp()
+			return hookErr
+		}
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanupTemp()
+		return err
+	}
+	if seam != nil && seam.cacheCloseFailureHook != nil {
+		if hookErr := seam.cacheCloseFailureHook(tmp.Name()); hookErr != nil {
+			_ = tmp.Close()
+			cleanupTemp()
+			return hookErr
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		cleanupTemp()
+		return err
+	}
+	if seam != nil && seam.cacheRenameFailureHook != nil {
+		if hookErr := seam.cacheRenameFailureHook(tmp.Name()); hookErr != nil {
+			cleanupTemp()
+			return hookErr
+		}
+	}
+	if err := os.Rename(tmp.Name(), targetPath); err != nil {
+		cleanupTemp()
+		return err
+	}
+
+	if seam != nil {
+		seam.cacheWriteMu.Lock()
+		seam.cacheRenameSuccessCount++
+		seam.cacheWriteMu.Unlock()
+	}
+	return nil
 }
 
 // matchesFormatMagic は full cache 書き込み直前の format magic 照合（A-07a）。
@@ -454,67 +539,10 @@ func matchesFormatMagic(format string, data []byte) bool {
 	}
 }
 
-func (v *viewer) writeCacheFileOnce(cachePath string, data []byte) error {
-	format := normalizeFormat(filepath.Ext(cachePath))
-	if !matchesFormatMagic(format, data) {
-		return fmt.Errorf("cache magic mismatch for format %q", format)
-	}
-
-	dir := filepath.Dir(cachePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	v.cacheWriteMu.Lock()
-	v.cacheWriteAttemptCount++
-	v.cacheWriteMu.Unlock()
-
-	tmp, err := os.CreateTemp(dir, ".cache-*.tmp")
-	if err != nil {
-		return err
-	}
-	cleanupTemp := func() {
-		_ = os.Remove(tmp.Name())
-	}
-
-	if v.cacheWriteFailureHook != nil {
-		if hookErr := v.cacheWriteFailureHook(tmp.Name()); hookErr != nil {
-			_ = tmp.Close()
-			cleanupTemp()
-			return hookErr
-		}
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanupTemp()
-		return err
-	}
-	if v.cacheCloseFailureHook != nil {
-		if hookErr := v.cacheCloseFailureHook(tmp.Name()); hookErr != nil {
-			_ = tmp.Close()
-			cleanupTemp()
-			return hookErr
-		}
-	}
-	if err := tmp.Close(); err != nil {
-		cleanupTemp()
-		return err
-	}
-	if v.cacheRenameFailureHook != nil {
-		if hookErr := v.cacheRenameFailureHook(tmp.Name()); hookErr != nil {
-			cleanupTemp()
-			return hookErr
-		}
-	}
-	if err := os.Rename(tmp.Name(), cachePath); err != nil {
-		cleanupTemp()
-		return err
-	}
-
-	v.cacheWriteMu.Lock()
-	v.cacheRenameSuccessCount++
-	v.cacheWriteMu.Unlock()
-	return nil
+// writeCacheFileOnce は shared core writeAtomically への viewer seam binding（A-07a 正典名維持）。
+// format は明示引数（R-16）。full cache 呼び出し側は request 側 format を渡す（cache path の Ext と一致）。
+func (v *viewer) writeCacheFileOnce(cachePath, format string, data []byte) error {
+	return writeAtomically(&v.atomicWriteSeam, cachePath, format, data)
 }
 
 // effectiveMaxObjectURLs は R-15 の memory cap（client objectURL 件数）。loadConfig で
@@ -941,11 +969,11 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		writeImage(w, format, body, "tn")
 		if thumbCacheErr == nil && len(body) > 0 {
-			_ = os.MkdirAll(filepath.Join(v.cacheRoot, "thumbs"), 0o755)
-			if writeErr := os.WriteFile(thumbCachePath, body, 0o644); writeErr == nil {
-				// R-15: TN 書き込み（R-16 の atomic 化同一地点・本項目は write 機構を変えない）の
-				// 直後で thumbs kind の 1 行 INSERT + cap prune（作成順・現在 gallery skip）。
-				// TN を full cache に保存しない・件数分離（kind='thumbs'）は維持。
+			// R-16: TN 書き込みは shared atomic helper（writeImageCacheAtomically）経由。temp は
+			// cacheRoot/thumbs 内・CreateTemp 一意名・close 前 rename なし・失敗時 temp cleanup。
+			// 応答（x-cache tn）は write より前に届く・write 失敗は応答を変えない。magic 照合は
+			// request 側の format（Ext の variant 接尾は使えない）。R-15 の record は write 成功時のみ。
+			if writeErr := v.writeImageCacheAtomically(thumbCachePath, format, body); writeErr == nil {
 				v.recordAndPruneCacheEntry(hash, format, "thumbs", variant, "tn", galleryID)
 			}
 		}
@@ -957,7 +985,8 @@ func (v *viewer) thumbProxy(w http.ResponseWriter, r *http.Request) {
 // fetchTNOnce は TN fetch の singleflight（R-13・案 A）。key = TN identity + gg。network 中に mutex を
 // 保持しない。joiner は leader result を共有し、x-cache は source（tn）を保持する。joiner は gate lane を
 // 消費しない（leader のみ fetch）。waiter の cancellation は leader に伝播しない（join は ctx select、
-// leader fetch は context.WithoutCancel）。TN write は per request 側で実施（atomic 化は R-16 の範囲）。
+// leader fetch は context.WithoutCancel）。TN write は per request 側で shared atomic helper（R-16・key = cachePath
+// の writeImageCacheAtomically）で実施。
 func (v *viewer) fetchTNOnce(ctx context.Context, hash, format, variant string, gg GG, background bool) ([]byte, error) {
 	key := tnFetchKey(hash, format, variant, gg)
 
@@ -1067,7 +1096,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 		v.client.clearNegativeNoFull(hash, format, gg)
 		writeImage(w, format, body, "miss")
 		if cacheErr == nil && len(body) > 0 {
-			if writeErr := v.writeImageCacheAtomically(cachePath, body); writeErr == nil {
+			if writeErr := v.writeImageCacheAtomically(cachePath, format, body); writeErr == nil {
 				// R-15: 書き込み時 1 行 INSERT + kind 別 cap の prune（作成順・現在 gallery skip）。
 				// x-cache の source（miss）と no_full 意味は変えない。
 				v.recordAndPruneCacheEntry(hash, format, "full", "", "miss", galleryID)
@@ -1086,7 +1115,7 @@ func (v *viewer) imageProxy(w http.ResponseWriter, r *http.Request) {
 				v.client.clearNegativeNoFull(hash, format, gg)
 				writeImage(w, format, body, "miss")
 				if cacheErr == nil && len(body) > 0 {
-					if writeErr := v.writeImageCacheAtomically(cachePath, body); writeErr == nil {
+					if writeErr := v.writeImageCacheAtomically(cachePath, format, body); writeErr == nil {
 						v.recordAndPruneCacheEntry(hash, format, "full", "", "miss", galleryID)
 					}
 				}
