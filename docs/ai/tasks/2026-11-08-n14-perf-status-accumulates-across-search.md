@@ -13,11 +13,66 @@
 
 ## 調査結果 / 変更内容
 
-（記入）
+### 有効性
+
+- 有効（機構確定・harness と served 画面の両方で実測して閉じた）。
+
+### 現行実装と判断根拠
+
+- `perfStatus` は `app/search.html:180`（module レベル）で1回だけ初期化。リセット・再初期化の文はファイル内不存在（harness 静的 check: 初期化1箇所・リセット文なし）。
+- 累計側: `cardsLoaded++`・`cardTotalMs +=`（`processCard` 成功側 `app/search.html:581-582`、catch 側 `595-596`）、`cacheDistribution` 累計（`recordPerfCache` `475`）。
+- 今回分側: `runSearch` の再代入（`perfStatus.searchMs =` `712`、`serverTiming =` `713`）。
+- 「計測」行（`renderPerfStatus` `486`）は両方を同一行で表示 → 一行内に今回分（searchMs・サーバー）と累計（カード・キャッシュ）が混在。
+
+### 実測（harness・mock・外部 API なし・同一 page instance で 2 runs）
+
+- `node docs/ai/tmp/assess-20261108-1332/r14/r14_measure.mjs`（`tests/harness_lib.mjs` の `bodyIn` で `app/search.html` 実ブロック抽出・`new Function`・決定論的 clock）:
+  - search 1 後: `計測: /api/search 40ms・サーバー search=7;record=35;json=2・カード 25 2180ms・キャッシュ cache=26`
+  - search 2 後: `計測: /api/search 120ms・サーバー search=7;record=35;json=2・カード 50 5450ms・キャッシュ cache=52`
+  - searchMs 40→120（累計 160 ではなく今回分へ更新）、cardsLoaded 25→50、cardTotalMs 2180→5450、cache 26→52（累計が残る）→ 項目原文の食い違い再現。9 checks passed。
+  - 注記: `cardTotalMs` は 8 worker の scheduling を反映（25 card × 20 ms の下界 500 ms に対し 2180 ms）。claim は累计関係のみで使用。
+
+### served 画面確認（合格）
+
+- 正典 exe（freshness test `test_canonical_executable_embeds_current_pages` 合格・コード非変更）・fresh instance（pid 21148・port 8742・本確認の要求のみに応答）・isolated origin `n14-assess-20261108-1332`・window size 実測 outer 1678x1025 / inner 1665x932（人工 resize なし・before/after 同一条件・同一被写体 `#perf-status`・同一取得方法）。
+- before（search 1 = load 時 runSearch・既定 query `furry`）: `計測: /api/search 1602ms・サーバー search=1509;record=88;json=1・カード 25 2862ms・キャッシュ miss=25`
+- after（search 2・query `kemonomimi`・`#search-submit` click）: `計測: /api/search 1259ms・サーバー search=1231;record=26;json=1・カード 50 18814ms・キャッシュ miss=49 cache=1`
+- before → after: searchMs は今回分へ更新（1602→1259）、カード 25→50・時間 2862→18814ms・cache 25→50 件は累计維持 → served 画面で食い違い確認。両 run「検索完了・カード表示済み 25件」。
+- 保存先: `I:\マイドライブ\kilo\2026-11-08-n14-perf-status-accumulates-across-search\`（`n14-perf-row-search1-before-20261108.png`・`n14-perf-row-search2-after-20261108.png`・`n14-perf-row-confirmation-2026-11-08.txt`）。local copy（project root 内 scratch）は正典 `kilo-safe-remove` でゴミ箱へ送った。Playwright の snapshot（.yml）は project root 外のため削除せず残件として記録。
+- 留意: `cache=1` は共有 runtime root（`p3_canonical_fresh`）の galleryinfo disk cache ヒット（prior run 由来）。本項目の claim は cache 状態依存ではない。console error は `favicon.ico` 404（無関係）。card fetch の外部 API 呼出しは decision `2026-11-01-hitomi-hub-tests-may-call-external-api.md` の許可範囲。
+
+### 正典照合（「計測」行の意味固定）
+
+- 参照先: `docs/ai/decisions/2026-11-01-p3-implementation-decisions.md`（UI は `performance.now()` で search/card fetch 時間を `#perf-status` として表示 — 累计意図の記述なし）、`docs/ai/tasks/2026-11-03-a05-search-card-sequential.md`（per-card `+=` 計測機構の維持記録 — search をまたぐ累计意味の固定なし）、`docs/ai/decisions/2026-11-06-ui-polish-jp-copy-and-anchors.md`（label `perf`→`計測` の表示文字列のみ）。
+- 既存テスト `app/viewer_test.go:3430`（`TestEmbeddedUIHasSearchMeasurementStatus`）の pin: `perfStatus.searchMs = performance.now() - searchStart;`（今回分形）と `perfStatus.cardTotalMs += performance.now() - cardStart;`（per-card 累计機構）。跨 search の累计「値」は固定していない。ラベル文字列に累计語なし。
+- 判定: 「累計表示が意図」という正典記録は不存在 → 「今回分表示が意図（label と現行今回分形）」として採用。リセット案は意味変更ではなく bug 修正と判定（根拠: 正典記録なし・テスト pin は今回分形の literal・同一行内で searchMs/server が今回分形であること）。ユーザーに見える現在値（累計表示）の変更側は追加指示どおり承認案件として分離。
+
+### 対応の実現可能性・修正方法（推奨）
+
+- 案 A（推奨・小）: `runSearch` 冒頭で `cardsLoaded`・`cardTotalMs`・`cacheDistribution` を初値へリセット（`searchMs`・`serverTiming` は既に今回分）。約4行。`cardTotalMs +=` literal を維持するので pin テスト（viewer_test.go:3453）通過・既存テスト変更なし。
+  - generation guard を壊さない: stale run の card 増分は增量前 guard check（`560`/`574`/`580`/`594`）で停止済み。`renderPerfStatus` guard（`481`）・per-card 即時表示維持。card fetch 優先度（`takeNextSearchCard`・interactive priority）非接触。
+- 案 B（意味追加・代替・承認不要): 同一行で per-run と累計を両方表示（例「カード 25/50・15952/18814ms」）。既存 literal・テスト維持、捨てられる意味なし。行が長くなる。
+- 承認案件として分離: 案 A はユーザーに見える数字を累計→今回分へ変える（意味変更側の実施には承認が必要）。累计表示が意図だった場合は正典変更を要る方針変更。
+
+### 副作用・影響範囲
+
+- 「計測」行の消費は表示のみ（機能影響なし）。`cacheDistribution` は案 A で cards と同じく今回分へ（同一行の整合）。`serverTiming` は文字列で累计不可・今回分維持（変更なし）。
+- `tests/search_visible_priority_harness.mjs:55` の stub `perfStatus` は自 scope・非影響。`tests/r12_startup_single_run_harness.mjs` の `cardsLoaded` check は単発 run（案 A で結果同一・非変更通過）。
+- 代替案（機構変更なし）: 表示のみ案 A（最小）。累计を残すなら案 B。
+
+### 推定規模・優先順位要素
+
+- 規模: 小（案 A 約4行・案 B 小〜中）。
+- 重要度: mid〜low（ユーザー誤読・observability 表示 bug。機能危害なし）。緊急度: low（再現性はあるが blocker なし）。リスク: low〜mid（承認要論点は意味変更側のみ。guard・優先度・テスト pin は非触）。依存: viewer_test.go:3430 の literal pins、confirmation-test-rule、意味変更の承認ゲート。外部依存なし・単独実施可。
 
 ## Verification
 
-（記入）
+- `python -m pytest tests/ -v` → 59 passed / 1 failed（10.75 s）。failed は `test_canonical_build_freshness_rule_exists`（AGENTS.md pointer 集約由来の既存 failure・KI-20261106-04・本項目非接触）。
+- node harness `node docs/ai/tmp/assess-20261108-1332/r14/r14_measure.mjs` → 9 checks passed（0.089 s・外部 API なし）。
+- 既存 harness 非変更・通過: `node tests/search_visible_priority_harness.mjs` → 24 checks passed（約0.1 s）、`node tests/r12_startup_single_run_harness.mjs` → 16 checks passed（約0.1 s）。
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok 25.436 s（`TestEmbeddedUIHasSearchMeasurementStatus` 含む全通過・コード非変更）。
+- served 画面確認合格（上欄。Drive 保存・local copy ゴミ箱済み）。
+- 変更したのは本タスク記録と `docs/ai/tmp/assess-20261108-1332/r14/`（スクラッチ）のみ。`src/`・`app/` の変更なし、既存テストの変更なし。Status と Next Action は変更なし。
 
 ## 完了時 Memory Bank 操作
 

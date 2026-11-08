@@ -13,14 +13,107 @@
 
 ## 調査結果 / 変更内容
 
-（記入）
+### 現在の実装と判断根拠（コード確認）
+
+- 机构は項目原文どおり（実コードで確定。源码は非変更・記録のみ）。
+  - `app/search.html:167` `TITLE_GROUPS_STORAGE_KEY = "hitomi_hub_title_groups"`、`:181` `titleGroups = new Map()`（上限量なし・`loadTitleGroups()` は起動時 `:996` のみ）。
+  - `saveTitleGroups()`（`:222-226`）は呼出ごとに `JSON.stringify(Object.fromEntries(titleGroups))`（map 全量）＋ `localStorage.setItem`。例外は `catch` で握りつぶす（上限超過で保存が黙って止まる: `docs/ai/tasks/2026-11-02-external-code-review-f501e2b.md` 照合済み・確認）。
+  - `setSearchTitleGroup`（`:228-236`）は条件 `!existing || existing.language !== "japanese" || r.language === "japanese"` のとき map 更新＋`saveTitleGroups()`。呼出口は `renderSearchCard`（`:400-401`・毎カード）と `applyPrefetchCardKnowledge`（`:745-748`・先読みカード毎）。
+  - ページ 25 件（`limit=25` `:710`）＋先読み `PREFETCH_AHEAD_PAGES = 2`（`:779`）→ 1 検索で最大 25+25+25 = 75 呼出。
+  - skip case（save が走らない）は「group が既に日本語解決済み＋非日本語カード」のみ。新 key・非日本語 group の上書き・日本語カードの再描画（条件3）は呼出ごとに save。page 移動で再描画された page の条件該当カードは毎回再 save。
+
+### 有効性
+
+**有効（機構確定＋実測で閉じた）**。判断保留なし。原文数値の補正: 「1 ページ 75 回」は cold・全 title 新規の上界として実測確認（75/75）。steady state では条件クラス별の実測値へ下がる（下表）。
+
+### 実測（node harness・mock localStorage・harness_lib `bodyIn` で app/search.html 実ブロック抽出・new Function 実行）
+
+scratch: `docs/ai/tmp/assess-20261108-1332/r10/r10_measure.mjs`（実ブラウザ storage 非汚染）。呼出/save/壁時間は mock 実測。実 browser の `setItem` は mock に加えて同期 storage write がかかる（未測定・区別）。
+
+呼出回数（1 ページ・cold・全 title 新規）: 呼出 75 → save 75（75 回は上界で成立）。
+
+条件クラス（warm map で page 25 再描画・25 呼出の内訳）:
+
+| 条件 | save 走否 | 実測（混成 page） |
+|---|---|---|
+| 新 key | 走る | 5 |
+| 既存 group 非日本語（上書き） | 走る（再描画のたび） | 5 |
+| 日本語カード（group 日本語・再描画） | 走る（再描画のたび） | 5 |
+| group 日本語解決済み＋非日本語カード | skip | 10 |
+
+warm 全 distinct page の round trip（page 移動での再描画）: 25/25 save（新 key なしでも再描画で毎回 save）。
+
+stringify 壁時間（1 呼出・map warm・caller 側）と累计（75 呼出）:
+
+| n | median ms/呼出 | max ms/呼出 | 累计 ms（75） | payload/回 |
+|---|---|---|---|---|
+| 1,000 | 0.858 | 5.704 | 64.35 | 118,793 B |
+| 10,000 | 9.964 | 16.237 | 747.28 | 1,216,671 B |
+
+debounce（呼出の map 更新は同一順・persist だけ page 末 1 回へ束ねる）と件数上限（bounded・cap 1024＝C-05 convention）の simulated 比較:
+
+- cold 50 カード: sync 50 write・0.457 ms → debounce 1 write・0.067 ms。
+- warm n=10,000 の page: sync 75 write・約 747 ms（上表）→ debounce 1 write・11.051 ms。
+- bounded cap 1024（実測・no re-access 条件）: 保持 1,024（unbounded 10,000 と対比）・flush payload 124,929 B・flush 5.709 ms。
+- 淘汰順は re-access があるときに差が出る（実測 check: k0 re-access 後、last-used は k1 を淘汰、insertion（作成順）は k0 を淘汰）。
+
+localStorage 上限（外部仕様）: origin あたり約 5 MB 級。n=10,000 で payload 約 1.2 MB、growth 継続で超過 → 現行は catch 握りつぶしで persist が黙って止まる（2026-11-02 照合）。
+
+### 正典 condition 照合（破らない）
+
+- `setSearchTitleGroup` の既存意味（group 決定条件・同一 page 内での group 決定順）を変えない形で debounce は成立（map 更新は呼出ごと同一順、persist だけ束ねる）。実測はこの前提で実施。
+- 既存テスト照合（変更なし・全通過）: `app/viewer_test.go`（`TestEmbeddedUIHasSameTitleJapaneseAnchor`）は storage key literal（`:3463`）、`loadTitleGroups`/`saveTitleGroups`/`setSearchTitleGroup`/`sameTitleJapaneseAnchor` の関数名（`:3466`）、`Object.fromEntries(titleGroups)`・`localStorage.setItem(TITLE_GROUPS_STORAGE_KEY`（`:3469`）、renderSearchCard 内 `setSearchTitleGroup(r);`（`:3478`）を pin。`tests/search_prefetch_harness.mjs`（`:20`）は patch helper block 内 `setSearchTitleGroup`・`appendChild`・innerHTML なしを pin。`tests/search_manual_jp_harness.mjs`（`:44`）は自前の setSearchTitleGroup コピー（save なし）で group 判定意味を pinし、manualBlock の `localStorage` 禁止（`:20`）と schedulerBlock の `localStorage` 禁止（prefetch `:34`）で block 境界を pin。→ 実装時は関数名・key・anchor を保持し、debounce helper を manualBlock/patchHelperBlock/schedulerBlock の境界外（persist helper 群の箇所）へ置けば全テスト通過（既存テスト変更不要）。呼出ごとに save する同期性・debounce の有無を固定するテストはなし。
+
+### 淘汰順の照合（正典流儀の分岐・記録）
+
+- C-05（memory cache 流儀）: last-used（access order）順 — `boundedCachePut`（`app/hitomi.go:92-107`）は hit で `lastAccess` 更新・`lastAccessed()` 最小を淘汰（flaky tie 教訓 `docs/ai/known-issues/archive/2026-11-04-test-search-cache-size-cap-flaky-lru-tie.md`）。
+- R-15（disk 流儀）: 作成順 — `docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md` R-15（作成順）・`docs/ai/decisions/2026-11-08-r15-cache-entries-table-supersede.md`（disk 層は access order を持たない、created_at ASC, rowid ASC）。
+- 正典流儀同士が分岐（memory=last-used、disk=作成順）。localStorage の titleGroups は client 永続 storage で正典流儀の直接適用例なし。R-15 disk  analogy で**作成順推奨**（Map insertion order から free に読める・lastAccess field 追加＝payload 増なし）。C-05 memory analogy（last-used）を採用する場合は entry へ lastAccess 記録が必要。順選択・件数上限は「以前見た title の group が消える」意味変更の一部なので承認案件（下記）。
+
+### 副作用・影響範囲（現挙動 → 変更後・承認案件の分離）
+
+- debounce 側: 意味変更なし（group 決定順・判定・key 不変。persist 束ねのみ）。追加窓: flush 前での tab close/crash で当該 run の write 消失窓（現行は即 save・窓なし・小）。
+- 件数上限（bounded）側: 「見た title 全部を覚える」意味を失う。ユーザーに見える影響: 以前見た title の group が消える → `同名の日本語版: #id` link（badge 相当）が消える、再検索で日本語版判定が変わりうる（group 再解決）。これはユーザーに見える意味変更 → **承認が必要として分離**。順（作成順/last-used）と cap 値（正典 convention 値から選択・invented number 禁止: C-05=1024 entry、R-15 disk=8000 件）も同一承認案件の一部。
+- 現行機能リスク（機構確定）: 全量 growth で storage 上限超過 → catch 握りつぶしにより persist が黙って止まる（2026-11-02 照合）。bounded 化はこのリスクの解消側（意味変更なし部分）。
+
+### 画面確認（served）
+
+- **未確認**（測定不能・理由記録）。cold hygiene 3 条件は測定準備時点で満たした（fresh canonical `hub.exe`（pytest freshness embed test 合格・source 非変更）・fresh server instance・isolated origin）。window size 実測 1678x1025（content viewport 1665x932・人工 resize なし）。
+- 不合格理由: Playwright browser が並行 session（N-06）と共用で、tool call 間で私の isolated tab（context `n10-own-assess-20261108`・instance port 8739）が 2 回乗っ取られ、counter install 前に外部 run の search + prefetch（furry・page 2-3 先読み）が私の origin へ書き込んだ。per-run 書入回数測定と before/after（操作前後・同一条件）が成立しない。Drive 保存なし（有効な capture なし）。
+- 観察（私の制御下測定ではない・区別記録）: 同一 served app の別 session run 後、storage map が 74 group keys（1 run + 先読み 2 page）＝上界 75 と整合（1 件 duplicate key skip）。cold では save 回数 = 条件該当呼出数（機構どおり）。
+- 残件（project root 外は削除せず記録）: Playwright 出力（snapshot yml・console log）が `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\` に残る。scratch dataDir（`docs/ai/tmp/assess-20261108-1332/r10/served_data*`）に server 生成の DB/cache ファイルが残る（gitignore 内）。project root 内の local copy（scratch 内 screenshot）はなし → `kilo-safe-remove` 該当なし。
+
+### 実測（mock）・実測で閉じた点と推測の区別
+
+- 実測確定: 機構・条件クラス・呼出回数・stringify 壁時間・payload 件数・debounce/bounded 比較（上表）。
+- 未確認: 実 browser での `setItem` 同期 storage write の壁時間（mock は assignment のみ・実測不能）、served 画面上の per-run 書入回数（上記不合格）、実 data での actual storage 件数（ユーザー実 storage 非汚染のため未読）。
+
+### 推奨（複数案中の採用案・記録のみ）
+
+1. debounce（呼出を run/page 単位で 1 write へ束ねる）: 意味変更なし側として有効（実測 75→1 write）。
+2. 件数上限（bounded）: C-05 convention 値 1024 entry（invented number なし）。意味変更側（上限・淘汰順）は承認案件として分離済み。順は R-15 analogy で作成順推奨（実装簡易・payload 増なし）、C-05 analogy（last-used）は alternative。
+3. 既存テスト・正典 condition は保持制約（関数名・key・block 境界・setSearchTitleGroup 呼出口）で通過可能（照合済み）。
+
+推定規模: 小〜中（search.html helper 群 約 30–60 行＋新テスト。既存テスト変更なし。UI 意味変更なし部分のみ実装可、bounded 側は承認待ち）。
+
+### 優先順位付けに効く要素
+
+- 重要度: low〜mid（per-page CPU 実測は cold worst 約 64 ms（n=1,000）・steady は sub-ms〜10 ms/呼出。機能リスクは storage 上限超過時の silent persist stop（機構確定・発火は長期使用規模））。
+- 緊急度: low（現規模（観察 74 keys）では体感影響なし）。
+- リスク: low〜mid（debounce は低。bounded は意味変更の承認要・淘汰順の正典流儀分岐）。
+- 依存: `setSearchTitleGroup` の正典 condition、既存テスト pin（関数名・key・block 境界）、C-05 convention 値、R-15 作成順決定、2026-11-02 known 照合（catch 握りつぶし）。単独実施可（debounce 部分）。
 
 ## Verification
 
-（記入）
+- node harness（scratch・mock・実ブロック抽出）: `node docs/ai/tmp/assess-20261108-1332/r10/r10_measure.mjs` → 6 checks passed（実行時間約 1 s・stringify 計測は 50 iterations 含む）。
+- `python -m pytest tests/ -v` → 59 passed / 1 failed（17.66 s）。failed は `test_canonical_build_freshness_rule_exists`（AGENTS.md pointer 集約由来の既存 failure `docs/ai/known-issues/KI-20261106-04-canonical-build-freshness-pointer-missing.md`・本項目非接触）。既存テスト変更なし。
+- `node tests/search_manual_jp_harness.mjs` → 20 checks passed（約 0.1 s）。`node tests/search_prefetch_harness.mjs` → 42 checks passed（約 0.1 s）。
+- `go vet .` → clean。`go test -count=1 -timeout 300s .`（app）→ ok 31.797 s（titleGroups pin テスト `TestEmbeddedUIHasSameTitleJapaneseAnchor` 含む全通過・コード非変更）。
+- 画面確認: 未確認（served・共用 browser の並行 session 乗っ取りで per-run 書入回数と before/after が成立せず。準備条件（fresh canonical exe・fresh instance・isolated origin・window size 1678x1025/viewport 1665x932）は記録どおり）。Drive 保存なし。local copy（project root 内）該当なし。project root 外残件は上欄。
+- 源码変更なし（変更は本記録のみ）。実装は未実施（実装開始指示待ち）。
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [ ] `current-task.tsv` の参照行を削除（親の `task_manager` 側）
+- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし — storage 肥大の照合元は `docs/ai/tasks/2026-11-02-external-code-review-f501e2b.md`（task 記録・known-issues ではない））
+- [ ] `backlog.md` の完了項目を削除（該当なし — N-10 は claude review findings 記録の項目）
