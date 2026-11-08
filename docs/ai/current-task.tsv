@@ -1,2 +1,20 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	実装完了（17件委譲・16件合格終了）。残件: R-16 TN live write 未確認点（upstream 502・上流回復時に再確認）。記録のみ: KI-20261106-04（pytest 既存 failure・AGENTS.md pointer 修正要・承認案件）、KI-20261107-01（prefetch worker race・表示影響なし）。R-18 終了済み。R-19 実例待ち（非実施）
+docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	委譲停止中（指示 2026-11-08 05:08Z）。記録のみ。委譲済み 3 件（N-01・N-02・N-03）の記録反映済み。残り 14 件（N-04〜N-17）は未委譲・確度は読み取りのまま。優先順位は委譲後に確定
+docs/ai/tasks/2026-11-08-n01-scan-skip-failure-status.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n02-pdf-danger-keys-head-tail.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n03-gg-ttl-not-refreshed-in-proxy.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n04-reader-second-page-landscape.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n05-strip-click-reopens-gallery.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n06-runpriority-serial-display-fetch.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n07-prefetch-worker-undefined-item-race.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n08-negative-no-full-key-cost.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n09-info-disk-prune-full-scan.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n10-title-groups-localstorage-every-card.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n11-render-prefetch-status-on2.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n12-singleflight-lane-priority-inversion.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n13-unread-list-unbounded.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n14-perf-status-accumulates-across-search.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n15-innerhtml-escape-remote-values.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n16-get-host-check-not-implemented.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-08-n17-pytest-freshness-pointer-missing.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
