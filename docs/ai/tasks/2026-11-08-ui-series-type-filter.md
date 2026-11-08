@@ -127,6 +127,8 @@
 
 - UFI-1 commit is absent at HEAD `714d13675e022c4d3d7a945c3cfb87c8083f088b`.
 - After failure re-delegation, `git status --short` shows only task-record changes; child report matches task record status `未解決`.
+
+- UFI-1 Attempt 2: commit `b2641df` exists. Child report matches task record: full pytest `60 passed`, Go app `ok hitomi-hub/app 26.340s`, served UI before/after evidence, UFI-1 pass. At parent confirmation time, only the archived known-issue parent confirmation remained uncommitted.
 ## 完了時 Memory Bank 操作
 
 - [x] `current-task.tsv` の参照行を削除

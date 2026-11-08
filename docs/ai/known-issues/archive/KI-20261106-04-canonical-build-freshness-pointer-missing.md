@@ -36,6 +36,11 @@
 - `python -m pytest tests/ -v`（ルート）: **60 passed / 0 failed**（13.00s）。`test_canonical_build_freshness_rule_exists` PASSED、`test_canonical_executable_embeds_current_pages` PASSED。
 - `go vet . && go test -count=1 -timeout 300s .`（app）: `go vet` ok。`go test` は既存 failure 2件（`app/viewer_test.go:1818` slice end not found after start、`app/viewer_test.go:2536` initial search restore not found・`app/search.html` の現行構造と test 期待値の不一致）。`git diff HEAD -- app` は空＝app 側は無変更、本件は Python テストのみ変更で Go test を参照しない → 本件の解決条件ではなく、本件変更由来ではない既存 failure として未解決残留（親へ報告）。
 
+## 親の機械確認
+
+- Commit `f6531c6` exists; `git status --short` after the delegation shows only the UFI task-record changes.
+- Child report matches this known-issue record: pytest full pass, changed files limited to `tests/test_canonical_build_freshness.py` and this issue record/archive.
+
 ## クローズ判定
 
 - 本 issue の「次の対応」案（テスト側を `docs/ai/rules/confirmation-test-rule.md` の pointer へ更新）を実施し、pytest 全件合格で確認。AGENTS.md は無変更（write-protected）。→ 解決。
