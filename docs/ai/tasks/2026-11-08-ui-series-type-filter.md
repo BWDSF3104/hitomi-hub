@@ -1,6 +1,6 @@
 # Series/Type 用専用 UI フィルタ検討
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-08
 **Next Action**: 追加確認（固定 Type filter 値）の実装・served UI 確認
 
