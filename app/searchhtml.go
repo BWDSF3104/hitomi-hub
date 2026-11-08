@@ -349,7 +349,7 @@ func buildSearchState(terms []string, lang string, background bool) (*searchStat
 			applyOrderTerm(&state, term)
 			continue
 		}
-		if term == "or" {
+		if term == "or" || term == "and" {
 			continue
 		}
 		orPrev := i > 0 && terms[i-1] == "or"

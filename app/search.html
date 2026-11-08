@@ -112,11 +112,21 @@
           <button id="search-next" type="button">次</button>
         </span>
         <div id="search-page-status" class="meta" role="status"></div>
+        <div class="filter-row series-type-filter-row">
+          <input id="series-filter" value="" size="22" placeholder="Series（絞り込みなし）" aria-label="Series filter">
+          <span class="type-filter-options" role="group" aria-label="Type filter">
+            <label><input type="checkbox" id="type-filter-manga" value="manga" data-type-filter> manga</label>
+            <label><input type="checkbox" id="type-filter-doujinshi" value="doujinshi" data-type-filter> doujinshi</label>
+            <label><input type="checkbox" id="type-filter-manhua" value="manhua" data-type-filter> manhua</label>
+            <label><input type="checkbox" id="type-filter-manhwa" value="manhwa" data-type-filter> manhwa</label>
+            <label><input type="checkbox" id="type-filter-other" value="other" data-type-filter> other</label>
+          </span>
+        </div>
         <div class="filter-row">
-          <label><input type="checkbox" id="status-viewed" value="viewed">表示済み</label>
-          <label><input type="checkbox" id="status-read" value="read">既読</label>
-          <label><input type="checkbox" id="status-saved" value="saved">保存済み</label>
-          <label><input type="checkbox" id="status-favorite" value="favorite">お気に入り</label>
+          <label><input type="checkbox" id="status-viewed" value="viewed" data-status-filter>表示済み</label>
+          <label><input type="checkbox" id="status-read" value="read" data-status-filter>既読</label>
+          <label><input type="checkbox" id="status-saved" value="saved" data-status-filter>保存済み</label>
+          <label><input type="checkbox" id="status-favorite" value="favorite" data-status-filter>お気に入り</label>
         </div>
       </form>
       <div id="perf-status" class="meta"></div>
@@ -449,22 +459,27 @@ function placeholderCard(id) {
 }
 function restoreSearchState() {
   const state = loadSearchState();
-  if (!state || !state.query) return;
-  const queryInput = document.getElementById("query");
-  const langInput = document.getElementById("lang");
-  const pageInput = document.getElementById("page");
-  const status = document.getElementById("search-status");
-  const results = document.getElementById("results");
-  const count = document.getElementById("count");
-  queryInput.value = state.query;
-  if (langInput && state.lang) langInput.value = state.lang;
-  if (pageInput) pageInput.value = String(state.page || 1);
-  const ids = Array.isArray(state.ids) ? state.ids : [];
-  currentSearchTotal = Number(state.total || 0);
-  renderSearchPageStatus();
-  if (count) count.textContent = (state.total || 0) + " 件・ページ " + (state.page || 1);
-  setStatus(status, "検索結果復元: " + state.query);
-  results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
+  const filter = (state && state.filter) || loadFilterState();
+  const rawQuery = String((state && (state.rawQuery || state.query)) || "");
+  if (rawQuery) {
+    const queryInput = document.getElementById("query");
+    const langInput = document.getElementById("lang");
+    const pageInput = document.getElementById("page");
+    const status = document.getElementById("search-status");
+    const results = document.getElementById("results");
+    const count = document.getElementById("count");
+    queryInput.value = rawQuery;
+    if (langInput && state.lang) langInput.value = state.lang;
+    if (pageInput) pageInput.value = String(state.page || 1);
+    const ids = Array.isArray(state.ids) ? state.ids : [];
+    currentSearchTotal = Number(state.total || 0);
+    renderSearchPageStatus();
+    if (count) count.textContent = (state.total || 0) + " 件・ページ " + (state.page || 1);
+    setStatus(status, "検索結果復元: " + rawQuery);
+    results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
+  }
+  restoreFilterControls(filter);
+  if (!rawQuery) return;
 }
 function searchTotalPages(total) {
   return Math.max(1, Math.ceil(Number(total || 0) / 25));
@@ -508,6 +523,71 @@ async function setSearchPage(delta) {
 }
 function placeholderElement(results, id) {
   return results.querySelector("[data-search-id='" + id + "']");
+}
+
+const FILTER_STORAGE_KEY = "hitomi_hub_search_filters";
+const TYPE_FILTER_OPTIONS = ["manga", "doujinshi", "manhua", "manhwa", "other"];
+let lastSearchQuery = "";
+
+function filterSeriesTerm(value) {
+  return String(value || "").trim().replace(/\s+/g, "_");
+}
+
+function composeFilterGroup(series, types) {
+  const terms = [];
+  const seriesTerm = filterSeriesTerm(series);
+  if (seriesTerm) terms.push("series:" + seriesTerm);
+  const selected = Array.isArray(types) ? types.filter(Boolean) : [];
+  if (selected.length > 1) terms.push(selected.map((t) => "type:" + t).join(" or "));
+  else if (selected.length === 1) terms.push("type:" + selected[0]);
+  return terms.join(" ");
+}
+
+function composeEffectiveQuery(rawQuery, series, types) {
+  const base = String(rawQuery || "").trim();
+  const filterGroup = composeFilterGroup(series, types);
+  if (!filterGroup) return base;
+  if (!base) return filterGroup;
+  return base + " and " + filterGroup;
+}
+
+function currentFilterState() {
+  const seriesInput = document.getElementById("series-filter");
+  const types = [];
+  for (const v of TYPE_FILTER_OPTIONS) {
+    const cb = document.getElementById("type-filter-" + v);
+    if (cb && cb.checked) types.push(v);
+  }
+  return { series: String((seriesInput && seriesInput.value) || ""), types };
+}
+
+function loadFilterState() {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveFilterState(filter) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filter));
+  } catch (err) {
+    // localStorage is best-effort for local restore only.
+  }
+}
+
+function restoreFilterControls(filter) {
+  const seriesInput = document.getElementById("series-filter");
+  if (seriesInput) seriesInput.value = String((filter && filter.series) || "");
+  const types = Array.isArray(filter && filter.types) ? filter.types : [];
+  for (const v of TYPE_FILTER_OPTIONS) {
+    const cb = document.getElementById("type-filter-" + v);
+    if (cb) cb.checked = types.includes(v);
+  }
 }
 
 // jump-to-first-status-page highlight (decision 2026-11-05 design approved). The card height contract is unchanged.
@@ -692,7 +772,10 @@ async function showLists(searchGen) {
 
 async function runSearch() {
   searchCardsCompleted = false;
-  const query = document.getElementById("query").value.trim();
+  const rawQuery = document.getElementById("query").value.trim();
+  const filter = currentFilterState();
+  const query = composeEffectiveQuery(rawQuery, filter.series, filter.types);
+  lastSearchQuery = query;
   const lang = document.getElementById("lang").value.trim() || "all";
   const page = Number(document.getElementById("page").value || "1");
   const searchGen = ++searchGeneration;
@@ -719,7 +802,8 @@ async function runSearch() {
     document.getElementById("count").textContent = data.total + " 件・ページ " + data.page;
     setStatus(status, "検索完了・カード読み込み " + ids.length + "件");
     results.innerHTML = ids.map((id) => placeholderCard(id)).join("") || "<li>0 件</li>";
-    saveSearchState({ query, lang, page, ids, total: data.total });
+    saveSearchState({ query, rawQuery, lang, page, ids, total: data.total, filter });
+    saveFilterState(filter);
     history.replaceState(null, "", searchRoute(query, page));
     await loadSearchCards(ids, searchGen);
     if (searchGen !== searchGeneration) return;
@@ -843,7 +927,7 @@ async function prefetchQueue(jobs, gen, onCard) {
 async function runPrefetch() {
   const gen = searchGeneration;
   if (prefetchRunning || prefetchInterrupted(gen) || !prefetchEligible) return;
-  const query = document.getElementById("query").value.trim();
+  const query = typeof lastSearchQuery !== "undefined" && lastSearchQuery ? lastSearchQuery : document.getElementById("query").value.trim();
   const lang = document.getElementById("lang").value.trim() || "all";
   const currentPage = Number(document.getElementById("page").value || "1");
   const total = Number(currentSearchTotal || 0);
@@ -891,6 +975,8 @@ document.getElementById("lists-refresh").addEventListener("click", () => { showL
 
 // Phase 2 idle prefetch wiring: user activity that supersedes the next-page prefetch interrupts it. Failures are never rendered on screen.
 document.getElementById("query").addEventListener("input", () => { interruptPrefetch(); });
+document.getElementById("series-filter").addEventListener("input", () => { interruptPrefetch(); });
+for (const v of TYPE_FILTER_OPTIONS) document.getElementById("type-filter-" + v).addEventListener("input", () => { interruptPrefetch(); });
 document.getElementById("search-next").addEventListener("mouseenter", () => { startPrefetchNow(); });
 document.getElementById("search-next").addEventListener("focus", () => { startPrefetchNow(); });
 document.getElementById("results").addEventListener("click", (e) => {
@@ -926,7 +1012,7 @@ document.addEventListener("visibilitychange", () => {
 const STATUS_FLAG_NAMES = { viewed: "表示済み", read: "既読", saved: "保存済み", favorite: "お気に入り" };
 function checkedStatusNames() {
   const names = [];
-  for (const cb of document.querySelectorAll("#search input[type=checkbox]")) {
+  for (const cb of document.querySelectorAll("#search input[data-status-filter]")) {
     if (cb.checked) names.push(cb.value);
   }
   return names.join(",");

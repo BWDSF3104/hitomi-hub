@@ -1815,7 +1815,7 @@ s := uiText(t, "viewer.html", "search.html")
 func TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs(t *testing.T) {
 search := uiText(t, "search.html")
 	sideBody := sliceBetween(t, search, `<div class="side">`, `<div class="main">`)
-	mainBody := sliceBetween(t, search, `<div class="main">`, "\n</div>\n<script>")
+	mainBody := sliceBetween(t, search, `<div class="main">`, "<script>")
 	if strings.Contains(sideBody, `id="results"`) {
 		t.Errorf("results should move under .main instead of staying in the .side column: got %q", sideBody)
 	}
@@ -2520,7 +2520,7 @@ s := uiText(t, "search.html")
 	if !strings.Contains(runBody, `const searchGen = ++searchGeneration;`) || !strings.Contains(runBody, `if (searchGen !== searchGeneration) return;`) {
 		t.Errorf("runSearch should ignore stale async search results: got %q", runBody)
 	}
-	if !strings.Contains(runBody, `saveSearchState({ query, lang, page, ids, total: data.total });`) || !strings.Contains(runBody, `history.replaceState(null, "", searchRoute(query, page))`) {
+	if !strings.Contains(runBody, `saveSearchState({ query, rawQuery, lang, page, ids, total: data.total, filter });`) || !strings.Contains(runBody, `saveFilterState(filter);`) || !strings.Contains(runBody, `history.replaceState(null, "", searchRoute(query, page))`) {
 		t.Errorf("runSearch should save search state and route across reload: got %q", runBody)
 	}
 	loadCardStart := strings.Index(s, "async function loadSearchCards(ids, searchGen = searchGeneration) {")
@@ -2531,13 +2531,147 @@ s := uiText(t, "search.html")
 	if !strings.Contains(loadCardBody, `if (searchGen !== searchGeneration) return;`) || !strings.Contains(loadCardBody, `const li = results.querySelector("[data-search-id='" + id + "']");`) {
 		t.Errorf("loadSearchCards should guard stale async card writes while keeping lazy card selectors: got %q", loadCardBody)
 	}
-	initStart := strings.Index(s, "showLists();\nconst initialSearch = parseSearchHash(window.location.hash);")
-	if initStart < 0 {
+	showListsAt := strings.Index(s, "showLists();")
+	initialAt := strings.Index(s, `const initialSearch = parseSearchHash(window.location.hash);`)
+	if showListsAt < 0 || initialAt < 0 || showListsAt > initialAt {
 		t.Fatalf("initial search restore not found")
 	}
-	initBody := s[initStart:]
+	initBody := s[showListsAt:]
 	if !strings.Contains(initBody, `restoreSearchState();`) || !strings.Contains(initBody, `runSearch();`) {
 		t.Errorf("page load should restore search state or start search: got %q", initBody)
+	}
+}
+
+func containsSearchTerm(terms []string, want string) bool {
+	for _, term := range terms {
+		if term == want {
+			return true
+		}
+	}
+	return false
+}
+
+func orGroupContainsTerm(groups [][]string, want string) bool {
+	for _, group := range groups {
+		if containsSearchTerm(group, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUFI1SearchUIFilterStringWiring(t *testing.T) {
+	search := uiText(t, "search.html")
+	filterRowAt := strings.Index(search, "series-type-filter-row")
+	if filterRowAt < 0 || !strings.Contains(search, `id="series-filter" value=""`) {
+		t.Fatalf("dedicated Series/Type filter controls are missing")
+	}
+	filterRowEnd := strings.Index(search[filterRowAt:], "</form>")
+	if filterRowEnd < 0 || strings.Contains(search[filterRowAt:filterRowAt+filterRowEnd], "checked") {
+		t.Errorf("Type filter controls should default to no filter")
+	}
+	if strings.Count(search, "data-type-filter") < 5 {
+		t.Errorf("Type filter must expose multiple selection controls")
+	}
+
+	runStart := strings.Index(search, "async function runSearch() {")
+	runEnd := strings.Index(search, `document.getElementById("search")`)
+	if runStart < 0 || runEnd < runStart {
+		t.Fatalf("runSearch wiring block not found")
+	}
+	runBody := search[runStart:runEnd]
+	if !strings.Contains(runBody, `const rawQuery = document.getElementById("query").value.trim();`) ||
+		!strings.Contains(runBody, `const filter = currentFilterState();`) ||
+		!strings.Contains(runBody, `composeEffectiveQuery(rawQuery, filter.series, filter.types)`) ||
+		!strings.Contains(runBody, `saveSearchState({ query, rawQuery, lang, page, ids, total: data.total, filter });`) ||
+		!strings.Contains(runBody, `saveFilterState(filter);`) {
+		t.Errorf("runSearch must preserve rawQuery, compose the effective query, and persist filter state: got %q", runBody)
+	}
+
+	currentStart := strings.Index(search, "function currentFilterState() {")
+	currentEnd := strings.Index(search[currentStart:], "function loadFilterState() {")
+	if currentStart < 0 || currentEnd < 0 {
+		t.Fatalf("currentFilterState is not wired for UI controls")
+	}
+	currentBlock := search[currentStart:currentStart+currentEnd]
+	if !strings.Contains(currentBlock, `document.getElementById("series-filter")`) ||
+		!strings.Contains(currentBlock, `document.getElementById("type-filter-`) ||
+		strings.Contains(currentBlock, `querySelectorAll("#search input[type=checkbox]")`) {
+		t.Errorf("currentFilterState must read dedicated controls through getElementById without mixing status checkboxes: got %q", currentBlock)
+	}
+	if !strings.Contains(search, `#search input[data-status-filter]`) {
+		t.Errorf("status checkbox reading must exclude dedicated UI filter checkboxes")
+	}
+
+	if !strings.Contains(search, `if (!base) return filterGroup;`) ||
+		!strings.Contains(search, `return base + " and " + filterGroup;`) ||
+		!strings.Contains(search, `selected.map((t) => "type:" + t).join(" or ")`) ||
+		!strings.Contains(search, `replace(/\s+/g, "_")`) {
+		t.Errorf("effective query composer must keep raw base, use and as the boundary, form Type OR groups, and keep Series as one term: got %q", search)
+	}
+
+	if !strings.Contains(search, `FILTER_STORAGE_KEY`) ||
+		!strings.Contains(search, `loadFilterState`) ||
+		!strings.Contains(search, `saveFilterState`) {
+		t.Errorf("local filter state storage helpers are missing")
+	}
+	restoreStart := strings.Index(search, "function restoreSearchState() {")
+	restoreEnd := strings.Index(search[restoreStart:], "function searchTotalPages(total) {")
+	if restoreStart < 0 || restoreEnd < 0 {
+		t.Fatalf("restoreSearchState is not wired for filter controls")
+	}
+	if !strings.Contains(search[restoreStart:restoreStart+restoreEnd], `restoreFilterControls`) {
+		t.Errorf("page restore must reapply persisted filter controls")
+	}
+
+	prefetchStart := strings.Index(search, "async function runPrefetch() {")
+	if prefetchStart < 0 || !strings.Contains(search[prefetchStart:], `typeof lastSearchQuery !== "undefined" && lastSearchQuery`) {
+		t.Errorf("idle prefetch must use the last effective query when available")
+	}
+
+	wiringAt := strings.Index(search, `document.getElementById("query").addEventListener("input", () => { interruptPrefetch(); });`)
+	if wiringAt < 0 {
+		t.Fatalf("prefetch interruption wiring not found")
+	}
+	wiringBlock := search[wiringAt:]
+	if !strings.Contains(wiringBlock, `document.getElementById("series-filter").addEventListener("input", () => { interruptPrefetch(); });`) ||
+		!strings.Contains(wiringBlock, `for (const v of TYPE_FILTER_OPTIONS) document.getElementById("type-filter-" + v).addEventListener("input", () => { interruptPrefetch(); });`) {
+		t.Errorf("filter input changes must interrupt the idle prefetch: got %q", wiringBlock)
+	}
+}
+
+func TestUFI1BuildSearchStateAndGroupBoundary(t *testing.T) {
+	_, groups, err := buildSearchState([]string{"female:yuri", "and", "type:manga", "or", "type:doujinshi"}, "all", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSearchTerm(groups.positive, "female:yuri") || containsSearchTerm(groups.positive, "and") {
+		t.Errorf("raw positive term must remain and `and` must not be searchable as a term: got %v", groups.positive)
+	}
+	if len(groups.orGroups) != 1 || len(groups.orGroups[0]) != 2 || groups.orGroups[0][0] != "type:manga" || groups.orGroups[0][1] != "type:doujinshi" {
+		t.Errorf("multiple Type must remain one filter OR group: got %v", groups.orGroups)
+	}
+
+	_, groups, err = buildSearchState([]string{"female:yuri", "or", "language:english", "and", "type:manga", "or", "type:doujinshi"}, "all", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups.orGroups) != 2 || containsSearchTerm(groups.positive, "and") {
+		t.Errorf("raw OR group and filter OR group must remain separate ANDed groups: got %v", groups.orGroups)
+	}
+	if len(groups.orGroups) >= 2 && (len(groups.orGroups[0]) != 2 || len(groups.orGroups[1]) != 2) {
+		t.Errorf("raw OR group and filter OR group should each contain their group terms: got %v", groups.orGroups)
+	}
+	if !containsSearchTerm(groups.orGroups[0], "female:yuri") || !containsSearchTerm(groups.orGroups[0], "language:english") {
+		t.Errorf("raw OR group terms must remain in the raw OR group: got %v", groups.orGroups)
+	}
+
+	_, groups, err = buildSearchState([]string{"female:yuri", "or", "language:english", "and", "type:manga"}, "all", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups.orGroups) != 1 || len(groups.orGroups[0]) != 2 || containsSearchTerm(groups.positive, "and") || !containsSearchTerm(groups.positive, "type:manga") {
+		t.Errorf("raw OR ending followed by `and` filter group should keep the raw OR group and put the filter term on the AND side: got %v groups=%v", groups.positive, groups.orGroups)
 	}
 }
 
