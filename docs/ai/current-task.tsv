@@ -1,6 +1,6 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	実装完了（17件委譲・16件合格終了）。残件: R-16 TN live write 未確認点（upstream 502・上流回復時に再確認）。記録のみ: KI-20261106-04（pytest 既存 failure・AGENTS.md pointer 修正要・承認案件）、KI-20261107-01（prefetch worker race・表示影響なし）。R-18 終了済み。R-19 実例待ち（非実施）
-docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	委譲停止中（指示 2026-11-08 05:08Z）。記録のみ。委譲済み 3 件（N-01・N-02・N-03）の記録反映済み。残り 14 件（N-04〜N-17）は未委譲・確度は読み取りのまま。優先順位は委譲後に確定
+docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	委譲再開（指示 2026-11-08 08:08Z）。済み 3 件（N-01・N-02・N-03）。残り 14 件を逐次委譲（N-04 から）。優先順位は全件委譲後に確定。決定は委譲時に親へ提示
 docs/ai/tasks/2026-11-08-n01-scan-skip-failure-status.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
 docs/ai/tasks/2026-11-08-n02-pdf-danger-keys-head-tail.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
 docs/ai/tasks/2026-11-08-n03-gg-ttl-not-refreshed-in-proxy.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
