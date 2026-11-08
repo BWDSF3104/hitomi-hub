@@ -49,7 +49,14 @@
   - N-01 有効（機構確定・実測）。Go `scanSkipStatus` は meta 一致で保存済み status を返すのみ、`scan_source`・VT api_error を参照しない。Python 参照実装は skip 機構なし（差異として記録）。推奨は `scan_meta.retry_needed`（列追加のみ・D-03 非破壊）で失敗行を skip 条件へ。小。重要度 中高・緊急度 中。
   - N-02 有効（実測）。2MB 超の fixture で `/OpenAction`（2,300,035 B）が findings=[]（走査 2,097,152 B）。推奨は `MaxScanBytes` 内分割（head + tail 65,536）と xref/`/Root` 照合。同一ファイルの pass→hit（export skip 波及）は意味変更として承認案件。小〜中。重要度 mid。
   - N-03 有効（mock 実測）。TTL 1h 超過後の最初の取得が 404 起点、throttle 60s 内で `sameGG` true → 有効画像が negative cache TTL 5 分 `no_full`（4m59s hit / 5m01s 失効）。推奨は remote path 先頭（cache hit 判定後）で `EnsureGG(ctx, false)` 1 行。handler 最頭案は cache hit の意味を弱めるため却下（実測）。小。重要度 高・緊急度 中。
-- 未委譲（14 件）: N-04〜N-12、N-13〜N-17。確度は委譲前（読み取り）のまま。
+- 未委譲（8 件）: N-07〜N-12、N-13〜N-17。確度は委譲前（読み取り）のまま。
+
+### 委譲結果（親の 1〜2 行記録・逐次）
+
+- N-04 有効（served 実測）。2 枚目が横長でも半幅セル 500px（描画 500x281）。単独表示なら 1120x630（幅 44.6%）。推奨は `readerItems` へ 2 枚目 aspect 判定。page 番号・route・hash 尊重・既読 step 粒度の 3 点と固定寸法契約（案B）は承認分離。Drive 保存済み。
+- N-05 有効（harness + served 実測）。現行 click = openGallery 1・abort 3・`/api/viewed` 1・strip full rebuild 1 → 推奨（同一 gallery は `current.page` 更新 + `showPage()`）= 0・0・0・0・highlight + render 1。`viewed_at` は初回維持で状態意味不変（再送は idempotent）。`++openGeneration` guard 維持必須。`reset target=viewed` 直後の click は badge 意味変更として承認分離。小（4 行）。Drive 保存済み。
+- N-06 有効（mock 実測 + served cold 確認）。serial median 1359 ms → parallel 739 ms（gate dispatch gap 60 ms 維持）。served cold で 1 枚目 158 ms→2 枚目 1116 ms（直列）を実測。dispatch order（array order）維持が必須。strict first→second display order を残す UX 要件は承認案件。小〜中。
+- 残件（子報告）: Playwright output 直下の screenshot local copy（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\` の N-05 2 枚・N-06 2 枚）は project root 外のため正典 `kilo-safe-remove` でゴミ箱へ送れず残存。削除には追加承認が必要。
 - 優先順位は未確定。根拠不足（子の要約がない項目が 14 件）。確定しているのは指摘側の提示（1・3・4・5・8・9 が小規模・効果、2・15 が修正量対価値）と、委譲済み 3 件 within の記載（N-03 が最重要候補）のみ。
 
 ## Verification
