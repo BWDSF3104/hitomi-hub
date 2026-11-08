@@ -1,12 +1,15 @@
 # N-05: strip クリックで同一 gallery を開き直している
 
 **Status**: 進行中
+**実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
 
 ## 意図 / 背景
 
-（記入）
+- 項目原文（読み取り指摘・委譲前確度：未検証）: strip のクリックで同じ gallery を開き直している。`handleCardClick` が `openGallery` を呼ぶため、全 prefetch を abort して queue を作り直し、`/api/viewed` も再送し、strip も再構築する。同一 gallery なら `current.page` を更新して `showPage()` するだけで済む。
+- 記録: docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md の N-05 欄。個別タスク記録への追記は子（委譲時）のみ。
+- 委譲停止中（指示 2026-11-08 05:08Z）。親は調査実務を行わない。Status と Next Action は親が正典 `task_manager` で管理。
 
 ## 調査結果 / 変更内容
 
