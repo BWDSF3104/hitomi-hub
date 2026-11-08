@@ -115,11 +115,12 @@
         <div class="filter-row series-type-filter-row">
           <input id="series-filter" value="" size="22" placeholder="Series（絞り込みなし）" aria-label="Series filter">
           <span class="type-filter-options" role="group" aria-label="Type filter">
-            <label><input type="checkbox" id="type-filter-manga" value="manga" data-type-filter> manga</label>
             <label><input type="checkbox" id="type-filter-doujinshi" value="doujinshi" data-type-filter> doujinshi</label>
-            <label><input type="checkbox" id="type-filter-manhua" value="manhua" data-type-filter> manhua</label>
-            <label><input type="checkbox" id="type-filter-manhwa" value="manhwa" data-type-filter> manhwa</label>
-            <label><input type="checkbox" id="type-filter-other" value="other" data-type-filter> other</label>
+            <label><input type="checkbox" id="type-filter-artistcg" value="artistcg" data-type-filter> artist CG</label>
+            <label><input type="checkbox" id="type-filter-manga" value="manga" data-type-filter> manga</label>
+            <label><input type="checkbox" id="type-filter-imageset" value="imageset" data-type-filter> image set</label>
+            <label><input type="checkbox" id="type-filter-gamecg" value="gamecg" data-type-filter> game CG</label>
+            <label><input type="checkbox" id="type-filter-anime" value="anime" data-type-filter> anime</label>
           </span>
         </div>
         <div class="filter-row">
@@ -526,7 +527,7 @@ function placeholderElement(results, id) {
 }
 
 const FILTER_STORAGE_KEY = "hitomi_hub_search_filters";
-const TYPE_FILTER_OPTIONS = ["manga", "doujinshi", "manhua", "manhwa", "other"];
+const TYPE_FILTER_OPTIONS = ["doujinshi", "artistcg", "manga", "imageset", "gamecg", "anime"];
 let lastSearchQuery = "";
 
 function filterSeriesTerm(value) {

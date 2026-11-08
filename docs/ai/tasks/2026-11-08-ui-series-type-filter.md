@@ -1,8 +1,8 @@
 # Series/Type 用専用 UI フィルタ検討
 
-**Status**: 完了
+**Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: UFI-1 re-delegation attempt 1 implementation
+**Next Action**: 追加確認（固定 Type filter 値）の実装・served UI 確認
 
 ## 意図 / 背景
 
@@ -134,3 +134,37 @@
 - [x] `current-task.tsv` の参照行を削除
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
+
+## 追加確認（固定 Type filter 値）
+
+- 同意した固定 gallery type 値を `app/search.html` に反映:
+  - `doujinshi`
+  - `artistcg`
+  - `manga`
+  - `imageset`
+  - `gamecg`
+  - `anime`
+- `manhua`, `manhwa`, `other` は固定 gallery type 値から分離。
+  - `manhua` は中国漫画、`manhwa` は韓国漫画、`other` は catch-all。
+  - これらは `type:` namespace 検索値として使いうるが、recommended fixed `gallery.type` enum values ではない。
+- `app/viewer_test.go` に exact fixed values と no-filter branch を追加:
+  - `strings.Count(search, "data-type-filter") != 6`
+  - `composeEffectiveQuery` の `if (!filterGroup) return base;`
+- Served UI network 確認:
+  - fresh isolated browser context `ufi-fixed-type-no-filter-20261108`
+  - actual window size: outer `1678x1025`, content viewport `1665x932`
+  - raw query: `female:yuri`
+  - filter state: `series=""`, `types=[]`
+  - no filter network request: `GET /api/search?query=female%3Ayuri&lang=all&page=1&limit=25`
+  - response: `200 OK`
+  - UI display: `Query: female:yuri`
+  - fixed Type filter controls: `doujinshi`, `artist CG`, `manga`, `image set`, `game CG`, `anime`
+- Drive artifacts:
+  - `I:\マイドライブ\kilo\2026-11-08-ui-series-type-filter\fixed-type-no-filter-before-20261108.png`
+  - `I:\マイドライブ\kilo\2026-11-08-ui-series-type-filter\fixed-type-no-filter-after-20261108.png`
+  - `I:\マイドライブ\kilo\2026-11-08-ui-series-type-filter\fixed-type-no-filter-confirmation-20261108.txt`
+  - local copies were sent to Recycle Bin with canonical `kilo-safe-remove`.
+- Verification:
+  - `go vet . && go test -count=1 -timeout 300s .` in `app`: `ok hitomi-hub/app 24.529s`
+  - `python -m pytest tests/ -v` after canonical rebuild: `60 passed`
+  - canonical rebuild: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`

@@ -2570,8 +2570,11 @@ func TestUFI1SearchUIFilterStringWiring(t *testing.T) {
 	if filterRowEnd < 0 || strings.Contains(search[filterRowAt:filterRowAt+filterRowEnd], "checked") {
 		t.Errorf("Type filter controls should default to no filter")
 	}
-	if strings.Count(search, "data-type-filter") < 5 {
-		t.Errorf("Type filter must expose multiple selection controls")
+	if strings.Count(search, "data-type-filter") != 6 {
+		t.Errorf("Type filter must expose the fixed Hitomi gallery type controls")
+	}
+	if !strings.Contains(search, `const TYPE_FILTER_OPTIONS = ["doujinshi", "artistcg", "manga", "imageset", "gamecg", "anime"];`) {
+		t.Errorf("Type filter options must use the fixed Hitomi gallery type values")
 	}
 
 	runStart := strings.Index(search, "async function runSearch() {")
@@ -2603,6 +2606,9 @@ func TestUFI1SearchUIFilterStringWiring(t *testing.T) {
 		t.Errorf("status checkbox reading must exclude dedicated UI filter checkboxes")
 	}
 
+	if !strings.Contains(search, `if (!filterGroup) return base;`) {
+		t.Errorf("when no filter is selected, the effective query must remain the raw base query")
+	}
 	if !strings.Contains(search, `if (!base) return filterGroup;`) ||
 		!strings.Contains(search, `return base + " and " + filterGroup;`) ||
 		!strings.Contains(search, `selected.map((t) => "type:" + t).join(" or ")`) ||
