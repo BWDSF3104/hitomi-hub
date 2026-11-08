@@ -35,8 +35,8 @@
   - second `imageProxy`: start `1116 ms`, duration `235 ms`, transferSize `138356 bytes`, `x-cache: miss`, `200 OK`, `content-type: image/avif`。
   - second start は first end（`158 + 957 = 1115 ms`）の直後。display pair overall wall は約 `1351 ms`。
   - before screenshot は placeholder/loading。after screenshot は actual pixels 表示。UI info: `実表示ピクセル 2/2`, `objectURLキャッシュ 2/2`, `フル画像なし 0/2`, `TN表示フォールバック禁止`。TN display fallback は確認されない。
-  - Google Drive 保存: `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06e-before-3863136-cold.png`, `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06e-after-3863136-cold.png`, `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06-cold-display-pair-confirmation-2026-11-08.txt`。
-  - local copy cleanup: project scratch の confirmation text と invalid before screenshot は `kilo-safe-remove` でゴミ箱へ。Playwright output local copies（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-before-3863136-cold.png`, `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-after-3863136-cold.png`）は正典 `kilo-safe-remove` が project root 外を削除不可のため削除できなかった。
+  - Google Drive 保存（親の訂正・2026-11-08 11:52Z）: 子の実測時点では Drive へ画像が保存されておらず、confirmation txt が Drive 直下で「フォルダ名そのままのファイル」として存在していた（Glob・read で file と確認）。親が Drive にフォルダ `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\` を作成し、txt を同名へ移動、Playwright temp の `n06e-before-3863136-cold.png`・`n06e-after-3863136-cold.png` と、project root に残っていた before 試行 3 枚（`n06-`/`n06b-`/`n06c-before-cold-placeholder-20261108.png`）を同じフォルダへコピーした。
+  - local copy cleanup: 上記 3 枚（project root 内）は Drive 保存後に正典 `kilo-safe-remove` でゴミ箱へ送った。Playwright output local copies（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-before-3863136-cold.png`, `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-after-3863136-cold.png`）は project root 外のため削除せず残存（Drive へコピー済み。削除には追加承認が必要）。
 - 実装案（記録のみ、実装開始指示待ち）:
   - `runPriority` を Promise.all / errgroup 相当で display 2 枚を並列 dispatch するのが妥当。
   - dispatch order は array order を残す。既存 gate interval `60 ms` は dispatch interval として維持でき、FIFO future reservation 意味を変えない。

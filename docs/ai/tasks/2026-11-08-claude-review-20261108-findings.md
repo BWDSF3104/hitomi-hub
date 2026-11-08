@@ -67,7 +67,8 @@
 - N-16 有効（実測）。GET route に Host 検査なし（`app/viewer.go:199-216`）、POST は `sameOriginPost`（218-238）で効く。fresh instance（port 8747）実測: evil Host GET=200・POST=403。sim 表: loopback 系 + `LocalHost`=200、evil=403（案A一致）。原文訂正: rebound Host では POST は 403（開いているのは GET 読み取り）、`EqualFold` は現行実装（`ToLower`・viewer.go:241）と異なるが case 耐性は既に成立。テスト 5 件 re-anchor 要。小（5–8 行）。重要度 mid・緊急度 low〜mid・リスク low（案A承認済み・実装指示待ち）。Drive 保存済み。
 - N-17 有効（実測）。`tests/test_canonical_build_freshness.py:19` の照合対象は project `AGENTS.md`、要求 literal（:31）は project・global とも不在、現 pointer は `docs/ai/rules/confirmation-test-rule.md`（`AGENTS.md:61`）。実測 `1 failed, 59 passed in 10.09s`。テスト側を rule pointer へ合わせる推奨適用で 1 passed（同一条件で 60 passed 期待値）。AGENTS.md は write-protected＋「pointer 1本のみ」流儀と矛盾 → テスト側修正が最も適切。小（テスト1ファイル・1〜4行）。重要度 中（pytest 合格が完了基準）・緊急度 中・リスク 低。
 
-- 残件（子報告）: Playwright output 直下の screenshot local copy（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\` の N-05・N-06・N-15 の console log 等）は project root 外のため正典 `kilo-safe-remove` でゴミ箱へ送れず残存。削除には追加承認が必要。project root 内の local copy はゴミ箱へ送済み。
+- 残件（子報告）: Playwright output 直下の screenshot・console log の local copy（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\` の N-05・N-06・N-15 のファイル等）は project root 外のため正典 `kilo-safe-remove` でゴミ箱へ送れず残存。削除には追加承認が必要。project root 内の local copy はゴミ箱へ送済み。
+- 訂正（N-06 の Drive 保存）: 子は confirmation txt を Drive 直下で「フォルダ名そのままのファイル」として保存し、画像は Drive へコピーされていなかった（Glob・read で file と確認）。親が Drive へフォルダを作成し txt を移動、Playwright temp の before/after 2 枚と project root に残っていた before 試行 3 枚をコピーし、project root 内 3 枚は `kilo-safe-remove` でゴミ箱へ送った。記録は `docs/ai/tasks/2026-11-08-n06-runpriority-serial-display-fetch.md`。
 
 ### 優先順位（親の確定・根拠は子の要約と個別タスク記録のみ）
 
