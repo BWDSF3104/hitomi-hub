@@ -3,7 +3,7 @@
 **Status**: 進行中
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
-**Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+**Next Action**: 段階3持ち帰り（assess-20261109-1320）: info 分 claim 伝達路の決定が必要（ctx route 変更/getWithGate 参照/lane 単位の3案すべて承認範囲超）。TN・full・nozomi と gateLane 参照1箇所は承認範囲内で実装可。決定後実装委譲
 
 ## 意図 / 背景
 
@@ -166,5 +166,35 @@ scratch replica（`docs/ai/tmp/assess-20261109-1320/r12/`・module `assess202611
 - scratch 再実測: `go test -count=1 -timeout 180s .`（module `assess202611081332r12`・`docs/ai/tmp/assess-20261109-1320/r12/`）→ `ok 5.759s`・9 run（前批と同一条件）。外部 API 呼出しなし。数値 `results.json`・出力 `rerun_output.txt`。
 - `python -m pytest tests/ -v`: 非該当（Python・本項目非触。docs/ai のみの変更は検証不要の正典条による。Go 項目の実測として上記を実行）。
 - 変更したのは個別タスク記録のみ。ソース・既存テスト非触。`Set-Content` パイプライン不使用。`current-task.tsv`・Status・Next Action 非変更（親管理）。
+
+## 2026-11-09 実装段階（assess-20261109-1320 子）
+
+### 実装方式（確定・承認範囲内の分）
+
+- 方式（正典流儀・mock harness 流儀と同一機構）: key 単位 call に per-key claim（参加者 priority 記録＋wake）。`gateLane` の 1 箇所参照は ctx 経由（join helper が joiner priority を call の claim に記録し、leader fetch の ctx へ `context.WithValue` で伝達。`gateLane` は ctx の claim から effective lane を決め、fg 参加者がいる group だけ fg FIFO slot（`last + interval`）で dispatch。joiner arrival の再評価（wake select）も `gateLane` 内（同一機構）。
+- `gateLane` の signature（`ctx, intervalMS, st, background` 4 引数）は保持必須: 既存固定テスト `app/hitomi_test.go:959`（フォア待機中に background は slot を予約しない・未来予約禁止・公平枠）等が `gateLane(ctx, intervalMS, st, background)` を直接呼出（4 args pin・実測 pass）。claim を引数追加で渡す方案は既存テスト変更になり不可。
+- per-key 正確性: `st` は lane 共有状態（dataGate に nozomi・info が共有、imageGate に TN・full が共有）なので、claim を `gateLaneState`（lane 単位）に置くと同一 lane の無関係 group（他 key）の bg dispatch へ priority claim が漏れる。これは承認済み意味「group effective lane = 参加者最高優先度（key 単位の group）」を壊す（未承認 group の意味変更）ので不可。claim は ctx 経由でなければならない。
+- claim 型・ctx key・accessor は join helper 側ファイル（`app/viewer.go`）に置き、`app/hitomi.go` の変更は `gateLane` の参照 1 箇所（＋wake select）に限定する。
+- 承認範囲内で配線可能（確定）: `fetchTNOnce`（`app/viewer.go:1524`・ctx guard `1536-1541`）・`fetchFullImageOnce`（`app/viewer.go:1562`・ctx guard `1574-1579`）は ctx があり、joiner priority 記録・canceled joiner の claim 解放まで実装可。`SearchNozomiParts`（`app/searchhtml.go:114`）は join block に ctx guard がない（R-13 既存流儀・固定テスト pin）ので canceled joiner が存在せず claim 解放は該当なし。ただし leader fetch の `context.Background()`（`app/searchhtml.go:155`）は helper が制御するので claim 伝達（priority 記録）は可。
+
+### 段階3（持ち帰り・実装前の壁）
+
+- `resolveInfoOnce`（`app/viewer.go:1886`）の joiner priority 記録が `gateLane` に届く経路が承認範囲内に存在しない:
+  - helper に ctx がない（join は `<-call.done` の ctx guard なし流儀・「既存 guard test の signature を変えないため info は ctx を持たない」が記録済み。既存 info join 固定テストが signature を pin）。
+  - leader fetch `v.client.Gallery(id, background)`（`app/viewer.go:1900`）は `Client.Gallery`（`app/hitomi.go:899-900`）内部で `context.Background()` を生成して `c.get` へ渡すため、gate 呼出の ctx は helper 側から attach できない。
+  - `gateLane` は per-key の key/URL を持たない（ctx・intervalMS・st・background の 4 引数のみ）なので、per-key claim を参照できる carriers は ctx・per-lane storage のみ。per-lane storage は上記の通り group（key 単位）意味を壊す。
+- 解決案はすべて承認範囲超（いずれかの変更を要る）: (a) `resolveInfoOnce`/`Gallery` 系に ctx を通す signature 変更（既存 guard test 流儀・comment と衝突）、(b) claim lookup を `gateLane`（承認 1 箇所）ではなく `getWithGate` 側へ移す、(c) lane 単位の claim（未承認 group の意味変更）。
+- 因此、この項目の info 分は実装不能。実装を開始せず、decision エントリも未作成（例外承認自体は前批どおり。実装形確定待ち）。作業ツリーは委譲前状態（HEAD `e3e7daf`・clean・source 変更なし）のまま。合格不能のため `task_manager end` は行わず進行中 Maintained。
+
+### 画面確認（本段階）
+
+- UI 項目でないため served 画面確認は該当なし（既存ルールによる・実施なし）。
+
+### Verification（本段階・実装前確定のみ）
+
+- `go vet .`（`app`）: clean。`go test -count=1 -timeout 300s .`（`app`・既存テスト変更なし・source 変更なし・HEAD `e3e7daf`）: `ok hitomi-hub/app 27.536s`。経過 27.536 s。TN join 固定テスト・info join 固定テスト・nozomi join 固定テスト・gate 固定テスト（`hitomi_test.go:959`）変更なしで通過。
+- `python -m pytest tests/ -v`（HEAD・変更なし）: `64 passed in 26.01s`。
+- harness 再実測: 実施せず（実装形が info 分で確定できず、「実装形」の再実測が成立しない。前批の機構数値 data 209 ms／image 240 ms・同一 key 1 回・1 slot は機構として有効なまま。本段階では推翻していない）。
+- 変更したのは個別タスク記録のみ（本節＋Next Action の task_manager 更新）。ソース・既存テスト非触。`Set-Content` パイプライン不使用。
 
 ## 完了時 Memory Bank 操作
