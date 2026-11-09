@@ -315,7 +315,7 @@ func TestSearchFirstStatusHandlerShapeAndReadonly(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-first-status?query=female%3Ayuri&lang=all", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-first-status?query=female%3Ayuri&lang=all"))
 	if rec.Code != 200 {
 		t.Fatalf("status: %d %s", rec.Code, rec.Body.String())
 	}
@@ -344,7 +344,7 @@ func TestSearchFirstStatusHandlerShapeAndReadonly(t *testing.T) {
 
 	// random → 400 error（decision 2026-11-05 random 無効）
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-first-status?query=female%3Ayuri+orderby%3Arandom", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-first-status?query=female%3Ayuri+orderby%3Arandom"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("random status: %d", rec.Code)
 	}
@@ -358,7 +358,7 @@ func TestSearchFirstStatusHandlerShapeAndReadonly(t *testing.T) {
 
 	// hit なし → hit null（status 行「該当なし」の UI 源）
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-first-status?query=female%3Ayuri&status=favorite", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-first-status?query=female%3Ayuri&status=favorite"))
 	if rec.Code != 200 {
 		t.Fatalf("no-hit status: %d", rec.Code)
 	}

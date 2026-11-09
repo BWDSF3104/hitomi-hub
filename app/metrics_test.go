@@ -43,7 +43,7 @@ func TestBackgroundPrefetchMarkerRecordedSeparatelyInMetrics(t *testing.T) {
 
 	get := func(path string) (string, string) {
 		rec := httptest.NewRecorder()
-		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		v.handler().ServeHTTP(rec, loopbackGETRequest(path))
 		return rec.Header().Get("x-cache"), rec.Body.String()
 	}
 

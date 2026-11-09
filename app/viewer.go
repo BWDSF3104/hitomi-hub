@@ -213,6 +213,10 @@ func (v *viewer) handler() http.Handler {
 func (v *viewer) withPOSTSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			if !isLoopbackHost(r.Host) {
+				writeJSONError(w, http.StatusForbidden, "host not allowed")
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

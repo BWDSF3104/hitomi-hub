@@ -1,6 +1,6 @@
 # N-16: GET の /api/* と /files/* に Host 検査がない（R-20 承認済み・未実装）
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -93,6 +93,26 @@ sim（`docs/ai/tmp/assess-20261108-1332/r16/r16_sim.py`）:
 - 実装規模: 小（非 POST GET の loopback Host 検査を `withPOSTSecurity` に 1 分岐追加。POST は existing `sameOriginPost` 維持）。
 - テスト re-anchor 規模: 中〜大（現行 test-level 54 件、line-level GET usage 85 件）。前批 5 件は line-level の一部であり、現行の actual relevant set は 54 test-level。
 - 優先順位要素: 重要度は security・local origin 境界として中〜高、実装リスク low、テスト修正コスト medium。UI・DB・full cache の x-cache/generation guard は middleware 追加で弱まらない。LAN allowlist 拡張は正典未承認で承認案件として分離。
+
+### 実装（2026-11-09・実施委譲 n19）
+
+- 変更: `app/viewer.go` の `withPOSTSecurity` に非 POST 分岐で loopback Host 検査を 1 分岐追加（案 A・承認済み形 R-20）。非 POST で `isLoopbackHost(r.Host)` 不一致は 403 `host not allowed`。POST は `sameOriginPost`・Content-Type 検査そのまま維持。case 耐性は `isLoopbackHost` の `ToLower` で維持（EqualFold 変更なし・判定同一）。
+- テスト re-anchor（承認範囲＝合格条件が必要とする 54 test-level 分のみ）: `app/viewer_test.go` に `loopbackGETRequest`（`req.Host = "127.0.0.1:8731"`・既存 `jsonPOSTRequest` の流儀）追加。GET usage 85 行を 54 test すべてで re-anchor（viewer_test.go 81・firststatus_test.go 3・metrics_test.go 1）。54 外の GET usage がないことをスクリプト照合で確認（`docs/ai/tmp/assess-20261109-1320/r19/n19_reanchor.py`）。POST 側テスト・他のテストは非接触。
+- 採用した判断: re-anchor は helper 経由（test-level・文字列 pin 非接触）。LAN allowlist 拡張は実施しない（別承認案件）。
+- 段階3の該当なし（正典 origin の loopback 運用で UX 変化なし・LAN 運用の非 loopback GET が 403 になるのは承認済みの案 A の意図どおり）。
+
+## Verification（実装後・2026-11-09）
+
+- 試行 1（合格）。`go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・`ok hitomi-hub/app 26.314s`。`python -m pytest tests/ -v`（ルート）→ 61 passed（13.24s。前批で既知 failed の `test_canonical_build_freshness_rule_exists` は今回の実行で合格）。
+- fresh canonical build（`go build -o output\hitomi-hub\hub.exe .`）→ fresh instance（port 8749・mock seed・実 hitomi API は CLI download 除き不使用）:
+  - GET evil Host（`evil.example.com`）→ 403（lists・image・files）
+  - GET loopback 系 + `LocalHost`（case 耐性）→ 200（localhost・127.0.0.1・`[::1]`（Host ヘッダ）・LocalHost）。前批 sim 表どおり
+  - GET image loopback → 200・`x-cache=cache`・32 bytes（作業前チェック 2）。GET files loopback → 200・`x-cache=local`・32 bytes
+  - POST 挙動不変: POST evil → 403（query・fav）、POST loopback → 200（正常）
+- CLI download（正典 build・実在 gallery 4252697・`--limit 1`・`--no-vt`・scratch root・実 API）: attempted=1・written=1（一致）。
+- 画面確認: 該当なし（server 側）。browser は Host 上書き不可（禁止ヘッダ）→ 不正 Host path は browser で再現不可（成立条件は DNS 名前解決の切替）。UI の full 判定（x-cache・no-store fetch・generation guard）は middleware 追加で弱まらない（cache 判定・header 設定経路非接触）。
+- 作業前チェック（読了・ファイル名明記）: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`・`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`・`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。TN/full 経路順序・singleflight・gate 正典値は非接触。
+- scratch（gitignore・`docs/ai/tmp/assess-20261109-1320/r19/`）: `n19_reanchor.py`・`n19_seed.py`・`n19_measure.py`・`server_root_n19`（fresh DB・seed cache・download 成果物は scratch 内。実 DB・config・完成フォルダ・cache 実データ非接触）。server（port 8749）は確認後に停止。
 
 ## 完了時 Memory Bank 操作
 

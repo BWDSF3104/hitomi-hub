@@ -86,6 +86,12 @@ func jsonPOSTRequest(path, body string) *http.Request {
 	return req
 }
 
+func loopbackGETRequest(path string) *http.Request {
+	req := httptest.NewRequest("GET", path, nil)
+	req.Host = "127.0.0.1:8731"
+	return req
+}
+
 func newTestViewer(t *testing.T, galleryJSON string) (*viewer, string) {
 	t.Helper()
 	db := openTestDB(t)
@@ -116,7 +122,7 @@ func TestViewerPageSourceLocalFirst(t *testing.T) {
 
 	// 未ダウンロード → CDN（shard 保存形式。name の ext は使わない）
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/gallery/4252697/page/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/gallery/4252697/page/1"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -133,7 +139,7 @@ func TestViewerPageSourceLocalFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/gallery/4252697/page/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/gallery/4252697/page/1"))
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +149,7 @@ func TestViewerPageSourceLocalFirst(t *testing.T) {
 
 	// files route は gallery dir 外を拒否
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/files/..%2Fhitomi.db", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/files/..%2Fhitomi.db"))
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusNotFound {
 		t.Errorf("guard: got %d", rec.Code)
 	}
@@ -155,7 +161,7 @@ func TestViewerPageSourceUsesHasavifFormatWhenRemote(t *testing.T) {
 	v, _ := newTestViewer(t, galleryJSON)
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/gallery/4252697/page/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/gallery/4252697/page/1"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -274,7 +280,7 @@ func TestViewerReadFavoriteAndQueryHandlers(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/lists", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/lists"))
 	var lists map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &lists); err != nil {
 		t.Fatal(err)
@@ -373,7 +379,7 @@ func TestViewerImageProxyServesSameOriginWebp(t *testing.T) {
 		return []byte("RIFF"), nil
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "RIFF" {
 		t.Fatalf("image proxy: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
 	}
@@ -396,7 +402,7 @@ func TestViewerImageProxyDoesNotFallBackToTNWhenStorageMissing(t *testing.T) {
 		return nil, errors.New("storage missing")
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), "tn") {
 		t.Fatalf("image proxy should not TN fallback: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -416,7 +422,7 @@ func TestViewerImageProxyDoesNotFetchTNVariantForImage(t *testing.T) {
 		return nil, errors.New("storage missing")
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("image proxy code: got %d body %q", rec.Code, rec.Body.String())
 	}
@@ -436,7 +442,7 @@ func TestViewerImageProxyDoesNotFetchAvifTNVariantForImage(t *testing.T) {
 		return nil, errors.New("storage missing")
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=avif", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=avif"))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("image avif proxy code: got %d body %q", rec.Code, rec.Body.String())
 	}
@@ -477,7 +483,7 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusOK || rec.Body.String() != payload || rec.Header().Get("x-cache") != "miss" {
 		t.Fatalf("image proxy cache miss: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
@@ -488,7 +494,7 @@ func TestViewerImageProxyWritesPersistentCacheAndServesCacheHit(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if calls != 1 {
 		t.Errorf("cache hit should not call network: calls %d", calls)
 	}
@@ -513,7 +519,7 @@ func TestServeStoredImageStreamsConditionalResponses(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusOK || rec.Body.Len() != 2048 || rec.Header().Get("x-cache") != "cache" {
 		t.Fatalf("stored image plain GET: code %d bodylen %d x-cache %q", rec.Code, rec.Body.Len(), rec.Header().Get("x-cache"))
 	}
@@ -528,7 +534,7 @@ func TestServeStoredImageStreamsConditionalResponses(t *testing.T) {
 		t.Fatal("stored image should provide ETag")
 	}
 
-	req := httptest.NewRequest("GET", "/api/image/"+sampleHash, nil)
+	req := loopbackGETRequest("/api/image/"+sampleHash)
 	req.Header.Set("If-None-Match", etag)
 	rec = httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, req)
@@ -536,7 +542,7 @@ func TestServeStoredImageStreamsConditionalResponses(t *testing.T) {
 		t.Fatalf("conditional 304: code %d bodylen %d etag %q x-cache %q cache-control %q", rec.Code, rec.Body.Len(), rec.Header().Get("etag"), rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
 	}
 
-	req = httptest.NewRequest("GET", "/api/image/"+sampleHash, nil)
+	req = loopbackGETRequest("/api/image/"+sampleHash)
 	req.Header.Set("Range", "bytes=0-1023")
 	rec = httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, req)
@@ -559,12 +565,12 @@ func TestServeStoredImageStreamsConditionalResponses(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/files/4252697/"+sampleHash+".webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/files/4252697/"+sampleHash+".webp"))
 	localETag := rec.Header().Get("etag")
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "local" || rec.Header().Get("accept-ranges") != "bytes" || localETag == "" {
 		t.Fatalf("local route conditional response: code %d x-cache %q accept-ranges %q etag %q", rec.Code, rec.Header().Get("x-cache"), rec.Header().Get("accept-ranges"), localETag)
 	}
-	req = httptest.NewRequest("GET", "/files/4252697/"+sampleHash+".webp", nil)
+	req = loopbackGETRequest("/files/4252697/"+sampleHash+".webp")
 	req.Header.Set("If-None-Match", localETag)
 	rec = httptest.NewRecorder()
 	v.handler().ServeHTTP(rec, req)
@@ -587,7 +593,7 @@ func TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN(t *testi
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || rec.Header().Get("cache-control") != "no-store" {
 		t.Fatalf("image proxy no_full: code %d body %q header x-cache %q cache-control %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
 	}
@@ -611,13 +617,13 @@ func TestViewerImageProxyNegativeNoFullCacheReducesRepeatStorageFetches(t *testi
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
 		t.Fatalf("first negative no_full request: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
 		t.Fatalf("negative no_full cache hit should avoid storage fetch: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
@@ -626,7 +632,7 @@ func TestViewerImageProxyNegativeNoFullCacheReducesRepeatStorageFetches(t *testi
 	v.client.noFullCache[key] = time.Now().Add(-negativeNoFullCacheTTL - time.Second)
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 2 {
 		t.Fatalf("expired negative no_full cache should recheck storage: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
@@ -643,13 +649,13 @@ func TestViewerImageProxyForceBypassesNegativeNoFullCache(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
 		t.Fatalf("first negative no_full request: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp&force=1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp&force=1"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 2 {
 		t.Fatalf("force manual retry should bypass negative no_full cache: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
@@ -666,7 +672,7 @@ func TestViewerImageProxyNegativeNoFullKeyChangesWhenGGChanges(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 1 {
 		t.Fatalf("first negative no_full request: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
@@ -678,7 +684,7 @@ func TestViewerImageProxyNegativeNoFullKeyChangesWhenGGChanges(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" || len(urls) != 2 {
 		t.Fatalf("changed gg should use a different negative no_full key: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
@@ -695,13 +701,13 @@ func TestViewerImageProxyDoesNotCacheNetworkErrorAsNegativeNoFull(t *testing.T) 
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusBadGateway || rec.Header().Get("x-cache") != "" || len(urls) != 1 {
 		t.Fatalf("network error should not create negative no_full cache: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusBadGateway || len(urls) != 2 {
 		t.Fatalf("network error should be rechecked: code %d x-cache %q urls %v", rec.Code, rec.Header().Get("x-cache"), urls)
 	}
@@ -735,7 +741,7 @@ func TestViewerImageProxyFetchDedupsConcurrentRemoteFetch(t *testing.T) {
 
 	go func() {
 		defer first.Done()
-		v.handler().ServeHTTP(rec1, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+		v.handler().ServeHTTP(rec1, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	}()
 
 	<-started
@@ -745,7 +751,7 @@ func TestViewerImageProxyFetchDedupsConcurrentRemoteFetch(t *testing.T) {
 	}
 	go func() {
 		defer second.Done()
-		v.handler().ServeHTTP(rec2, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+		v.handler().ServeHTTP(rec2, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	}()
 
 	select {
@@ -783,7 +789,7 @@ func TestViewerImageProxyFetchDedupDoesNotPropagateWaiterCancellationToLeader(t 
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	canceledRec := httptest.NewRecorder()
-	v.handler().ServeHTTP(canceledRec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil).WithContext(canceledCtx))
+	v.handler().ServeHTTP(canceledRec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp").WithContext(canceledCtx))
 	if canceledRec.Code != http.StatusBadGateway || calls.Load() != 0 {
 		t.Fatalf("canceled waiter should fail without propagating to leader or refetching: code %d body %q calls %d", canceledRec.Code, canceledRec.Body.String(), calls.Load())
 	}
@@ -794,7 +800,7 @@ func TestViewerImageProxyFetchDedupDoesNotPropagateWaiterCancellationToLeader(t 
 	close(call.done)
 
 	normalRec := httptest.NewRecorder()
-	v.handler().ServeHTTP(normalRec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(normalRec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if normalRec.Code != http.StatusOK || normalRec.Body.String() != "data" || calls.Load() != 0 {
 		t.Fatalf("normal waiter should use leader result without extra remote fetch: code %d body %q calls %d", normalRec.Code, normalRec.Body.String(), calls.Load())
 	}
@@ -864,7 +870,7 @@ func TestViewerImageProxyRefreshesGGOnceOnStorage404(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusOK || rec.Body.String() != "data" {
 		t.Fatalf("image proxy after gg refresh: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -893,7 +899,7 @@ func TestViewerImageProxyDoesNotRetryWhenGGBucketUnchanged(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unchanged gg bucket should return no_full without retry: code %d", rec.Code)
 	}
@@ -917,7 +923,7 @@ func TestViewerImageProxyRetriesUsingInitialGGWhenAnotherRequestUpdatedGG(t *tes
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash))
 	if rec.Code != http.StatusOK || rec.Body.String() != "data" {
 		t.Fatalf("initial gg race retry: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -935,7 +941,7 @@ func TestViewerInfoCacheConcurrentHandlersDoNotWriteUnprotectedMap(t *testing.T)
 		go func() {
 			defer wg.Done()
 			rec := httptest.NewRecorder()
-			v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+			v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/1"))
 		}()
 	}
 	wg.Wait()
@@ -1052,7 +1058,7 @@ func TestViewerThumbProxyUsesRealTNPathAndContent(t *testing.T) {
 		return []byte("data"), nil
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash))
 	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "data" {
 		t.Fatalf("thumb proxy: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -1073,7 +1079,7 @@ func TestViewerThumbProxyUsesSmalltnVariantWhenRequested(t *testing.T) {
 		return []byte("small"), nil
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&variant=smalltn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&variant=smalltn"))
 	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "small" {
 		t.Fatalf("smalltn thumb proxy: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
 	}
@@ -1095,7 +1101,7 @@ func TestViewerThumbProxyUsesTNZeroSubdomainAndContent(t *testing.T) {
 		return []byte("data"), nil
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+zeroHash, nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+zeroHash))
 	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/webp" || rec.Body.String() != "data" {
 		t.Fatalf("zero thumb proxy: code %d body %q content %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
 	}
@@ -1114,7 +1120,7 @@ func TestViewerThumbProxyUsesAvifTNBaseAndContent(t *testing.T) {
 		return []byte("data"), nil
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+zeroHash+"?format=avif", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+zeroHash+"?format=avif"))
 	if rec.Code != http.StatusOK || rec.Header().Get("content-type") != "image/avif" || rec.Body.String() != "data" {
 		t.Fatalf("avif thumb proxy: code %d body %q content %q", rec.Code, rec.Body.String(), rec.Header().Get("content-type"))
 	}
@@ -1139,7 +1145,7 @@ func TestViewerThumbProxyTNFirstWhenGalleryQueryAndLocalExists(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=4252697"))
 	if rec.Code != http.StatusOK || rec.Body.String() != "tn" {
 		t.Fatalf("TN-first thumb: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -1176,7 +1182,7 @@ func TestViewerThumbProxyTNOnlyDoesNotServeFullCache(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn"))
 	if rec.Code != http.StatusOK || rec.Body.String() != "tn" || rec.Header().Get("x-cache") != "tn" {
 		t.Errorf("TN-only thumbProxy should serve TN, not full cache: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
@@ -1193,7 +1199,7 @@ func TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit(t *testing.T)
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn"))
 	if rec.Code != http.StatusOK || rec.Body.String() != string(payload) || rec.Header().Get("x-cache") != "tn" {
 		t.Fatalf("remote TN thumb: code %d body %q header %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
@@ -1204,7 +1210,7 @@ func TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit(t *testing.T)
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn"))
 	if calls != 1 {
 		t.Errorf("TN cache hit should not call network: calls %d", calls)
 	}
@@ -1233,7 +1239,7 @@ func TestThumbProxyTNWriteFailureLeavesNoBrokenTNCache(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn", nil))
+		v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=bigtn"))
 		if rec.Code != http.StatusOK || rec.Body.String() != string(payload) || rec.Header().Get("x-cache") != "tn" {
 			t.Fatalf("%s failure must not change TN response: code %d body %q x-cache %q", stage, rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 		}
@@ -1324,7 +1330,7 @@ func TestViewerThumbProxyTNFailureDoesNotUseLocalOrFullFallback(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697&variant=smalltn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=4252697&variant=smalltn"))
 	if rec.Code != http.StatusBadGateway || rec.Header().Get("x-cache") != "no_tn" || rec.Header().Get("cache-control") != "no-store" {
 		t.Fatalf("TN failure response: code %d header x-cache %q cache-control %q", rec.Code, rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
 	}
@@ -1348,7 +1354,7 @@ func TestViewerGalleryFilesIncludeLocalAndHitomiFlags(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/gallery/4252697", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/gallery/4252697"))
 	if rec.Code != 200 {
 		t.Fatalf("gallery: %d %s", rec.Code, rec.Body.String())
 	}
@@ -1384,7 +1390,7 @@ func TestViewerThumbProxyTNFailureHeadersDoNotTreatNoTNAsFull(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=4252697", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=4252697"))
 	if rec.Code != http.StatusBadGateway || rec.Header().Get("x-cache") != "no_tn" || rec.Header().Get("cache-control") != "no-store" {
 		t.Fatalf("TN failure headers: code %d x-cache %q cache-control %q", rec.Code, rec.Header().Get("x-cache"), rec.Header().Get("cache-control"))
 	}
@@ -1415,7 +1421,7 @@ func TestViewerSearchHandlerReturnsIdsOnlyForLazyCards(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=2", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search?query=furry&lang=all&page=1&limit=2"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -1452,7 +1458,7 @@ func TestSearchHandlerIncludesMeasurementShape(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=2", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search?query=furry&lang=all&page=1&limit=2"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -1532,7 +1538,7 @@ func TestSearchHandlerRecordsAllIDsInOneTransactionAfterFetch(t *testing.T) {
 	// mocked fetch の external call は handler 内で fetch 完了後に record へ入る。request あたり commit 1 は
 	// fake harness（TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch）で固定。ここでは行数と timing 意味を確認
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=25", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search?query=furry&lang=all&page=1&limit=25"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("search: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -1575,7 +1581,7 @@ func TestSearchHandlerRecordsAllIDsInOneTransactionAfterFetch(t *testing.T) {
 
 	// 2 回目 request: 行数不変（scan 2 回の行数意味・unique key 不変）、timing ヘッダの相位意味不変
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search?query=furry&lang=all&page=1&limit=25", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search?query=furry&lang=all&page=1&limit=25"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second search: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -1596,7 +1602,7 @@ func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 	v, _ := newTestViewer(t, galleryJSON)
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/1"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -1611,7 +1617,7 @@ func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/1"))
 	if rec.Header().Get("x-cache") != "cache" {
 		t.Errorf("search card second x-cache should show cache hit: got %q", rec.Header().Get("x-cache"))
 	}
@@ -1630,7 +1636,7 @@ func TestSearchCardHandlerIsReadOnlyForExistingRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/1"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("search card existing row: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -1651,7 +1657,7 @@ func TestSearchCardHandlerIsReadOnlyForExistingRow(t *testing.T) {
 		t.Fatalf("cold gallery rows before handler: got %d", rows)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/2", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/2"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cold card handler: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -2340,7 +2346,7 @@ func TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen(t *testing.T) {
 	v, _ := newTestViewer(t, galleryJSON)
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/1"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -2391,7 +2397,7 @@ func TestSearchCardViewedAndSavedStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/9"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -2409,7 +2415,7 @@ func TestSearchCardViewedAndSavedStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/9"))
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -2423,7 +2429,7 @@ func TestSearchCardViewedAndSavedStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/9"))
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -2434,7 +2440,7 @@ func TestSearchCardViewedAndSavedStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/9", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/9"))
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -4166,7 +4172,7 @@ func TestViewStartupServesBeforeGGLoad(t *testing.T) {
 func TestViewerIndexServesEmbeddedPage(t *testing.T) {
 	v, _ := newTestViewer(t, `var galleryinfo = {"id":"1","files":[]}`)
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/"))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "hitomi hub viewer") {
 		t.Errorf("index: code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -4193,7 +4199,7 @@ func TestImageProxyCacheMissWritesAtomically(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "miss" || rec.Body.String() != payload {
 		t.Fatalf("atomic cache miss: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
@@ -4313,7 +4319,7 @@ func TestImageProxyCacheConcurrentWriteSingleflight(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "cache" {
 		t.Errorf("single cachePath write result: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
@@ -4417,7 +4423,7 @@ func TestImageProxyCacheStateIsNotTN(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1"))
 	if rec.Code != http.StatusOK || rec.Body.String() != string(tnPayload) || rec.Header().Get("x-cache") != "tn" {
 		t.Fatalf("TN state must stay tn: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
@@ -4429,7 +4435,7 @@ func TestImageProxyCacheStateIsNotTN(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusNotFound || rec.Header().Get("x-cache") != "no_full" {
 		t.Errorf("display pass must not be satisfied by TN: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
@@ -4438,7 +4444,7 @@ func TestImageProxyCacheStateIsNotTN(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp"))
 	if rec.Code != http.StatusOK || rec.Body.String() != "full bytes" || rec.Header().Get("x-cache") != "cache" {
 		t.Errorf("full cache pass is x-cache: cache only: code %d body %q x-cache %q", rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 	}
@@ -4461,7 +4467,7 @@ func TestImageProxyCacheMagicCheckSkipsMismatchedBytes(t *testing.T) {
 			return []byte(tc.data), nil
 		}
 		rec := httptest.NewRecorder()
-		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format="+tc.format, nil))
+		v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format="+tc.format))
 		if rec.Code != http.StatusOK || rec.Body.String() != tc.data || rec.Header().Get("x-cache") != "miss" {
 			t.Fatalf("magic case %s/%q: code %d body %q x-cache %q", tc.format, tc.data, rec.Code, rec.Body.String(), rec.Header().Get("x-cache"))
 		}
@@ -4534,7 +4540,7 @@ func TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		recs[0] = httptest.NewRecorder()
-		v.handler().ServeHTTP(recs[0], httptest.NewRequest("GET", bigtn, nil))
+		v.handler().ServeHTTP(recs[0], loopbackGETRequest(bigtn))
 	}()
 	<-started
 	for i := 1; i < 5; i++ {
@@ -4543,7 +4549,7 @@ func TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			recs[idx] = httptest.NewRecorder()
-			v.handler().ServeHTTP(recs[idx], httptest.NewRequest("GET", bigtn, nil))
+			v.handler().ServeHTTP(recs[idx], loopbackGETRequest(bigtn))
 		}()
 	}
 	waitForCounter(t, &joins, 4)
@@ -4578,7 +4584,7 @@ func TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall(t *testing.T) {
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	canceledRec := httptest.NewRecorder()
-	v.handler().ServeHTTP(canceledRec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=smalltn&priority=normal", nil).WithContext(canceledCtx))
+	v.handler().ServeHTTP(canceledRec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=smalltn&priority=normal").WithContext(canceledCtx))
 	if canceledRec.Code != http.StatusBadGateway || canceledRec.Header().Get("x-cache") != "no_tn" {
 		t.Fatalf("canceled TN waiter must return no_tn 502 without fallback: code %d x-cache %q", canceledRec.Code, canceledRec.Header().Get("x-cache"))
 	}
@@ -4588,7 +4594,7 @@ func TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall(t *testing.T) {
 	group.body = []byte("tn")
 	close(group.done)
 	normalRec := httptest.NewRecorder()
-	v.handler().ServeHTTP(normalRec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=smalltn&priority=normal", nil))
+	v.handler().ServeHTTP(normalRec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant=smalltn&priority=normal"))
 	if normalRec.Code != http.StatusOK || normalRec.Body.String() != "tn" || calls.Load() != 1 {
 		t.Fatalf("normal TN waiter must share leader result without refetch: code %d body %q calls %d", normalRec.Code, normalRec.Body.String(), calls.Load())
 	}
@@ -4736,7 +4742,7 @@ func TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall(t *testing.T) {
 			variant = "smalltn"
 		}
 		rec := httptest.NewRecorder()
-		v2.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant="+variant, nil))
+		v2.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+sampleHash+"?format=webp&gallery=1&variant="+variant))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("TN boundary request %d: code %d", i, rec.Code)
 		}
@@ -4787,7 +4793,7 @@ func cacheEntryRow(t *testing.T, db *sql.DB, hash, format, kind, variant string)
 func TestViewerConfigEndpointServesEffectiveMaxObjectURLs(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/viewer-config", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/viewer-config"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -4802,7 +4808,7 @@ func TestViewerConfigEndpointServesEffectiveMaxObjectURLs(t *testing.T) {
 	cfg.Viewer.MaxObjectURLs = 4500
 	v2 := newViewer(v.db, cfg, v.root)
 	rec = httptest.NewRecorder()
-	v2.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/viewer-config", nil))
+	v2.handler().ServeHTTP(rec, loopbackGETRequest("/api/viewer-config"))
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -4829,7 +4835,7 @@ func TestSettingsEndpointServesEditableSettingsWithoutAPIKey(t *testing.T) {
 	}
 	v := newViewer(db, cfg, t.TempDir())
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/settings"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
 	}
@@ -5249,7 +5255,7 @@ func TestImageCacheWriteRecordsCacheEntryRow(t *testing.T) {
 		return webpMagicBytes("aaaa"), nil
 	}
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp&gallery=42", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp&gallery=42"))
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "miss" {
 		t.Fatalf("first request must be 200 miss: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
@@ -5272,7 +5278,7 @@ func TestImageCacheWriteRecordsCacheEntryRow(t *testing.T) {
 
 	// second request serves from cache and does not double-record the row
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+sampleHash+"?format=webp&gallery=42", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+sampleHash+"?format=webp&gallery=42"))
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "cache" {
 		t.Fatalf("second request must be cache hit: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
@@ -5302,7 +5308,7 @@ func TestSettingsResponseServesDBRowCountsForCacheClearPanel(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/settings"))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -5673,7 +5679,7 @@ func TestCacheClearResetsMemoryCachesWithoutChangingCacheHeaders(t *testing.T) {
 
 	// x-cache の意味（source）は変わらない。memory clear 後の search-card 表示は miss。
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/4252697", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/search-card/4252697"))
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "miss" {
 		t.Fatalf("memory clear must produce x-cache miss, got code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
@@ -5698,7 +5704,7 @@ func TestCacheEntriesPruneEvictsOldestByCreationOrderAndKeepsCurrentGallery(t *t
 	request := func(hash string, gallery int) {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/image/"+hash+"?format=webp&gallery="+strconv.Itoa(gallery), nil))
+		v.handler().ServeHTTP(rec, loopbackGETRequest("/api/image/"+hash+"?format=webp&gallery="+strconv.Itoa(gallery)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("write request for %s: code %d body %q", hash, rec.Code, rec.Body.String())
 		}
@@ -5810,7 +5816,7 @@ func TestTNWriteRecordsThumbsRowAndPrunesThumbsKindOnly(t *testing.T) {
 	tnHash1 := strings.Repeat("f", 63) + "1"
 	tnHash2 := strings.Repeat("f", 63) + "2"
 	rec := httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+tnHash1+"?format=webp&gallery=7&variant=bigtn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+tnHash1+"?format=webp&gallery=7&variant=bigtn"))
 	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "tn" {
 		t.Fatalf("TN write: code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
@@ -5826,7 +5832,7 @@ func TestTNWriteRecordsThumbsRowAndPrunesThumbsKindOnly(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/thumb/"+tnHash2+"?format=webp&gallery=8&variant=bigtn", nil))
+	v.handler().ServeHTTP(rec, loopbackGETRequest("/api/thumb/"+tnHash2+"?format=webp&gallery=8&variant=bigtn"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second TN write: code %d", rec.Code)
 	}
