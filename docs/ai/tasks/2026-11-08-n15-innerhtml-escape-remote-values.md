@@ -148,7 +148,7 @@
 - 合格。Drive 保存: `I:\マイドライブ\kilo\2026-11-08-n15-innerhtml-escape-remote-values\`
   - `n15-strip-before-20261109.png`・`n15-strip-after-20261109.png`・`n15-search-href-before-20261109.png`・`n15-search-href-after-20261109.png`・`n15-innerhtml-escape-remote-values-confirmation-2026-11-09.txt`
 - local copy（project `scratch/n15-20261109/screenshots/` の 4 枚）は Drive 保存後正典 `kilo-safe-remove` でゴミ箱へ送った。Drive 側は保持。
-- project root 外残件（削除せず記録）: Playwright output 4枚（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n15-*.png`）。正典 tool は project root 外削除不可。汚染: before 側 isolated context の localStorage に `hitomi_hub_last_search`（`furry`）が観測され tab hash へ反映。`#queries` 内容（names saved/corner/plain/quote）と flags は自 mock 由来で帰属確立。viewer pair は汚染なし。after 側は新規 isolated context を使用（測定時 clean）。
+- project root 外残件: Playwright output 4枚（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n15-*.png`）→ 2026-11-09 ユーザー承認により正典 `kilo-recycle-external <path> -Approved` でゴミ箱へ送信済み（4枚・実行確認）。汚染: before 側 isolated context の localStorage に `hitomi_hub_last_search`（`furry`）が観測され tab hash へ反映。`#queries` 内容（names saved/corner/plain/quote）と flags は自 mock 由来で帰属確立。viewer pair は汚染なし。after 側は新規 isolated context を使用（測定時 clean）。
 
 ## Verification（実装 2026-11-09）
 
