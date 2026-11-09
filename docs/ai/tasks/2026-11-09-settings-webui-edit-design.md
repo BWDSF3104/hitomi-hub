@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-09
-**Next Action**: Settings dedicated page implemented and verified. Future write allowlist, atomic write, floor re-validation, shared config reference, path guard undecided.
+**Next Action**: Settings page is read-only only. Original editable requirement needs write channel implementation. Settings labels updated to Japanese constant names; download/acquisition labels separated.
 
 ## 意図 / 背景
 
