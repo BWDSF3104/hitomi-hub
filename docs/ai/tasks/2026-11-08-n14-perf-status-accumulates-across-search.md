@@ -1,6 +1,6 @@
 # N-14: perfStatus が検索をまたいで累積し数値が食い違う
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -119,6 +119,20 @@
 
 - 前批の範囲記述のまま（表示のみ・`serverTiming` 文字列で累计不可・stub harness 非影響・r12 harness 単発 run 通過）。追加の影響なし。
 
+### 実装（assess-20261109-1320・2026-11-09）
+
+- 採用: 案 A（推奨・ユーザー同意済み 2026-11-09）。根拠: 正典に「累計表示が意図」の記録なし（`2026-11-01-p3-implementation-decisions.md` ほか前批照合 3 件）、テスト pin は今回分形 literal（`viewer_test.go:3584/3593/3596`）、同一行内 `searchMs`・`serverTiming` が今回分形。bug 修正として実施（意味変更側は承認案件分離のまま・本実装は同意済み推奨案の範囲内）。
+- 変更: `app/search.html` `runSearch` 冒頭 3 行追加（`780-782`）: `perfStatus.cardsLoaded = 0;`・`perfStatus.cardTotalMs = 0;`・`perfStatus.cacheDistribution = {};`。`searchMs`・`serverTiming` は今回分形再代入維持（変更なし）。テスト変更なし。
+- guard 非接触確認: generation guard（`processCard` `665`・catch `679`・observer `645`・runSearch `802/817/827`）と `renderPerfStatus` 空表示 guard（`501`）維持。リセットは runSearch 冒頭（`++searchGeneration` より前）だが JS 単一スレッドでリセットから `searchGen` 確定まで await 点なし → 以降の増分は現 run の guard を通過する分のみ。harness check 12（guard・render guard literal）で確認。
+- harness（正典流儀・mock・外部 API なし・決定論的 clock）: `docs/ai/tmp/assess-20261109-1320/r14/n14_reset_measure.mjs` → 12 checks passed。同一 page instance で 2 runs 後、search 2 単独对照 instance と「計測」行が完全一致（`カード 25 3270ms・キャッシュ cache=26`）→ search2 単独時に今回分のみ表示を確定。前批 harness（累計断）はスクラッチのため非更新・本実装後には当該断（check 81-84・87）は反転するため現行合格条件の harness は本 file のみ。
+- served 画面確認（合格・正典ルール準守・試行 1 回）: fresh canonical build（正典 build command・`test_canonical_executable_embeds_current_pages` 合格）→ fresh server instance（pid 16056・port 8731・本確認の要求のみに応答）→ isolated origin `n14-assess-20261109-1320`・window size inner 1666x932（outer 1679x1025・実測。Playwright viewport 設定で基準 size を確立。before/after 同一条件・同一被写体 `#perf-status`・同一取得方法）。
+  - before（search 1 = load 時 runSearch・`furry`）: `計測: /api/search 2163ms・サーバー search=2090;record=67;json=1・カード 25 2906ms・キャッシュ miss=25`
+  - after（search 2・`kemonomimi`・`#search-submit` click）: `計測: /api/search 1379ms・サーバー search=1314;record=63;json=1・カード 25 2002ms・キャッシュ miss=25`
+  - before → after: カード 25・キャッシュ 26 件（search 1 + card 25）が search 2 単独分のみで search 1 の数値が混ざらない（修正前は累計 50・cache 52 相当。前批 served 実測の食い違いが解消）。両 run「検索完了・カード表示済み 25件」。cold hygiene 3 条件破れなし。
+  - 保存先: `I:\マイドライブ\kilo\2026-11-08-n14-perf-status-accumulates-across-search\`（`n14-perf-row-search1-before-20261109.png`・`n14-perf-row-search2-after-20261109.png`・`n14-perf-row-confirmation-2026-11-09.txt`）。local copy（project `scratch/` と project root に混入した before png 1 枚）は正典 `kilo-safe-remove` でゴミ箱へ送った。Playwright の snapshot（.yml）は project root 外（`kilo-playwright-mcp`）のため削除せず残件として記録。
+- 外部 API 呼出しは decision `2026-11-01-hitomi-hub-tests-may-call-external-api.md` の許可範囲（search 2 回・search-card 50 件）。正典 DB・config・完成フォルダ・cache 実データの直接変更なし。server（fresh instance）は確認終了後停止。
+- 影響他項目: なし（表示のみ・pin 通過維持・既存 harness 通過）。試行回数 1（初回合格）。未解決事項なし。段階3持ち帰りなし（推奨案＝同意済み案 A 範囲内の約4行実施のみ。意味変更側の承認案件分離は維持、本実装は bug 修正として分離済み推奨案の執行）。
+
 ### 推定規模・優先順位要素
 
 - 規模: 小（案 A 約 4 行）。
@@ -131,3 +145,11 @@
 - `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok 25.293 s（`TestEmbeddedUIHasSearchMeasurementStatus` 通過）。
 - served 画面確認合格（上欄。Drive 保存・local copy ゴミ箱済み）。card fetch の外部 API 呼出しは decision `2026-11-01-hitomi-hub-tests-may-call-external-api.md` の許可範囲（search 1 回・search-card 25 件×2）。正典 DB・完成フォルダ・config は直接変更なし。
 - 変更したのは本タスク記録（本見出し）と Drive 保存、スクラッチ（生成後ゴミ箱へ送った）のみ。`src/`・`app/` の変更なし、既存テストの変更なし。Status・Next Action は変更なし（親管理）。
+
+### Verification（実装 assess-20261109-1320）
+
+- `node docs/ai/tmp/assess-20261109-1320/r14/n14_reset_measure.mjs` → 12 checks passed（search 2 の行が単独对照 instance と完全一致・search2 単独時に今回分のみ表示）
+- `python -m pytest tests/ -v` → 62 passed（14.11 s・freshness test 含む。実装後 fresh canonical build 済み）
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok 26.165 s（`TestEmbeddedUIHasSearchMeasurementStatus` pin 通過・テスト変更なし）
+- served 画面確認合格（実装欄。before/after 同一条件・Drive 保存・local copy ゴミ箱済み）
+- 変更: `app/search.html`（runSearch 冒頭 3 行）・本タスク記録。スクラッチ harness は gitignore 下（非追跡）。commit は本項目分のみ単独。

@@ -777,6 +777,9 @@ async function showLists(searchGen) {
 
 async function runSearch() {
   searchCardsCompleted = false;
+  perfStatus.cardsLoaded = 0;
+  perfStatus.cardTotalMs = 0;
+  perfStatus.cacheDistribution = {};
   const rawQuery = document.getElementById("query").value.trim();
   const filter = currentFilterState();
   const query = composeEffectiveQuery(rawQuery, filter.series, filter.types);
