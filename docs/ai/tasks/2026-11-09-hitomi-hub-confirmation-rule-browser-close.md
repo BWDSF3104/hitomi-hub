@@ -1,6 +1,6 @@
 # タスク：確認テスト正典へブラウザ開閉ルールを追記する
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: 追記実施
 **Origin**: remote received
