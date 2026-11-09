@@ -133,6 +133,19 @@
 - Drive 保存: `I:\マイドライブ\kilo\2026-11-09-settings-manual-cache-clear-button\`（before/after 4 画像と `settings-cache-clear-confirmation-2026-11-09.txt`）。local copy（project `scratch/`）は正典 `kilo-safe-remove` でゴミ箱へ送った。Drive 側は保持。
 - 記録: `docs/ai/decisions/2026-11-09-manual-cache-clear-button-approved-design.md`（設計承認正典）、`docs/ai/known-issues/KI-20261109-01-galleryinfo-shape-vs-cache-dir.md`（galleryinfo 置き場の shape 差。現実装は app 自身の経路のみ削除・誤削除なし）
 
+### 実データ側の観測（2026-11-09 03:49 UTC・ユーザー指示）
+
+- 実 runtime root（exe 置き場）: `S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub`
+  - 実測（観測前）: `acquisition` 7 file（`Furry Beach Queens_4314305\001.avif`〜`007.avif`・LastWriteTime 2026-11-08 23:12:04）・`Galleries` 2 file・`cache` 1795 file（`cache\images` 1366・`cache\images\thumbs` 436・`cache\galleryinfo` 429）
+  - `cache\images\galleryinfo` は存在しない（この root は `cache_dir` 既定形の `cache/galleryinfo` を使う。shape 差は `docs/ai/known-issues/KI-20261109-01`）
+  - 実 root の DB（`output\hitomi-hub\hitomi.db`）の `cache_entries` 行数: full 51・thumbs 40 → file 1366/436 と差があり、行がない file（リスト化前）が実データ側に実在
+- guard 実測（real root・canonical build・fresh instance・port 8745・`--config` scratch file で `cache_dir = acquisition`）
+  - POST /api/cache/clear → 拒否: `cache root "...output\hitomi-hub\acquisition" resolves into completion folder "...output\hitomi-hub\acquisition"`
+  - 拒否後の file 数: acquisition 7・Galleries 2・cache\images 1366・thumbs 436・galleryinfo 429（観測前と一致。削除 0）
+  - つまり実データ側で、完成フォルダへ向く clear は実行前段で拒否され、実 file は無変更
+- 未実施（実データ側の実削除）: 実 root での actual clear は実 cache（1366 + 436 + 429 file・DB 行 51/40）を消す操作になるため、ユーザー確認なしには実行していない。実データ folder の survival は「guard 拒否 + file 数一致」で確認済み。actual clear 中の survival は未観測。
+- 前回の確認 text の「Galleries・acquisition 前後一致」は scratch measurement root の数字であり、実データ folder の数字ではない。実データ folder は上記の別 root に在る。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除
