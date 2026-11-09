@@ -1,6 +1,6 @@
 # Web UI から設定を変更する形の検討（allowlist・反映方法・guard）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: commit completed settings editable implementation
 
