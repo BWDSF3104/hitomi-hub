@@ -1,6 +1,6 @@
-# R-19（未検証）: scene_indexes のある gallery でページ番号の基準が食い違う可能性
+# R-19（解決）: scene_indexes のある gallery でページ番号の基準が食い違う可能性
 
-**Status**: 有効（実測確認 2026-11-09・修正案は承認待ち。読み取りのみ→実測済み）
+**Status**: 解決（推奨A files 基準統一を実装 2026-11-09・正典検証・harness・served 画面確認合格）
 **Date**: 2026-11-06
 **Source**: 外部指摘（Claude）2026-11-06 項目 17 → `docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md`
 
@@ -57,3 +57,44 @@
 ### 次の対応
 
 - 承認後に推奨 A 実装（実装開始指示待ち）。実例は 733697 で確定済み（fixture 追加不要。test 化は `TestGalleryParse` 実例 [0,13,15] + 733697 形 fixture で可能）。
+
+## 2026-11-09 実装（推奨 A・ユーザー同意済み）
+
+**Status**: 実装完了（試行1合格）
+
+### 採用判断（段階1・推奨A）
+
+- 同意済みの推奨 A（files 基準統一）で実装。採用した判断と根拠:
+  - `current.count` を `g.files.length` に統一（scene があっても）。
+  - `stripItems` を推奨Aの記載どおり items=files 全部へ統一（1 entry = 1 page の app reader model）。scene badge 表示は badge map（scene start card）で維持。副作用「prefetch 件数 12→210（733697）」は推奨A記載どおり served で実測（x/210）。
+  - `readerItems` second を `entryForPage(first.page + 1)`（files 基準）へ統一。1:1・no-scene では挙動同一（回帰テストで確認）。
+  - `movePage` 上限・pagenum guard・読み完了判定は `current.count`（統一後 files 基準）経由で自動整合。`stripGroupPage` は items=files 基準で findIndex が全 page に成功するため追加変更不要（途中の試行で fallback clamp を入れたが不要と判断し revert。group 5/5 が page 210 で正しく解決されることを harness・served で確認）。
+- TN・full 判定・generation guard の正典不変条件は不変（コード触らず）。
+- DB 実データ変更なし。既存 read_state 行の page 値は統一後の files 基準で解釈するのみ（migration 不可）。
+- 基準選定の design decision は `docs/ai/decisions/2026-11-09-page-basis-files-unification.md` に記録（ユーザー同意 2026-11-09 の推奨A。supersede 対象なし）。
+
+### 合格条件（確定）
+
+1. sparse fixture（733697 形: files 210・scene 13・sparse）で page 基準統一が整合: 位置表示分母 210、最終ファイル page 210 到達、読み完了判定 page 210 で complete、`readerItems` second = files[page]（次の scene start ではなく次のファイル）、pagenum 210 受理、strip group が 1..total 内（page 210 で空 strip にならない）
+2. 正典検証: `go vet . && go test -count=1 -timeout 300s .`（app）＋ `python -m pytest tests/ -v`（re-anchor した `app/viewer_test.go` anchor と新 harness `tests/viewer_page_basis_harness.mjs`/`tests/test_viewer_page_basis.py` を含む）
+3. served 画面確認（正典ルール: fresh canonical build・fresh server instance・isolated origin・inner 1666x932・before/after・cold hygiene）で統一後の表示を実測。実例 gallery 733697。実 DB 非変更のため data-dir/root を scratch へ（正典 command からの逸脱として記録）。Drive 保存フォルダ `I:\マイドライブ\kilo\2026-11-09-KI-20261106-01-scene-page-count-basis\`（before/after png + confirmation text）＋ local copy cleanup（`kilo-safe-remove`）
+- ベースライン（実装前 HEAD 33db452）: `go vet` 合格・`go test` ok 28.623s・pytest 62 passed（確認済み）
+
+### 試行記録
+
+- 試行1（合格）: 実装（viewer.html: `setGalleryMeta` count・`stripItems`・`readerItems` second）+ `app/viewer_test.go` re-anchor + 新規 harness → 正典検証 → served 画面確認。原因分析: なし（初回合格）。
+  - re-anchor: 1711 の scene slice anchor を files 基準 + badge map anchor へ更新（推奨Aの items=files 全部で文字列アサートが壊すため、合格条件が必要とする anchor 更新のみ）。`item.badge > 1`・`stripGroup` 優先行・renderStrip/stripGroupPage 呼び出し anchor は維持。新テスト `TestEmbeddedUIPageBasisUnifiedToFiles`（count・second・movePage 上限・pagenum guard・読み完了の files 基準 pin）。
+
+### Verification（合格）
+
+- 正典検証: `go vet .` 合格・`go test -count=1 -timeout 300s .` ok（30.806s）（app）/ `python -m pytest tests/ -v` 63 passed（14.90s・freshness test 含む）/ `node tests/viewer_page_basis_harness.mjs` 15 checks passed（733697 形 sparse fixture files 210・scene 13・sentinel。位置分母 210・最終ファイル page 210 到達・complete true・readerItems second=next file（61 ではなく 33）・pagenum 210 受理 211 拒否・badge 30 維持・group 5/5・1:1+sentinel・no-scene 回帰なし）
+- served 画面確認（正典ルール準守: fresh canonical build からの server 再起動・fresh server instance・isolated origin（isolatedContext ki20261106-01-cold）・window size 実測 inner 1666x932・before/after 2組・cold hygiene）。実例 gallery 733697（live・gamecg）。実 DB 非変更のため data-dir/root を scratch（config.example.json・schema.sql コピー）へ変更（正典 command からの逸脱・記録）。
+  - before（page 1）: 位置「1 / 210」・ヘッダ「210 files」・strip items files 基準（グループ 1/5・card badge 30・20 表示）
+  - Pair A 操作（pagenum 210）→ after: 位置「210 / 210」・最終ファイル hash 89bf184d1db7af13f47e8193aebc3de58777d2f18b48902614567c794714a73c（= files[210 件目]）表示・グループ 5/5・/api/read body `{"gallery_id":733697,"page":210,"complete":true}`（読み完了 files 基準）
+  - Pair B 操作（pagenum 32。統一前は 12 上限で拒否）→ after: 位置「32 / 210」・グループ 1/5・page 32 card highlight・badge 表示維持。733697 の全 entry landscape（1600x1200）のため見開き pair 規則（正典不変）で second は null。readerItems second の files 基準一致は harness 実測で証明（served では pagenum 32 受理・entry33 hash 一致確認）
+  - 保存先: `I:\マイドライブ\kilo\2026-11-09-KI-20261106-01-scene-page-count-basis\`（pairA-page1-before / pairA-page210-after / pairB-page210-before / pairB-page32-after の png 4 枚 + `scene-page-count-basis-unification-confirmation-2026-11-09.txt`）。local copy（scratch）は `kilo-safe-remove` でゴミ箱へ送った（Drive 側は残す）
+- 変更ファイル: `app/viewer.html`・`app/viewer_test.go`・`tests/viewer_page_basis_harness.mjs`（新規）・`tests/test_viewer_page_basis.py`（新規）・decision エントリ・本エントリ（archive へ mv）
+
+### 次の対応
+
+- なし（解決）。実例 733697・fixture とも統合整合を確認済み。
