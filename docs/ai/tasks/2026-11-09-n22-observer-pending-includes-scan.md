@@ -2,7 +2,7 @@
 
 **Status**: 完了
 **Date**: 2026-11-09
-**Next Action**: 調査委譲（assess-20261109-1320）
+**Next Action**: 完了（57b0046 commit: code+tests・記録と tsv は b854e72（親側）に済み）
 
 ## 意図 / 背景
 
@@ -81,6 +81,7 @@ harness: `docs/ai/tmp/assess-20261109-1320/harness_observer_pending.mjs`（現�
   - `python -m pytest tests/ -v` — 64 passed in 24.75s（`test_canonical_build_freshness.py` 含む）
   - 正典 build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` を現 app から実行（freshness test 前提）
 - 画面確認: UI 項目でないため該当なし（記録に明記・Drive 保存なし・local copy cleanup 該当なし）。動作一致は mock harness で固定（served 画面確認は実施しない）
+- commit 状況: 本項目分単独 commit `57b0046`（`app/search.html`・`tests/search_visible_priority_harness.mjs`・`tests/test_search_visible_priority.py`）。タスク記録の編集と `current-task.tsv` 参照行の削除は同一 working tree で別実行（browser-close）の行と混入し、親側の commit `b854e72` に反映済み（混入排除のため amend せず・記録で明示）。push 済み（origin/main）
 
 ## 完了時 Memory Bank 操作
 
