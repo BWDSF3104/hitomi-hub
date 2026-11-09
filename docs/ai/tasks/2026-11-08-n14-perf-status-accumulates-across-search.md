@@ -79,3 +79,55 @@
 - [ ] `current-task.tsv` の参照行を削除
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 有効性
+
+- 有効（不変）。現行コードにリセット未導入で、served 画面で食い違いを再実測して閉じた。
+
+### 現行実装と判断根拠（再確認）
+
+- 現行 `app/search.html` にリセットは入っていない（未解決）。`perfStatus` 初期化は `191`（module レベル・1 箇所）のみ。`runSearch` 冒頭（`774-775`）は `searchCardsCompleted = false;` のみで `cardsLoaded` / `cardTotalMs` / `cacheDistribution` のリセット文なし。ファイル内リセット文の静的 check（harness 再実行・現行ファイル対象）→ 初期化 1 箇所・リセット文なしで 9 checks passed。
+- 呼出経路: `runSearch` 呼出は `523`（restoreSearchState・load 時）・`963`（form submit）・`1062`・`1079`・`1091`・`1094`（route/boot）。前批と同一構造（単入口・リセット経路なし）。
+
+### 前批記録との矛盾確認
+
+- 内容の矛盾なし、line シフトのみ（+11〜+92）。前批 → 現行: 初期化 `180`→`191`、`recordPerfCache` `475`→`491`、`renderPerfStatus` `486`→`497`/`501-502`、card 増分成功側 `581-582`→`662-663`、catch 側 `595-596`→`676-677`、`runSearch` 再代入 `712-713`→`796-797`。card 経路の searchGen guard（現行 `661`・`675`）と `renderPerfStatus` の空表示 guard（`497`）は前批記述どおり維持。
+- 軽微な表示 drift: harness（`docs/ai/tmp/assess-20261108-1332/r14/r14_measure.mjs` check 86）のラベル文字列が「line 180」を示す。check 自体は occurrence 回数とリセット文の不在のみを検定しており、現行 `191` と矛盾しない（ラベルの旧 line 参照は cosmetic）。
+- テスト pin（`TestEmbeddedUIHasSearchMeasurementStatus`）: 現行 `app/viewer_test.go:3584`・`3593`・`3596`（前批 3430/3453 相当の line シフト）。pin 内容同一（今回分形 literal と per-card `+=` 累计機構）→ 案 A（runSearch 冒頭リセット）で通過維持、テスト変更不要。
+
+### 正典照合（「今回分が意図」判定）
+
+- 参照先（前批と同じ）: `docs/ai/decisions/2026-11-01-p3-implementation-decisions.md`（`#perf-status` 表示・累计意図の記述なし）、`docs/ai/tasks/2026-11-03-a05-search-card-sequential.md`、`docs/ai/decisions/2026-11-06-ui-polish-jp-copy-and-anchors.md`（label `perf`→`計測` の表示文字列のみ）。現行 decisions・rules に「累计表示が意図」を固定する新規記録なし → 前批判定（今回分が意図・リセット案は bug 修正）は現行正典と矛盾なし。意味変更側（ユーザーに見える数字の累計→今回分）の承認案件分離も維持。
+- 文書矛盾処理: 前批は pytest で `test_canonical_build_freshness_rule_exists` の failure（KI-20261106-04）を記録。現行実測では同 test 合格（2 passed）。日付優先規則により現行実測を採用（古い状態記述は根拠にしない）。
+
+### served 画面確認（合格・2 回目検索の表示数値）
+
+- 正典 exe（freshness test 合格・コード非変更）・fresh instance（pid 15736・port 8731・本確認の要求のみに応答）・isolated origin `n14-assess-20261109-1320`・window size 実測 outer 1679x1025 / inner 1666x932（人工 resize なし・before/after 同一条件・同一被写体 `#perf-status`・同一取得方法）。
+- before（search 1・load 時 runSearch・query `furry`）: `計測: /api/search 1518ms・サーバー search=1474;record=39;json=1・カード 25 3544ms・キャッシュ miss=25`（検索完了・カード表示済み 25件）
+- after（search 2・`kemonomimi`・`#search-submit` click）: `計測: /api/search 2529ms・サーバー search=1207;record=1319;json=1・カード 50 20386ms・キャッシュ miss=50`（検索完了・カード表示済み 25件）
+- before → after: `searchMs`・`serverTiming` は今回分へ更新、`カード` 25→50・`カード時間` 3544→20386ms・`キャッシュ` miss=50 は search 2 単独分（25）ではなく 2 回の累計表示 → 食い違いを served 画面で再確認。fresh instance で search 1 が miss=25 → miss=50（=25+25）であり、累計は cache 状態非依存の機構（`cardsLoaded++`・`cardTotalMs +=`・`cacheDistribution`）で確定。
+- 保存先: `I:\マイドライブ\kilo\2026-11-09-n14-perf-status-accumulates-across-search\`（`n14-perf-row-search1-before-20261109.png`・`n14-perf-row-search2-after-20261109.png`・`n14-perf-row-confirmation-2026-11-09.txt`）。local copy（project `scratch/`）は正典 `kilo-safe-remove` でゴミ箱へ送った。共用 browser に他の完了済み委譲の残存 tab があったが、isolated origin は本確認専用で、server instance は起動後本確認の要求のみに応答（#2 の 8731 使用分は停止後の別 instance）。
+
+### 対応の実現可能性・修正方法（推奨・不変）
+
+- 案 A（推奨・小・約 4 行）: `runSearch` 冒頭で `cardsLoaded`・`cardTotalMs`・`cacheDistribution` を初値へリセット（`searchMs`・`serverTiming` は既に今回分）。pin テスト通過（現行 go test で確認）。guard・card 優先度・既存テスト非接触（前批判定維持）。
+- 案 B（代替・意味追加・承認不要): 同一行で今回分と累計を併記。前批判定維持。
+
+### 副作用・影響範囲
+
+- 前批の範囲記述のまま（表示のみ・`serverTiming` 文字列で累计不可・stub harness 非影響・r12 harness 単発 run 通過）。追加の影響なし。
+
+### 推定規模・優先順位要素
+
+- 規模: 小（案 A 約 4 行）。
+- 重要度: mid〜low（observability 表示 bug・ユーザー誤読・機能危害なし）。緊急度: low（blocker なし）。リスク: low〜mid（承認要論点は意味変更側のみ）。依存: viewer_test.go pin、意味変更の承認ゲート。外部依存なし・単独実施可。
+
+### Verification（本再調査）
+
+- `python -m pytest tests/ -v` → 60 passed（27.59 s・freshness test 含む。前批 failure KI-20261106-04 は現行合格）。
+- `node docs/ai/tmp/assess-20261108-1332/r14/r14_measure.mjs`（現行ファイル・mock・外部 API なし）→ 9 checks passed。
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok 25.293 s（`TestEmbeddedUIHasSearchMeasurementStatus` 通過）。
+- served 画面確認合格（上欄。Drive 保存・local copy ゴミ箱済み）。card fetch の外部 API 呼出しは decision `2026-11-01-hitomi-hub-tests-may-call-external-api.md` の許可範囲（search 1 回・search-card 25 件×2）。正典 DB・完成フォルダ・config は直接変更なし。
+- 変更したのは本タスク記録（本見出し）と Drive 保存、スクラッチ（生成後ゴミ箱へ送った）のみ。`src/`・`app/` の変更なし、既存テストの変更なし。Status・Next Action は変更なし（親管理）。

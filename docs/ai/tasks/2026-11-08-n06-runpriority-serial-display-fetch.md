@@ -74,6 +74,50 @@
   - Drive files: `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06e-before-3863136-cold.png`, `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06e-after-3863136-cold.png`, `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06-cold-display-pair-confirmation-2026-11-08.txt`。
   - local cleanup: `kilo-safe-remove 'C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-before-3863136-cold.png'` と `kilo-safe-remove 'C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-after-3863136-cold.png'` は project root 外のため fail。project scratch 内の invalid before screenshot と confirmation text local copy は `kilo-safe-remove` でゴミ箱へ送った。
 
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 現在の実装と判断根拠
+
+- 現行 `runPriority`（`app/viewer.html:998-1010`）は `for (const item of displayed)` ループ内で `await loadFullImage(...)` の直列 await のまま。並列化（`Promise.all` / `allSettled`）は未導入（harness 文字列チェックで確認）。
+- dispatch order は array order（ソートなし・配列順 iterate）。display order（描画順）は render array order + RTL reverse のみ（`app/viewer.html:993`）。直列では completion order = dispatch order。
+- 作業前チェック（フル画像・viewer 触る項目）として正典 3 件をファイル名で確認 reading: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`・`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`・`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。
+- gate 正典（`app/hitomi.go` `gateLane`・495-564）は foreground FIFO 将来予約のまま変更なし。display path（`priority=background` なし）は image lane interval `60 ms`。正典値は現行でも data `90 ms` / image `60 ms` / politeness 退避 `1000 ms`（`defaultHitomiConfig()` 319-320）。
+- 前批記録との矛盾: 前批は grace を「30 s」と記録したが現行コードは `defaultBgGraceMS = 300`（`app/hitomi.go:467`・decision 2026-11-05）。日付の新しい正典（2026-11-05 decision と現行コード）を優先し、300 ms を採用。矛盾は記録どおり。
+
+### 有効性
+
+有効（cold・remote display pair 限定）。現行でも 2 枚 cold では 1 枚目の fetch 完了後に 2 枚目が開始する（実機 cold で直列確認済み）。gate が空いている局面での無駄待ちは現行でも成立: 実測で 2 枚目は gate 待ち 0〜1 ms で dispatch 可能だったのに直列 await により 1 枚目の network 完了（1237 ms）を待った。効果は local/persistent full cache ヒット時（network なし）では無効（renderReader が objectURL/local で表示し、loadFullImage に network 待ちがない）。interval 支配の低速 network 局面ではゲート 60 ms が下限。
+
+### 実測（mock・正典流儀 tests/harness_lib.mjs）
+
+- scratch harness: `docs/ai/tmp/assess-20261109-1320/n06_remeasure_harness.mjs`（`node` で実行。external API なし。gate は現行 `gateLane` foreground 意味（`last+interval` 以降は即時予約）を模倣、network `679 ms` 固定・5 trials median）
+- SERIAL median wall `1378 ms`。PARALLEL median wall `752 ms`（前批 1359→739 と整合）。
+- SERIAL 2枚目 gate wait median `0 ms`（gate idle・無駄待ちは network 直列化）。PARALLEL 2枚目 gate wait median `60 ms`、dispatch gap median `63 ms`（image lane interval `60 ms` 遵守）。
+- arrival order race 再現: per-file network が異なる（1枚目 957 ms・2枚目 235 ms）とき parallel では 2枚目が先に completion → strict first→second display order と衝突（承認案件は前批どおり現行でも有効）。dispatch order は array order のまま維持可能。
+
+### 実測（served cold UI・確認テストルール適用）
+
+- cold hygiene 3条件: fresh canonical build（pytest freshness 含む 60 passed）/ fresh server instance（pid 26072・new root）/ isolated origin（`n06-rem-20261109-cold5`）。window size `1666x932`・devicePixelRatio `2`。
+- cold display pair gallery `4306867` page 7-8:
+  - 1枚目（page 7・hash `fd489968…`）: start `356 ms`、duration `1237 ms`、transferSize `805683 bytes`、`x-cache: miss`、200、`image/avif`
+  - 2枚目（page 8・hash `f88c78fe…`）: start `1594 ms`（= 1枚目 end `1593 ms` + 1 ms）、duration `328 ms`、transferSize `915973 bytes`、`x-cache: miss`、200。直列確認。
+  - background prefetch は priority 完了後（`1922 ms`）から開始。UI info（after）: 位置 7-8/9、実表示ピクセル 2/9、ローカル直接 0/9、objectURLキャッシュ 2/9、フル画像なし 0/9、TN表示フォールバック禁止。
+- before/after 組（同一 window size・同一 full page 範囲・同一取得方法）: before = プレースホルダ/読み込み中、after = 実像素 2/9。合格。
+- Google Drive 保存先: `I:\マイドライブ\kilo\2026-11-09-n06-runpriority-serial-display-fetch\`（`n06-rem-20261109d-4306867-pair78-before-placeholder-cold.png`、`n06-rem-20261109d-4306867-pair78-after-cold.png`、`n06-cold-display-pair-confirmation-2026-11-09.txt`）。
+- 訂正: 前批タスクフォルダ entry（`I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch`）は今回の確認時点で「フォルダ名そのままのファイル」（3664 bytes）として存在し、子の実行中の Copy-Item が同名 entry へ上書きした（内容为本次 txt）。前批の parent 訂正フォルダ内容は Drive 上この entry には残っていなかった。上書き分は上記 new date folder へ再保存。異常 entry（ファイル）は削除承認を要るためそのまま残置。
+- 不合格試行（記録）: gallery `3863136` page 3-4 は page count 2 で範囲外（worker TypeError・stale DOM → before/after 組として不合格）。`4306867` page 1-2 試行は tool latency で before 時点で全読了（実像素表示）→ 不合格。同一条件で page 7-8 を再取得（合格）。local copy（不合格試行 3枚を含む 5枚）は Drive 保存後 `kilo-safe-remove` でゴミ箱へ送った。
+
+### 対応の実現可能性・推奨（記録のみ、実装開始指示待ち）
+
+- 推奨: `runPriority` を `Promise.all` 相当で display pair を並列 dispatch。function header `async function runPriority(displayed, signal) {` と existing tests 固定 substring（`loadFullImage(img, item.entry, signal, priorityGalleryId, priorityShowGen, priorityOpenGen, priorityRenderGen)`・`await currentPriorityDone`）は維持可能（`await` の位置のみ変更）。generation guard と `signal.aborted` チェックは per-item 開始へ移動。per-item の完成順は dispatch order（array order）と一致しない可能性があり、strict first→second display order を要求するなら「並列 dispatch・completion を array 順で await」の折衷案（wall は並列と同水準）。
+- gate 正典（FIFO・将来予約・grace 300 ms・飢餓防止）とは衝突しない: 並列でも dispatch interval `60 ms` は維持（実測 dispatch gap `63 ms`）。x-cache、no-store fetch、objectURL display、TN display fallback 禁止、TN byte を full cache に保存しない条件は非接触。
+- 副作用: display 完成順 race（UX 承認案件・前批どおり）。既存 tests は runPriority 内部の直列順を固定していないため Promise.all 実装で維持可能（前批の記録と現行 tests 確認一致）。
+
+### 推定規模・優先順位付け要素
+
+- 推定規模: 小（単関数 + tests 維持）。
+- 重要度: 中（cold pair wall 約半減は remote cold のみ）。緊急度: 低（正典条件の破綻なし）。リスク: display order race（承認要）。依存: fast non-blocking viewer policy、TN display fallback 禁止、full actual pixels guard（維持必須）。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

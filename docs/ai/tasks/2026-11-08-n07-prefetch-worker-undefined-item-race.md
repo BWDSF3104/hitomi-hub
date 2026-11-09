@@ -58,3 +58,39 @@
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
 
 注: 本調査は記録のみで guard を実装していないため、KI-20261107-01 は未解決のまま（archive 移動は実装完了時）。項目原文の修正（1 行 guard）実施後に上記チェックを反映する。
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 現在の実装と判断根拠
+
+- 現行 `app/viewer.html` `startBackgroundWorkers(signal)` の `worker()`（1102-1119 行、`PREFETCH_CONCURRENCY = 8`）に guard **未実施（未修正）**。`while (prefetchQueue.length && !signal.aborted)`（1104）→ `await currentPriorityDone`（1105）→ `const item = prefetchQueue.shift()`（1107）の直後に `if (!item) return;` なし。catch（1112-1115）で `item` undefined 時 `updatePrefetchCounts("error", item.entry, ...)`（1114）が TypeError。呼び出し側 `for (...) worker();`（1118）に handler なし → 例外は worker 外へ unhandled rejection として漏出。guard 有無は現行ソースの文字検索（scratch harness）で `guardInCurrent = false` として実測。
+- race 窓は前批と同一: length check 通過後の `await currentPriorityDone`（1105）が窓。1106 の `if (signal.aborted) return;` は窓を塞がない（undefined shift は aborted と無関係）。
+- 機構は KI-20261107-01 の記述（served line 1114・HEAD 0b34704 由来）と現行コードで位置も含め一致（現行 1114 行が該当文）。2026-11-07 以降 `app/viewer.html` の commit（0cb18b7・7cb776a・e1ae526・823ff16）は worker 構造を追加修正していない（guard なしの現行で確認）。
+
+### 有効性
+
+- **有効（実測で確定・未修正）**。前批 harness は `docs/ai/tmp/` の 7 日アーカイブ規則で消失していたため、正典流儀（`tests/harness_lib.mjs` の `bodyIn` 抽出 + `new Function`）で再作成し現行コードから決定論的に再現（`docs/ai/tmp/assess-20261109-1320/n07_worker_race.mjs`、6 check 全 pass）:
+  - 現行 race（concurrency 2・queue 1 件）: catch 側 `item.entry` の TypeError 1 件が worker 外へ（`Cannot read properties of undefined (reading 'entry')`）。error count 0（throw が count 実行前）、処理 1・queue 残 0・worker 正常 1/例外 1。
+  - guard 版（`shift()` 直後 `if (!item) return;`）: 例外 0・worker 正常 2・処理 1・error 0・queue 残 0（現行と正味同一。guard は自然終了相当の追加）。
+  - error path（定義済み item の実エラー）: 現行・guard 両版完全一致（error 1・cache 1・worker 継続）→ guard は catch の正典意味（unhandled rejection を漏らさない）を変更しない。
+- 前批記録（assess-20261108-1332）の数値・推奨・KI 状態（未解決・次の対応 未実施）と矛盾なし。正典文書間の状態記述矛盾なし（KI 本体・個別タスク記録・項目原文すべて「未修正」で一致）。
+
+### 対応の実現可能性と推奨
+
+- 推奨は前批と同一: `const item = prefetchQueue.shift();` 直後へ `if (!item) return;`（1 行）。KI 記載の代替案（length check を await 後へ移す）も実効同一。実装開始指示待ち（本調査は記録のみ、ソース未変更）。
+
+### 副作用・影響範囲
+
+- 前批と同一結論、現行コードで再確認: `await currentPriorityDone` 優先待ち正典（`docs/ai/decisions/2026-11-01-operation-priority-placeholder.md`）は guard が await より後なので不変。TN rules・`x-cache`・objectURL 表示・generation guard・queue 优先级（`prefetchQueueKeys`）非接触。
+- `viewer_test.go` の worker 関連アサーションは関数名（`startBackgroundWorkers(signal)`・`prefetchQueueKeys`）と manualRetry の catch 意味固定のみで、worker 内部構造（`while (prefetchQueue.length`・`prefetchQueue.shift()`・catch 内 `item.entry`）を固定するアサーションなし（grep 読み取りで確認。guard 追加は影響しない）。
+- `app/search.html` 側（項目原文の「同期ブロック」主張）: `worker()` の length check（909）と `pending.shift()`（910）は同一同期ブロックで await 窓なし → 主張どおり該当なし。search  prefetch worker（concurrency 4）は別実装であり本項目の修正対象外。
+
+### 画面確認
+
+- **未確認**（前批と同一理由）。server（127.0.0.1:8731）は 2026-11-09 時点で起動済みなし（TCP 確認 False）。race は microtask 順序依存で served 画面では決定論的に再現できず、ソース変更禁止のため cold 確認条件（fresh canonical build）でも証跡にならない。Google Drive 保存なし（画面確認実施せず）。有効性是実測（scratch harness）で確定済み。
+
+### Verification（本再調査）
+
+- scratch harness `docs/ai/tmp/assess-20261109-1320/n07_worker_race.mjs`: 6 check 全 pass（経過 <1 s）。数値は前批と一致（上記）。
+- コード検証コマンド（Go app `go vet . && go test -count=1 -timeout 300s .`）は実行不要として記録: 本調査はソース変更なし、テスト呼び出しの要否は読み取り（worker 内部固定アサーションなし）で足りると確認。実装実施時に変更後に実行する。
+- ソース未変更（guard はスクラッチ側のみ適用）。Status・Next Action は親管理（正典 task_manager）として変更せず、本節のみ追記。

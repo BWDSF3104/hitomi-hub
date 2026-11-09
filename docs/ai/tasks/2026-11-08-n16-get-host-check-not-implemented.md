@@ -63,6 +63,37 @@ sim（`docs/ai/tmp/assess-20261108-1332/r16/r16_sim.py`）:
 - Drive 保存先: `I:\マイドライブ\kilo\2026-11-08-n16-get-host-check-not-implemented\`（`n16-served-screen-loopback-origin-20261108.png`、`n16-get-host-check-not-implemented-confirmation-2026-11-08.txt`）。project root 内 local copy なし（ゴミ箱送り対象なし）。project root 外残件（削除せず記録）: `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n16-served-screen-loopback-origin-20261108.png`・`console-2026-11-08T12-01-54-311Z.log`（favicon 404 1件は mock 由来・項目証拠ではない）。
 - scratch（gitignore・`docs/ai/tmp/assess-20261108-1332/r16/`）: `r16_sim.py`・`r16_seed.py`・`plan_a_sim_server.py`・fresh build `hub_r16.exe`・seed cache。server（pid 8328・8747）と sim server（pid 22944・8748）は確認後に停止。ビルド時に `go build -o` の相対指定で `app/docs` に exe が出たため、scratch へ移し `app/docs` は正典 `kilo-safe-rmdir` でゴミ箱へ。
 
+## 2026-11-09 再調査（assess-20261109-1320）
+
+- 項目ID: `#19` / `assess-20261109-1320`。この節のみ追記。`Status` と `Next Action` は変更しない。
+- 有効性: 有効（GET 読み取り経路の Host 検査未実装、案A承認済み・実施開始指示待ち）。前批の中心判断（GET Host 検査未実施）は現行コードと一致。
+
+### 現行コード
+
+- `app/viewer.go:213-230` の `withPOSTSecurity` は非 POST をそのまま `next` へ通過。GET 経路に Host 検査なし。
+- POST は `app/viewer.go:232-252` の `sameOriginPost` で loopback Host と Origin を検査。
+- `isLoopbackHost` は `app/viewer.go:254-268`。`strings.ToLower` + `==` 比較。`strings.EqualFold` は不在。原文の EqualFold 指摘は現行実装事実として無効。
+
+### 実測とテスト再確定
+
+- baseline: `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean、`ok hitomi-hub/app 27.812s`。
+- `httptest.NewRequest` の path-only GET の既定 Host 実測: `example.com`。`jsonPOSTRequest` は POST 用 `req.Host = "127.0.0.1:8731"` を設定。
+- 前批の `119`, `136`, `158`, `277`, `376` は line-level で、対応テストは `TestViewerPageSourceLocalFirst`, `TestViewerPageSourceUsesHasavifFormatWhenRemote`, `TestViewerReadFavoriteAndQueryHandlers`, `TestViewerImageProxyServesSameOriginWebp` に含まれる。
+- 現行の relevant GET handler tests は test-level で **54 件**（line-level GET usage **85 件**）。前批 5 件は test-level 相当としては不足。
+- scratch copy `docs/ai/tmp/assess-20261109-1320/r19/appcopy` に最小案A patch を適用。Patch code: `if !isLoopbackHost(r.Host) { writeJSONError(w, http.StatusForbidden, "host not allowed"); return }`。`go vet .` clean。
+- full `go test` は単独 run の完全な件数として信用できない。理由: `TestViewerReadFavoriteAndQueryHandlers` の panic（`viewer_test.go:282`）で test binary が abort し、以降の GET 成功 tests が実行されない。さらに `TestViewerImageProxyFetchDedupsConcurrentRemoteFetch` は patch 下では 403 で test が wait して timeout/hang する。
+- 個別 `-run` で current relevant 54 tests を再実測。`docs/ai/tmp/assess-20261109-1320/r19/reanchor_indiv_fail.txt` に 54/54 件の FAIL/hang を記録。
+
+### Current relevant tests（54 test-level）
+
+`TestBackgroundPrefetchMarkerRecordedSeparatelyInMetrics`, `TestCacheClearResetsMemoryCachesWithoutChangingCacheHeaders`, `TestCacheEntriesPruneEvictsOldestByCreationOrderAndKeepsCurrentGallery`, `TestImageCacheWriteRecordsCacheEntryRow`, `TestImageProxyCacheConcurrentWriteSingleflight`, `TestImageProxyCacheMagicCheckSkipsMismatchedBytes`, `TestImageProxyCacheMissWritesAtomically`, `TestImageProxyCacheStateIsNotTN`, `TestSearchCardHandlerIsReadOnlyForExistingRow`, `TestSearchCardViewedAndSavedStates`, `TestSearchFirstStatusHandlerShapeAndReadonly`, `TestSearchHandlerIncludesMeasurementShape`, `TestSearchHandlerRecordsAllIDsInOneTransactionAfterFetch`, `TestSearchNozomiPartsConcurrentFetchDedupsToSingleCall`, `TestServeStoredImageStreamsConditionalResponses`, `TestSettingsEndpointServesEditableSettingsWithoutAPIKey`, `TestSettingsResponseServesDBRowCountsForCacheClearPanel`, `TestTNWriteRecordsThumbsRowAndPrunesThumbsKindOnly`, `TestThumbProxyTNWriteFailureLeavesNoBrokenTNCache`, `TestViewerConfigEndpointServesEffectiveMaxObjectURLs`, `TestViewerGalleryFilesIncludeLocalAndHitomiFlags`, `TestViewerImageProxyDoesNotCacheNetworkErrorAsNegativeNoFull`, `TestViewerImageProxyDoesNotFallBackToTNWhenStorageMissing`, `TestViewerImageProxyDoesNotFetchAvifTNVariantForImage`, `TestViewerImageProxyDoesNotFetchTNVariantForImage`, `TestViewerImageProxyDoesNotRetryWhenGGBucketUnchanged`, `TestViewerImageProxyFetchDedupDoesNotPropagateWaiterCancellationToLeader`, `TestViewerImageProxyFetchDedupsConcurrentRemoteFetch`, `TestViewerImageProxyForceBypassesNegativeNoFullCache`, `TestViewerImageProxyNegativeNoFullCacheReducesRepeatStorageFetches`, `TestViewerImageProxyNegativeNoFullKeyChangesWhenGGChanges`, `TestViewerImageProxyRefreshesGGOnceOnStorage404`, `TestViewerImageProxyRetriesUsingInitialGGWhenAnotherRequestUpdatedGG`, `TestViewerImageProxyReturnsNoFullWhenStorage404AndDoesNotPersistTN`, `TestViewerImageProxyServesSameOriginWebp`, `TestViewerImageProxyWritesPersistentCacheAndServesCacheHit`, `TestViewerIndexServesEmbeddedPage`, `TestViewerInfoCacheConcurrentHandlersDoNotWriteUnprotectedMap`, `TestViewerPageSourceLocalFirst`, `TestViewerPageSourceUsesHasavifFormatWhenRemote`, `TestViewerReadFavoriteAndQueryHandlers`, `TestViewerSearchCardHandlerReturnsResult`, `TestViewerSearchCardIncludesFullGalleryDataForImmediateOpen`, `TestViewerSearchHandlerReturnsIdsOnlyForLazyCards`, `TestViewerThumbProxyConcurrentTNFetchDedupsToSingleCall`, `TestViewerThumbProxyPersistsTNThumbnailCacheAndServesCacheHit`, `TestViewerThumbProxyTNFailureDoesNotUseLocalOrFullFallback`, `TestViewerThumbProxyTNFailureHeadersDoNotTreatNoTNAsFull`, `TestViewerThumbProxyTNFirstWhenGalleryQueryAndLocalExists`, `TestViewerThumbProxyTNOnlyDoesNotServeFullCache`, `TestViewerThumbProxyUsesAvifTNBaseAndContent`, `TestViewerThumbProxyUsesRealTNPathAndContent`, `TestViewerThumbProxyUsesSmalltnVariantWhenRequested`, `TestViewerThumbProxyUsesTNZeroSubdomainAndContent`.
+
+### 推定規模・優先順位
+
+- 実装規模: 小（非 POST GET の loopback Host 検査を `withPOSTSecurity` に 1 分岐追加。POST は existing `sameOriginPost` 維持）。
+- テスト re-anchor 規模: 中〜大（現行 test-level 54 件、line-level GET usage 85 件）。前批 5 件は line-level の一部であり、現行の actual relevant set は 54 test-level。
+- 優先順位要素: 重要度は security・local origin 境界として中〜高、実装リスク low、テスト修正コスト medium。UI・DB・full cache の x-cache/generation guard は middleware 追加で弱まらない。LAN allowlist 拡張は正典未承認で承認案件として分離。
+
 ## 完了時 Memory Bank 操作
 
 - [ ] `current-task.tsv` の参照行を削除

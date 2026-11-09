@@ -1,6 +1,6 @@
 # N-17: pytest の freshness rule pointer テストが落ちたまま（KI-20261106-04）
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -74,3 +74,50 @@ UI 項目でないため該当なし。Drive 保存なし。正典 exe・served 
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
 
 実装開始指示待ち（テスト側修正は未実施）。推奨のみ記録。
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 現行実測（2026-11-09）
+
+- `python -m pytest tests/ -v`（ルート）: **60 passed / 0 failed**（17.76s）。pytest 側は KI-20261106-04 の記録どおり解決済み（現 Suite 60 件・`test_canonical_build_freshness_rule_exists` PASSED）。
+- `go vet . && go test -count=1 -timeout 300s .`（app）: `go vet` ok、`go test` **ok（38.094s・失敗なし）**。KI-20261106-04 の「Go 側未解決残留」記述（2026-11-08 実測）は**現行では残留していない**。
+- 該当 2 テストの個別確認（`go test -v -run` で PASS 実測）:
+  - KI `viewer_test.go:1818`（slice end not found after start）→ 現行 `TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs`（`app/viewer_test.go:1815`、assertion `app/viewer_test.go:1818`）。現行構造と合致して合格。
+  - KI `viewer_test.go:2536`（initial search restore not found）→ 現行 `TestEmbeddedUIPreservesSearchStateAcrossReload`（`app/viewer_test.go:2504`、Fatalf `app/viewer_test.go:2537`）。現行構造と合致して合格。
+
+### 現行の実装と判断根拠（機構）
+
+- 失敗の機構は**構造不一致ではなく EOL（CRLF）依存**。`core.autocrlf=true`（実測）・`.gitattributes` 不在（実測）でワーキングツリーは CRLF（`app/search.html` 実測: CRLF 1098 行）。`go:embed`（`app/viewer.go:23`）はディスク bytes を埋め込むため、テスト照合 byte は CRLF 内容となる。
+- 落ちた 2 assertion は raw `\n` の完全 adjacency を要求する型: `"\n</div>\n<script>"` と `showLists();\nconst initialSearch = parseSearchHash(window.location.hash);`。CRLF 内容では `</div>\r\n<script>` / `showLists();\r\nconst…` となり needle と一致しない。他の `"\nfunction …"` 型 needle は `\r\n` の `\n` 側で一致するため落ちない（= 実測の「ちょうど 2 件 failed」と整合）。
+- 構造（LF blob 上）は照合条件と常に一致: `git show f6531c6:app/search.html`・`git show d35faed:app/search.html`（KI 実測 HEAD 直前）で両 literal の存在確認済み（`docs/ai/tmp/assess-20261109-1320/check_literals.py`・`check_eol.py`）。よって「現行構造と合っていない」は正典意味としては**EOL 依存の脆い assertion 期待値**の問題で、コード構造の正しさは保たれていた。
+- 解決 commit: `b2641df`（2026-11-09 01:08・UFI-1 dedicated Series/Type filter）が 2 assertion を EOL 非依存形へ re-anchor（`sliceBetween(..., "<script>")` 終端、`showListsAt`/`initialAt` の順序照合）。現行 CRLF ツリーで全件合格。
+
+### 正典照合（矛盾と採用文書・日付優先）
+
+- 矛盾: `KI-20261106-04`（archive）の Status「解決」は pytest 側のみを指し、同 record の「Go 側未解決残留（2026-11-08 実測）」は現行実測（2026-11-09）と矛盾する。
+- 採用: 日付優先の正典ルールにより、**現行実測（2026-11-09）と `b2641df`（2026-11-09 01:08）**を採用。古い「未解決残留」状態記述は根拠にしない。KI archive は参照のみで未変更。訂正提案: archive record に「Go 側は b2641df の EOL re-anchor（2026-11-09）で閉」を補記（正典実務としての記録更新）。
+
+### 有効性
+
+**有効（矛盾は実在）だが実測で閉済み**: Go 側の失敗は現行に残留なし。残るアクションは KI archive の状態記述訂正（記録作業）のみ。実装は不要（すでに re-anchor 済み・合格）。
+
+### 推奨する修正方法
+
+1. 推奨: KI archive の「未解決残留」記述の訂正補記（上記）。テスト・コード変更は不要。
+2. 代替（承認要・実施しない): `.gitattributes` で `app/*.html` を LF に固定し EOL 依存脆性を根源から除去。現行 assertion は EOL 非依存なので追加措置は不要（将来の raw `\n` needle 追加時に再発リスクあり）。
+
+### 副作用・影響範囲
+
+- 本調査での変更なし（変更は本タスク記録のみ）。実 DB・完成フォルダ・config・正典 exe 無影響。
+- `b2641df` の re-anchor は guard 意味を維持: results が `.side` に戻らない照合（2 ファイル分離）と showLists 後の restore 順序照合が保持される。完全 adjacency 照合より弱いが EOL 非依存化に必要な最小形。
+
+### 画面確認
+
+UI 項目でないため該当なし。Drive 保存なし。
+
+### 実測の再掲（この子実行）
+
+- pytest（ルート）: 60 passed in 17.76s（2026-11-09）
+- `go vet . && go test -count=1 -timeout 300s .`（app）: vet ok / test ok 38.094s（2026-11-09）
+- 個別 `-v -run "TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs|TestEmbeddedUIPreservesSearchStateAcrossReload"`: 2 件 PASS（1.207s）
+- 調査 scratch: `docs/ai/tmp/assess-20261109-1320/`（gitignore 対象）

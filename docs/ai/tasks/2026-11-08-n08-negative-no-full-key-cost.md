@@ -73,3 +73,45 @@
 - （該当なし）解決した `known-issues/` ファイルなし — C-05 参照ファイルは archive 実在確認済み（Glob 根拠）。本項目は known-issues 新規作成なし
 - （該当なし）`backlog.md` の項目なし（N-08 は claude review findings 記録の項目）
 - 実装実施時は `docs/ai/tasks/2026-11-03-c08-no-full-storm.md` の key 構成記載（sorted CaseSet）が key 構成変更の記載更新対象（推奨 A 採用時）
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 現在の実装（再確認・コード照合）
+
+- **指紋化（fingerprint）は未実装** → 項目 #8 は有効（未解決）のまま。
+  - `GG` struct（`app/gg.go:18-24`）に `Fingerprint` フィールドなし（Bucket・CaseSet・InitialO・CaseValue・Source のみ）
+  - `negativeNoFullKey`（`app/hitomi.go:337-357`）は呼出ごとに CaseSet をスライス化 → `sort.Ints` → 連結（前批と同一機構）
+  - リポジトリ全体 grep: fingerprint の出現は本タスク記録と claude review findings 記録のみ（コード内なし）
+- call site（現行行番号・前批から行移動のみ・機構同一）: `imageFetchKey` `app/hitomi.go:359-361`・`app/viewer.go:1559`、`tnFetchKey` `app/hitomi.go:365-367`・`app/viewer.go:1521`、`canUse` `app/hitomi.go:388`・`app/viewer.go:1618`、`clear` `app/hitomi.go:408`・`app/viewer.go:1617,1626,1645`、`remember` `app/hitomi.go:420`・`app/viewer.go:1655,1663`。TN 表示源（search-card cover）・TN path（`app/viewer.go:1480` thumbProxy・`GET /api/thumb/{hash}`）の read/write 経路は key 設計と独立。
+
+### 呼出回数 mock 実測（`go test -overlay`・外部 API なし・server 起動なし・正典コード非触・git status clean）
+
+- TN=1（tnFetchKey のみ）、image miss→success=3、image negative hit=1、image 404=3、404+gg 変化 retry=4（2nd 404・2nd success の両方）、force=1 success=3（clear+imageFetchKey+clear）
+- → 前批「1 request 典型 3・最大 4・TN=1」と矛盾なし（mock 実測で確認）
+
+### 数値の再確認（前批記録と矛盾なし）
+
+- snapshot CaseSet n=**2112**（一致）、key 実測 **10,070 B**（一致）、memory @cap1024 **9.83 MiB → 0.151 MiB**（一致）、fingerprint hash input **7,868 B**（一致）、fp key 長 **155 B**（一致）
+- 現行 per-call: 実測 **155–158 µs**（前批 164–178 µs・同オーダー）
+- fingerprint 案: key 生成 **170–379 ns/呼出**（前批 144–146 ns・同オーダー）、precompute sort+hash 100 回平均 **113 µs**（前批 cold 515 µs・warm 17.6 µs・同オーダー。単独初回計測は 0s 読みで分解能異常・根拠から除外）
+- hit 判定意味: fp の順序非依存（逆順投入→同一 fp）・別 case 集合→別 fp・format/hash 分離を再測確認
+
+### TN 不変条件と key 設計の意味維持（再確認）
+
+- TN バイトを full cache に保存しない: key 生成のみ変化案（A/B）は TN バイト・thumbCache 書き込み（`writeImageCacheAtomically`）を一切変えない → 条件維持
+- TN を reader 表示源にしない・TN display fallback 禁止: `writeNoTN`・x-cache 文字列・gate lane・singleflight 非触 → 意味維持
+- `tnFetchKey` の variant 接尾（`TNVariantSuffix`）は A/B どちらでも維持（A: `…|fp` + `|variant`、B: key byte 列同一）
+
+### 推奨（現状適用可能性・変更なし）
+
+- 推奨 A（fingerprint・1回 SHA-256・呼出あたり ns 化・memory 9.83→0.151 MiB）は現行コードに未導入のため引き続き有効。実装規模 小（S・約30–50行）
+- 案 B（memoize・key byte 列不変・単射性維持・正典ルール変更/承認分離不要・memory は 9.83 MiB のまま）も引き続き適用可
+- 実装開始ゲート（明示指示）は非触。本再調査でコード変更なし
+
+### Verification（assess-20261109-1320）
+
+- `go vet .`（app）: 合格（出力なし）
+- 既存 key/意味テスト（overlay なし）`go test -count=1 -run "NegativeNoFull|FetchKey|TnFetch|tnFetch|SnapshotGG|EnsureGG" .`: 10件全通過（1.5 s）
+- スクラッチ実測（`docs/ai/tmp/assess-20261109-1320/r08/`・`go test -overlay` 注入）: PASS（call counts・length・timing・fp 等価性）
+- UI 項目でないため画面確認・screenshot・Drive 保存は該当なし（不要として記録）
+- 正典コード非触（git status clean）。実 DB・完成フォルダ非触

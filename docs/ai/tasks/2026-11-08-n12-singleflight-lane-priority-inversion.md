@@ -99,8 +99,72 @@
 - 編集後の文件破損確認: 変更したのは個別タスク記録のみ。ソース・既存テスト非触。`Set-Content` パイプライン不使用。
 - 画面確認: 未確認（上記）。Drive 保存なし。
 
-## 完了時 Memory Bank 操作
+## 2026-11-09 再調査（assess-20261109-1320）
 
-- [ ] `current-task.tsv` の参照行を削除（親が `task_manager` で管理・子は変更しない）
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし・本項目は指摘の有効性判定のみで issue を解決していない）
-- [ ] `backlog.md` の完了項目を削除（該当なし・項目は未実施のまま）
+### 現在の実装（機構照合・確定・前批と同一）
+
+join 構造は前批（assess-20261108-1332）記録と同一。正典値変更・join 構造変更は前批以降の入った commit（settings 系・Type filter・cache clear）にもなし（`git log --since 2026-11-08` 照合。joiner が gate に入らない・joiner の `background` 引数は join 後に使用されない・leader 単独が `getWithGate` を呼ぶ、という機構は全 helper で維持）。現行行番号（確認時点）:
+
+- `fetchTNOnce`（`app/viewer.go:1520-1556`）: join block `1527-1538`（`call.done` / `ctx.Done()` select）。leader fetch `1544`（`getImage(..., background)`）。join observer hook（`1528-1530`）追加済・join 意味は同一。
+- `fetchFullImageOnce`（`app/viewer.go:1558-1594`）: join block `1565-1576`（同 select）。leader fetch `1582`（`StorageURL`）。
+- `resolveInfoOnce`（`app/viewer.go:1882-`）: join block `1887-1894`（`<-call.done`・ctx guard なし・既存流儀）。leader fetch `1900`（`client.Gallery(id, background)`）。
+- `SearchNozomiParts`（`app/searchhtml.go:114-197`）: join `139-150`。leader fetch `155`（`state.background`）。joiner の `state.background` は join 後も不使用。
+- `EnsureGG`（`app/gg.go:118-201`）: join `150-157`。leader fetch `163` で常に `false`（foreground）→ 逆転余地なし（前批どおり）。
+- gate 算術（`app/hitomi.go:495-564`）は呼出側の `background` だけでレーンを決める。joiner は `getWithGate`（`574-589`）自体を呼ばない → joiner の priority は算術に入らない（前批どおり）。
+
+### gate 正典値の現行実測（現行コード値・前批正典値と一致）
+
+- data lane 90 ms（`app/hitomi.go:319`・commit `a9f7786` R-11b。`config.example.json` 同値）。image lane 60 ms（同一 line。decision `2026-11-06-tn-image-lane-60ms-approved.md`）。grace 300 ms（`defaultBgGraceMS`・`app/hitomi.go:467`）。下限 guard 50・politeness 退避先 1000・block cooldown（`503-508`・max 適用）は非触。
+- FIFO・共有 `last` 連鎖（`517-531`）、foreground 未来予約、background「今この瞬間のみ予約・未来予約禁止」（`534-544`）、公平枠 3×interval（`537`）— 正典 `2026-11-05-phase4-two-lane-gate-implementation.md` のまま。2026-11-09 の settings 系 commit は gate 値・gate semantics 非変更（`git diff a9f7786..HEAD -- app/hitomi.go` に interval・BgGraceMS の値変更なし）。
+
+### 再実測（正典流儀 mock harness・9 run・外部 API 呼出しなし）
+
+scratch replica（`docs/ai/tmp/assess-20261109-1320/r12/`・module `assess202611081332r12`・`go test -count=1 -timeout 180s .` → `ok 5.759 s`）は現行 `gateLane`（`app/hitomi.go:495-564`）の条件式をそのまま再現（block cooldown は scenario で未発動・replica 非モデル）。正典値 data 90 ms・image 60 ms・grace 300 ms。結果 `docs/ai/tmp/assess-20261109-1320/r12/results.json`:
+
+| Run | 案 | 同一 key の外部呼出し | 同一 key の gate slot | joiner 壁時間 | leader 壁時間 | 前批（assess-20261108-1332） |
+|---|---|---|---|---|---|---|
+| A data 90 ms・network 0（bg leader + fg joiner） | 案3 現状（join） | 1 | 1 | 390 ms | 390 ms | 390 / 390（一致） |
+| A | 案1（joiner 自分の lane） | 2 | 2 | 180 ms | 480 ms | 一致 |
+| A | 案2（group effective lane = 参加者最高優先度） | 1 | 1 | 180 ms（前批 181・jitter） | 180 ms | 一致（±1 ms） |
+| B image 60 ms・network 679 ms（Phase 4 基線 TN median） | 案3 | 1 | 1 | 1039 ms | 1039 ms | 一致 |
+| B | 案1 | 2 | 2 | 799 ms（前批 800） | 1099 ms（前批 1100） | 一致（±1 ms） |
+| B | 案2 | 1 | 1 | 800 ms（gate 120＋network） | 800 ms | 一致 |
+| C fg leader + bg joiner（逆方向） | 案3 | 1 | 1 | 180 ms | 180 ms | 一致（逆転なし） |
+| D 上界（正典公平枠） | 案3 | 1 | 1 | 380 ms（前批 379） | 390 ms | 一致（±1 ms） |
+| E canceled waiter | 案3 | 1 | 1 | 0 ms（即 return） | 300 ms（1 call） | 一致（leader 非 cancel） |
+
+数値は前批と jitter（±1 ms）内で一致。機構（joiner は gate slot 消費 0・joiner priority は算術に入らない・案2 の改善は gate 成分 209 ms（data）/ 240 ms（image）・network latency は解消しない）は変更なし。
+
+### 混合優先度が現行 UI で成立する経路（server singleflight と client priority の対応関係）
+
+- 伝達経路: handler の `priority` query param（例 `app/viewer.go:1597`・`1311-1314`）→ `background bool` 引数 → singleflight helper → leader だけ gate 算術に入る。joiner の `background` は join 後も gate に参加しない（joiner は `getWithGate` を呼ばない）。
+- client 側 marker（`prefetchMarkerUrl`・`app/search.html:872-874`）が `priority=background` を付けるのは search page の prefetch 経路のみ（`/api/search`・`/api/search-card/`・cover（TN））。表示要求は marker なし（normal）。
+- 現行で mixed priority が成立する経路（確定）: TN（prefetch bg → display join・image lane）、nozomi data（prefetch bg → display join・data lane）、info（search-card prefetch（bg marker）→ `searchResult(id, background)`（`app/viewer.go:1332-1334`）→ `info(id, background)` → cold 時 `resolveInfoOnce`（bg leader）→ viewer 表示要求（marker なし）が同一 gallery id key で join）。
+- 追加確認（前批からの差分・full image）: `app/viewer.html` の background prefetch（`startFullPrefetch`・`loadFullImage`）は `priority` param を付けない（`fetch(fullSrc)`・marker なし）。よって full image singleflight（`fetchFullImageOnce`）は現行 UI 経路で bg marker 呼出しが存在せず、leader は always foreground → full image の逆転は機構上有効だが現行経路では到達しない（full join は fg→fg 継承）。実害は TN・nozomi・info の 3 key に限定される。
+
+### 正典照合（現状維持確認）
+
+- R-13（案 A 承認・join・同一内容 1 回・key 単位・network 中に mutex 非保持）は現行実装どおり。案1 は「同一内容 1 回」を失う（再実測 2 call・2 slot）＋ join 数・calls 1 の固定アサート（`app/viewer_test.go` join tests・`app/hitomi_test.go`「フォア待機中に background は slot を予約しない・未来予約禁止・公平枠」）を壊す — 現状維持（固定テストは現行 pass）。案1 は採用しない。
+- 案2（group effective lane = 参加者最高優先度）の正典例外（「background は未来予約しない」への例外）は承認案件のまま。前批以降の decision（2026-11-08/09 の settings 系・Type filter・cache clear）は gate semantics・priority 意味に一切触れておらず、この例外の承認記録なし → 保留状態は変更なし。案3（現状維持）は正典ルール変更なし。
+- 正典文書同士の矛盾: 本再調査で新規矛盾なし。data lane 90 ms（`2026-11-06-review-findings-approval-decisions.md` R-11 が `2026-11-05-search-speedup-recommended-approved.md` 100 ms を supersede）を引き続き採用（前批どおり）。
+- TN 正典（reader 表示源禁止・display fallback 禁止・TN バイト full cache 保存禁止・`x-cache` source 判定・generation guard）は三案共通で非触（現行 `fetchTNOnce` joiner の `x-cache: tn` 意味維持）。
+
+### 有効性: 有効（機構確定・再実測で閉じた）
+
+- 逆転は機構として確定、実測数値は前批と一致（joiner 壁 data 390 ms・image 1039 ms・上界 380 ms）。
+- 範囲の縮小（今回の確定点）: 現行 UI で mixed priority が到達するのは TN・nozomi・info（search page prefetch が bg leader になる cold 窓）のみ。full image singleflight は marker なし経路のため現行 UI で逆転不成立。UI に bg marker 付き full prefetch がない限り、full image 分の指摘は「機構上有効・経路なし」。
+- 推奨は前批どおり案2（join・1 回維持・group priority inheritance・joiner gate 待ちだけ先行）。正典例外の承認が要る。案3（現状維持）は追加コストなしで上界 380 ms。
+- 実装規模（推定）: 小〜中（前批と同一。`app/hitomi.go` gateLane に group priority 参照、viewer/searchhtml の join 側 priority 記録、新規テスト 2〜3・既存テスト非触）。
+
+### 画面確認
+
+- UI 項目でない（画面表示源・`x-cache` 判定・generation guard を変えない）。本再調査はコード変更なし・案2 は未承認のため変更後画面は該当なし（省略）。前批の Drive 保存なし・未確認記録のまま。
+
+### Verification（本再調査）
+
+- `go vet .`（`app`）clean。`go test -count=1 -timeout 300s .`（`app`・既存テスト変更なし）: `ok hitomi-hub/app 26.140s`。経過 26.140 s（R-13 join 固定テスト・gate 固定テスト pass 含む）。
+- scratch 再実測: `go test -count=1 -timeout 180s .`（module `assess202611081332r12`・`docs/ai/tmp/assess-20261109-1320/r12/`）→ `ok 5.759s`・9 run（前批と同一条件）。外部 API 呼出しなし。数値 `results.json`・出力 `rerun_output.txt`。
+- `python -m pytest tests/ -v`: 非該当（Python・本項目非触。docs/ai のみの変更は検証不要の正典条による。Go 項目の実測として上記を実行）。
+- 変更したのは個別タスク記録のみ。ソース・既存テスト非触。`Set-Content` パイプライン不使用。`current-task.tsv`・Status・Next Action 非変更（親管理）。
+
+## 完了時 Memory Bank 操作

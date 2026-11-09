@@ -54,3 +54,43 @@ node harness（`docs/ai/tmp/assess-20261108-1332/r11/r11_measure.mjs`・正典 `
 - [ ] `current-task.tsv` の参照行を削除（本項目は記録のみ・親の task_manager で管理）
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）— 本項目は指摘検証のみで known-issues 新規なし（対応は実装指示待ち）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）— 該当なし（本項目は findings 由来・backlog 項目ではない）
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 現在の実装（現行コード再確認）
+
+- delta カウンタ化は未導入（未解決）。`countsByGallery` の 4 値（fullDone/tnDone/noFullDone/errorDone）と total は差分更新済み（`viewer.html:361-371` `decrementPrefetchedCountForKey`、`783-793` allowRecount transition、`1037` total）。
+- 表示 3 値（actualPixels / localDirect / objectUrlCache）は `renderPrefetchStatus`（`viewer.html:432-458`）呼出ごとに `current.files` 全件走査で map（`displayPassByEntry`・`sourceTypeByEntry`・`sourceStatusByEntry`・`activeObjectUrlKeys`）から毎回再計算（loop `438-446`）。指摘の O(N) per-call は現行でも機構的に確定。
+
+### 呼出条件の再確認（呼出箇所・現行行番号）
+
+- display pass（img load event）`339`、revoke `387`、evict `417`、updatePrefetchCounts 各完了 `794/798/806`、clear `886`、gallery open `1038`、manualRetry finally `1097`。画像1枚完了ごと呼出は worker（`1111/1114`）と loadFullImage 経路からの updatePrefetchCounts による（served 画面で観測一致: 完了ごとに即時更新・中間スキップなし・debounce なし）。
+
+### 前批記録（assess-20261108-1332）との矛盾
+
+- 矛盾なし。機構（O(N) per-call × O(N) 呼出 = O(N²)）、推荐（per-gallery delta・transition-aware・per-call 即時性保持）、E1–E4 境界一致、表示意味（map 由来）は現行コードと一致。前批の行番号は現行でシフト（関数本体 432-458、pin 2990-3001/3245-3258）。pytest の既知 1 failed（`test_canonical_build_freshness_rule_exists`）は現行実測で 60 passed（日付新しい実測を優先。古い状態記述は根拠にしない）。
+
+### テスト pin の現行該当箇所（re-anchor 要否）
+
+- 内容 pin: `viewer_test.go:2990-3001`（日本語ラベル・`displayPassByEntry.get(key)`・`sourceTypeByEntry.get(key)`・`activeObjectUrlKeys.has(key)`）。関数順・呼び出し pin: `3245-3258`（renderRetryButtonState→renderPrefetchStatus→stripItems・`renderRetryButtonState()` 呼出）。前批記録の `2850-2860` は現行行番号へ re-anchor 要（実内容的な pin 意味は不変）。pure delta 実装では本文から get/has が消え test 更新が必要。既存テストを変えない形は guarded reconciliation（初回/gallery 切替時のみ全件照合・steady state はカウンタ）。
+
+### カウンタ増分更新の正典意味一致
+
+- 正典 `docs/ai/decisions/2026-11-01-viewer-display-status-and-page-switch-recommendation.md`（読了）: displayPass = DOM actual pixel truth（naturalWidth > 0 でのみ set）・status = source truth（display pass ではない）・objectURL cache = active objectURL の count（revoke で除去）。delta 化は map membership と transition 意味（set/delete 時点の before/after・revoke 前 snapshot）を保持する限り表示数値の意味を変えない。served 画面でも分離表示（local direct / objectURL cache / TN禁止）一致を確認。
+
+### 画面確認（served・合格）
+
+- 正典 exe served（freshness test 合格済みの `output\hitomi-hub\hub.exe`）・fresh instance pid 25608・port 8731・isolated origin `n11-assess-20261109`・window outer 1679x1025・inner 1666x932（resize なし・実測）。
+- before（gallery 358885・74 files 開直後 prefetch 途中）`実表示ピクセル 43/74 | ローカル直接 0/74 | objectURLキャッシュ 43/74` → 操作（#next クリック・page 2-3 → 4-5）→ after `実表示ピクセル 50/74 | objectURLキャッシュ 74/74`。MutationObserver（#prefetch-status）で 201 mutations（gallery 358885）: 完了ごとの即時逐次更新・中間スキップなし＝現行呼出条件（完了ごと呼出・debounce なし）の served 実測一致。status 文字列は正典 format と一致。
+- 保存先: `I:\マイドライブ\kilo\2026-11-09-n11-render-prefetch-status-on2\`（`n11-status-before-20261109.png`・`n11-status-after-20261109.png`・`n11-render-prefetch-status-confirmation-2026-11-09.txt`）。local copy（project root に落ちた 2 枚）は正典 `kilo-safe-remove` でゴミ箱へ送った。Playwright 一時出力（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`）は project root 外のため残件。本確認専用 server（8731）は停止済み。
+- incident（観測のみ・非本項目）: console に `TypeError: Cannot read properties of undefined (reading 'entry')` 4件（worker・`viewer.html:1111/1114` 呼出）。prefetch worker の undefined item race（既存項目 N-07 領域）として記録のみ。本項目の合格条件への影響なし。
+
+### 有効性（再確認）
+
+- 有効（未解決・実装未開始）。counts の差分更新は既存だが、表示 3 値の per-call 全件走査は現行でも未解消。前批推荐（差分カウンタ案）のまま。優先度: 重要度中（表示正しさは現行で正しく、性能のみ）・緊急度低・リスク中（mutation 点の transition 意味保持）・依存（正典 exe 再生成・test pin re-anchor・viewer_test.go 更新 or guarded reconciliation 選択）。推定規模: viewer.html 関数内部約 40 行 + mutation helper + test pin 更新（小）。
+
+### Verification（assess-20261109-1320）
+
+- `python -m pytest tests/ -v` → 60 passed（12.50 s）。
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok 26.403 s（pin 現行 anchor で通過・源コード非変更）。
+- 画面確認: 上記 served 実測・合格。before/after 同一 window size・同一 full page・同一取得方法。

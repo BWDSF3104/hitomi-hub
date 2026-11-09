@@ -66,8 +66,58 @@
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
 
-## 完了時 Memory Bank 操作
+# 2026-11-09 再調査（assess-20261109-1320）
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+## 現在の実装（現行コード照合）
+
+- `pruneInfoDiskLocked`（`app/galleryinfocache.go:134-196`）は前批（assess-20261108-1332）から無変更。上限超過時のみ scan・scan 内で全 `.json` を `os.ReadFile` + `json.Unmarshal`（壊れは除去）・`fetched_at`（JSON field 正・parse 不可は mtime fallback）古い順で上限まで刈る構造そのまま。`infoDiskMu` 保持中（`writeInfoDisk` 内・`galleryinfocache.go:76`）で `readInfoDisk`（`galleryinfocache.go:31-46`）を待つ。
+- `app/galleryinfocache.go` を触った commit は `9a05a6e`（Phase 3 実装）のみ。直近 commit `7cca33a`（cache_dir 形統一）は置き場・path 解決・コメントのみで scan 構造非接触。decision `2026-11-09-info-cache-shape-unified-with-cache-dir`（2026-11-09）の「影響」に「件数表示・間引き・手动 clear は同じ `infoCacheRoot` を見る（code path 不変）」と明記 — 現行でもフルスキャン構造を再確認。
+- 置き場は現行 `<cache_dir>/galleryinfo/<id>.json`（既定 `cache/images/galleryinfo`）。scan 構造の判断に影響なし。
+
+## 前批実測数値と現行コードの整合（再実測で閉じた）
+
+前批 scratch（`docs/ai/tmp/assess-20261108-1332/r09/`・overlay 注入のみ・正典 source 非変更・t.TempDir・実 cache・実 DB 非接触・外部 API なし）を現行コードで再実行（経過 99.4 s・Defender cold 含む）。
+
+| 指標 | 前批（2026-11-08） | 再実測（2026-11-09） |
+|---|---|---|
+| baseline 1 件 write（prune なし） | 351.8 µs | 362.6 µs |
+| 正典 steady state | 毎書き込み 5001 件 read+parse（evict 連鎖一致）・scan warm 約 0.7 s・cold worst 30.1 s・実 writeInfoDisk per 7.78 s worst 21.98 s | 同一（5001 件・evict 連鎖一致）・scan warm 651.1 ms・cold worst 26.2 s・実 writeInfoDisk per 6.88 s worst 19.3 s |
+| 案1（10% watermark・target=4500） | 600 書き込みで scan 2 回・parse/書き込み平均 16.7・壁時間/件 56.8 ms・reader worst 30.1 s（cold scan 時） | scan 2 回・parse/書き込み平均 16.7（一致）・per 49.5 ms・reader worst 26.2 s |
+| 案2（mtime・parse なし） | parse 0・7.15 ms/件・reader worst 12.0 ms | parse 0・7.13 ms/件・reader worst 14.8 ms |
+| 併用案（mtime + 10% watermark） | 798 µs/件・reader worst 102.7 ms | 707 µs/件・reader worst 89.0 ms |
+
+→ 前批数値と現行コードの矛盾なし。scan 頻度の構造（正典 1/1・案1と併用案 1/501）は一致。cold 側数値の差は cold/AV 効果の変動範囲（機構は同一）。
+
+## 正典「filesystem scan で数えない」（R-15）と現行 disk prune の整合
+
+- R-15 の「件数・作成順を DB の 1 表 `cache_entries` で持つ・filesystem scan で数えない」は full/thumbs 層では**実装済み**（現行コード): `schema.sql:90`・`ensureCacheEntriesTable`（`app/main.go:562`）・`recordCacheEntry`/`pruneCacheEntries`（`app/viewer.go:1104-1190`・件数判定は DB 行 `COUNT(1)` のみ・`created_at ASC`）。kind は `full`/`thumbs` のみ（`app/cacheclear.go:160`）。cap は 4000 件/kind（decision `2026-11-09-disk-cache-cap-count-4000`・`app/main.go:192`・`app/main_test.go:1666` は 4000 に re-anchor 済み）。
+- 状態記述の矛盾を記録: decision `2026-11-09-disk-cache-cap-count-4000` の Status 行は「実装未着手」だが、現行コードは実装済み（コードを証拠として採用。value 決定 4000 はコードと一致し矛盾はない。Status 行のみ stale）。
+- galleryinfo 層は `cache_entries` に kind エントリを持たず、現行でも `syncInfoDiskLocked`/`pruneInfoDiskLocked` の filesystem scan で数えている。R-15 の cap 範囲は `cache/images`・`thumbs`（8000→4000）で galleryinfo は直接対象外。Phase 3 decision（`2026-11-05-phase3-gallery-info-persistent-cache-file-store.md`）は DB 新テーブル案を明示的に不採用（file 方式・「filesystem scan は超過時のみ」）。よって整合は「R-15 の範囲外・Phase 3 decision 有効」で成立。R-15 方向（DB 表で数える）を galleryinfo へ拡張は Phase 3 decision の supersede であり**承認案件のまま**。
+- R-15「作成順」流儀と mtime 案の整合は前批どおり維持（mtime ≈ 書き込み時刻＝作成順。実装済みの full/thumbs 層は `created_at ASC` で同流儀）。Phase 3 decision の「JSON field 正（fetched_at 順）」を mtime 正へ変える点は decision 変更＝承認案件のまま。disk 層 access order 正典なし（`app/viewer.go:150` 注記・Phase 3 decision）も現行で確認。
+
+## テスト衝突・承認案件の分離（変更なしを再確認）
+
+- `TestViewerInfoDiskEvictsOldestByFetchedAtWhenOverEntryCap`（`app/galleryinfocache_test.go:213-266`）無変更（テストファイルを触った commit も `9a05a6e` のみ）。「count must stay at cap after evict」（`galleryinfocache_test.go:246-248`）・evict 順（fetched_at 古い順）・bounded・refetch 後 bounded が固定。
+- 案1（ヒステリシス）は「count must stay at cap」assertion と衝突（テスト更新 1 assertion）→ 承認案件として分離維持。
+- 案2（mtime 正）は order 源（JSON field 正）と壊れ文件的 scan 時即時除去の固定と衝突（1〜2 assertion）→ 承認案件として分離維持。
+
+## 有効性: 有効（再実測で確定）
+
+- 機構（上限到達後、新規 entry 書き込みごとに 5001 件 read+parse・`infoDiskMu` 保持で reader 待ち）は現行コードで有効。実測で閉じた。
+- 実データ側の现实状: runtime root `cache\images\galleryinfo` は 429 file（cap 5000・実測 2026-11-09）→ 上限未到達で現状トリガは発火していない。発火は 4571 件追加書き込み後（steady state 進入後）。「恒常化する」は上限到達後の steady state の話として有効（優先順位付け: 緊急度は低い・到達前に修正すれば実データ影响ゼロ）。
+
+## 推奨（前批から変更なし）
+
+- 単独実装推奨: **案1（10% 多めに刈る hysteresis）** — order 源正典（JSON field 正）不変・scan 頻度 1/501・テスト 1 assertion 更新（承認案件）。
+- fastest: **併用案（mtime + 10% watermark）**（707 µs/件・reader worst 89 ms・再実測で確認）。採用は order 源変更の承認が取れた場合のみ。
+- 実装規模: `pruneInfoDiskLocked` 内 15〜40 行（トリガ条件・target 分離・mtime 分岐）+ テスト 1〜2 assertion。
+
+## Verification
+
+- `go vet .`（app）: clean（0.8 s）
+- `go test -count=1 -timeout 300s .`（app・既存テスト変更なし): ok 35.4 s（経過 37.4 s）
+- 再実測: `go test -overlay "S:/Documents/Kilo_Commons/hitomi-hub/docs/ai/tmp/assess-20261108-1332/r09/overlay.json" -run TestN09 -count=1 -v -timeout 600s`（scratch 非変更・正典 source 非変更・t.TempDir・実 cache・実 DB 非接触・外部 API なし・経過 99.4 s）。出力: `docs/ai/tmp/assess-20261109-1320/r11_remeasure.txt`
+- 実 data file 数確認（read-only）: `output\hitomi-hub\cache\images\galleryinfo` = 429 file
+- 画面確認: 不要記録（UI 項目でない）
+
+実行固有ID: assess-20261109-1320

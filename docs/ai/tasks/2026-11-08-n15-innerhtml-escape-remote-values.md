@@ -71,3 +71,43 @@
 - [ ] `current-task.tsv` の参照行を削除
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）
 - [ ] `backlog.md` の完了項目を削除（該当する場合）
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+### 現在の実装と判断根拠（現行正典）
+
+- **escape は未導入**（項目は未解決・有効）。現行 line（シフト後）: `viewer.html` の単引用符属性連結 = `991`（renderReader img: data-hash/data-key/data-full/src）、`1237`（renderStrip img）、`812`/`814`（entrySource の URL path 段）、selector 文字列 = `1086`（reader の `img[data-hash="..."]`）と `1277`（`updateThumbCache` の `img[data-key="..."]`＝前批列挙に無かった同 class の追加点）。`search.html` は `766` の `href='#/q/' + encodeURIComponent(q.query)` が未 escape（display 側 414/421/766 span は escapeHTML 済み）。
+- 訂正点1（属性 context のみ）成立: text・title・alt は escapeHTML 済み（正典 230-234/194-198 が `&<>"'` を処理・`'` → `&#39;`）。remote 由来文字列が属性境界へ届くのは上記連結点のみ。`data-gallery`/`data-id` は server 側 int（`viewer.go:1395-1404`・searchCard の id）で数値。
+- 訂正点2（実行条件は `'`）成立（実測）。正典 `escapeHTML` は既に `'` を処理するため、 attribute 連結へ適用すれば境界保存。
+- **search 側の微修正（前批表現の補足）**: `encodeURIComponent` は `=` と `"` を %3D/%22 へ encode するため、href 経路では script 実行（handler 属性化）が成立しない。成立するのは `'` による属性境界破壊（href 値切り詰め＝link 意味変更）のみ。served 実測: queries 4件中 2件（`'` を含む）で href 値が `#/q/galleries`・`#/q/don` へ切り詰め、残りは attribute name 退化（実行 0）。`'`→`%27` helper で anchor 1属性のみ・route round-trip 4/4（link 意味不变）。
+- server 側 `validHash` 現行条件: `app/viewer.go:320-330` = len>=3 lowercase hex（error message「64 lowercase hex chars」と不一致は正典 comment 2026-11-01（318-319）どおり）。効経路は proxy/cache path のみ（`955`系・`1599`・`374`・`385`）。galleryinfo 由来 entry.hash の UI 到達経路は前批どおり無検証: `hitomi.go:899-923`（Files 無検証）→ `viewer.go:1395-1404`（JSON へそのまま）→ client（検証なし）。fresh instance 実測: `GET /api/image/abc%27%20onerror%3D%22x%22` → 400・remote 呼び出しなし（gate は効いているが UI 経路は塞がない）。
+
+### 有効性: 有効（実測で閉じた・前批判定維持・未実施）
+
+- served 実測（fresh canonical・port 8743・isolated origin `n15-assess-20261109`・fresh instance・window outer 1679x1025 / inner 1666x932・外部 API 非呼出・mock のみ）: #thumbs img 3件中1件（payload entry）に注入属性 `onerror`・`data-x` 出現・data-hash 値 `abc` へ切り詰め。reader img 2件中1件でも注入属性。注入 handler が同一 origin で実行（`window.__n15r2 = 1`）。selector context（`"`）は SyntaxError（1086/1277 クラス）。escape sim 後は注入 0・node 3（不変）・属性数 per img 12（境界保存）・data-hash round-trip 3/3 一致・実行 0。
+- 注記: served 実測の strip は mock の scene_indexes 1件で stripItems が空になったため（mock 形状・アプリ挙動ではない）、正典 `refreshStrip` を再走させて計測。
+
+### 単独実施可の判定と正典照合
+
+- 現行正典に矛盾なし（2026-11-09 の新規 decision を確認。TN/full 判定・display source・generation guard 不変。escape は表示・link 意味を変えない: node 数同一・href `#/g/900000001/page/N` 同一・valid hex bytes identity）。推奨=client 側 escape 単独実施（前批推奨維持）: 属性連結を既存 `escapeHTML` へ、URL path 段は `encodeURIComponent` + `'`→`%27` helper、selector（1086/1277）は dataset 参照か selector 値 escape。`Gallery()` で entry を落とす案は承認案件として分離維持。
+- テスト照合（現行）: `viewer_test.go:1699` の `data-key='`/`data-hash='` literal pin は `data-hash='` + escapeHTML(...) 形と両立。search 側 escapeHTML pins（`2893`/`2968`）は既存該当箇所のみ。`tests/strip_rebuild_dom_harness.mjs:74` は escapeHTML passthrough stub・node 数カウントは data-page/DOM → escape 適用で件数不変。`tests/r12_startup_single_run_harness.mjs` の searchRoute 自前コピーは pin なし。
+- 文書矛盾処理: 前批の pytest 記録（1 failed = KI-20261106-04 freshness pointer）は現行で合格（60 passed）。日付優先で現行実測を採用。
+
+### 画面確認（合否）
+
+- 合格（before/after 同一 window・同一取得方法・実測。表示差はないため意味同一性は実測値で提示）。
+- Drive 保存先: `I:\マイドライブ\kilo\2026-11-09-n15-innerhtml-escape-remote-values\`（`n15-strip-injection-before-20261109.png`、`n15-strip-escape-simulated-after-20261109.png`、`n15-search-href-broken-before-20261109.png`（element #queries）、`n15-search-href-fixed-after-20261109.png`（element #queries）、`n15-innerhtml-escape-remote-values-confirmation-2026-11-09.txt`）。viewer pair の bytes 同一（49979B・視覚差なし＝injection は DOM 層）。search pair は display text の entity 表示差（7718B/8089B）。
+- 汚染記録: 共用 browser で sibling agent の検索（`furry`）が同一 tab の #results に反映（URL hash 变化）。#queries と flags は自 mock 由来で帰属確立。viewer pair は汚染なし。local copy（scratch 4枚）は Drive 保存後 `kilo-safe-remove` でゴミ箱へ。project root 外残件（削除せず記録）: `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\console-2026-11-09T08-19-02-085Z.log`（mock 由来 404 と汚染検索由来エラー。本項目の証拠ではない）。正典 exe からの escape 実装後画面は未確認（正典 source 未変更・after は page 内 sim）。
+
+## Verification（assess-20261109-1320）
+
+- `python -m pytest tests/ -v` → 60 passed（13.81s）。既存テスト・コード変更なし。
+- app で `go vet . && go test -count=1 -timeout 300s .` → vet clean・ok 26.701s。
+- `node docs/ai/tmp/assess-20261109-1320/harness_escape_recheck.mjs` → 16 checks passed（属性境界・round-trip・search encode 特性）。
+- `go run docs/ai/tmp/assess-20261109-1320/validhash_cases.go`（正典写し）→ case 11 = pass 2 / fail 9（前批と一致）。
+- server gate 実測: `GET /api/image/<payload>` → 400「hash must be 64 lowercase hex chars」・remote 呼び出しなし（fresh instance・port 8743）。
+
+推定規模: 小（`viewer.html` 属性 escape 5–6行（991/1237/812・814/1086/1277）+ `search.html` helper 1 + helper 適用 1行 + 任意の新テスト）
+
+優先順位付け要素: 重要度 mid（viewer 側は served origin 内 script 実行成立。search 側は実行ではなく link 意味変更のみ。local 専用前提の低優先運用は前批どおり）。緊急度 mid（client 側 escape は単独実施可・小）。リスク low（表示・link 意味不変・テスト pin 両立）。依存なし（N-16（GET Host 検査）とは補完・独立）。entry を落とす案のみ承認案件。
+

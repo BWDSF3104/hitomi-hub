@@ -16,4 +16,11 @@ docs/ai/tasks/2026-11-08-n12-singleflight-lane-priority-inversion.md	進行中	�
 docs/ai/tasks/2026-11-08-n14-perf-status-accumulates-across-search.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
 docs/ai/tasks/2026-11-08-n15-innerhtml-escape-remote-values.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
 docs/ai/tasks/2026-11-08-n16-get-host-check-not-implemented.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
-docs/ai/tasks/2026-11-08-n17-pytest-freshness-pointer-missing.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+docs/ai/tasks/2026-11-09-assess-20261109-1320-items.md	進行中	優先順位確定済み（20/20・#17 対応不要で閉）。実装開始指示待ち。上位: #20・#19・#1・#14・#6
+docs/ai/tasks/2026-11-09-n18-settings-save-settings-duplicate.md	進行中	調査委譲（assess-20261109-1320）
+docs/ai/tasks/2026-11-09-n19-viewer-spread-button-raw-label.md	進行中	調査委譲（assess-20261109-1320）
+docs/ai/tasks/2026-11-09-n20-settings-acquisition-dir-validation.md	進行中	調査委譲（assess-20261109-1320）
+docs/ai/tasks/2026-11-09-n21-bounded-cache-put-eviction-linear.md	進行中	調査委譲（assess-20261109-1320）
+docs/ai/tasks/2026-11-09-n22-observer-pending-includes-scan.md	進行中	調査委譲（assess-20261109-1320）
+docs/ai/tasks/2026-11-09-n23-tests-string-contains-fragile.md	進行中	調査委譲（assess-20261109-1320）
+docs/ai/tasks/2026-11-09-n24-python-go-scan-parity-double-maintenance.md	進行中	調査委譲（assess-20261109-1320）

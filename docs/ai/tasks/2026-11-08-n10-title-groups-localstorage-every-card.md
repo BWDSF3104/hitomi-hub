@@ -117,3 +117,48 @@ localStorage 上限（外部仕様）: origin あたり約 5 MB 級。n=10,000 �
 - [ ] `current-task.tsv` の参照行を削除（親の `task_manager` 側）
 - [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし — storage 肥大の照合元は `docs/ai/tasks/2026-11-02-external-code-review-f501e2b.md`（task 記録・known-issues ではない））
 - [ ] `backlog.md` の完了項目を削除（該当なし — N-10 は claude review findings 記録の項目）
+
+## 2026-11-09 再調査（assess-20261109-1320）
+
+**実行固有ID**: assess-20261109-1320（記録のみ。実装開始指示待ち）
+
+### 有効性（再確認）
+
+**有効（不変・実測で閉じた）**。現行コードに mitigation 未導入: debounce なし・変更時のみ保存（同値 skip）なし。
+
+### 現行コード状態（line 番号は現行 2026-11-09）
+
+- titleGroups 保存経路に debounce 未導入。`readListsDebounceMs = 250`（`app/search.html:181`）と `debounceLists()`（`:699-710`）は `/api/lists` fetch（read/lists 項目）専用で titleGroups と無関係。`saveTitleGroups()`（`:233-237`）は呼出ごとに全量 stringify + `localStorage.setItem`（同期）。
+- 「変更があったときだけ保存」: 言語条件 skip（`setSearchTitleGroup` `:239-247`）のみ。同値再設定 skip なし — warm 周回 trip で再設定 25/25 save（harness scenario 3 再確認）。
+- 毎カード呼出は実在: `renderSearchCard` 内 `setSearchTitleGroup(r);`（`:412`）、`applyPrefetchCardKnowledge`（`:833`）。補足: manual search 行の呼出口（`:360`）は 5d87f4c（2026-11-06）で既存（前批列挙漏れ — 機構矛盾ではなく列挙の不完全。操作ごとに save、毎カードではない）。
+- map 上限なし: 不変（起動時 `loadTitleGroups()` `:1083` のみ）。
+
+### 前批記録との矛盾照合
+
+- 矛盾なし。前批後の commit（b2641df・90a8efc の Type filter 系）で line 番号が +11〜+87 シフトしたが機構同一（diff に titleGroups 触手なし確認）。
+- 前批 harness を現行源码（実ブロック抽出）で再実行 → 前批と整合（壁時間は機械分散）: cold 全新規 75 呼出→75 save（上界）、warm 混成 page 25 呼出→15 save（skip 10）、round trip 25/25、n=10,000 median 9.146 ms/呼出・累计 685.9 ms、debounce sim 75→1 write（flush 10.555 ms）、bounded cap 1024 sim（flush 5.709 ms・保持 1,024）— 前批数値と同一機構。
+- 意味変更側（件数上限・淘汰順）の分離は維持: 現行コードに bounded・淘汰順・同値 skip 未導入（debounce 側＝意味変更なし・単独実施可、bounded 側＝承認案件のまま）。推奨不変: debounce（map 更新同一順・persist 束ねのみ）→ 採用案。順は R-15 analogy 作成順推奨（前批どおり）。
+
+### 文書矛盾の处理（日付優先）
+
+- `test_canonical_build_freshness_rule_exists` は前批で failure（known issue KI-20261106-04）→ 現行は合格。正典文書同士の状態記述（前批記録=未実施）が現行実測と矛盾 → 日付優先で現行実測（2026-11-09）を採用し、前批の failure 記述を根拠にしない。現行 AGENTS.md pointer（`docs/ai/rules/confirmation-test-rule.md`）と `docs/ai/decisions/2026-11-04-agents-md-rule-pointer-ization.md` を適用文書として採用。
+
+### 検証（再実行・記録のみで源码変更なし）
+
+- `node docs/ai/tmp/assess-20261108-1332/r10/r10_measure.mjs` → 6 checks passed（約 1 s）
+- `python -m pytest tests/ -v` → 60 passed（10.01 s。freshness test 合格＝canonical `hub.exe` 現行 bytes 埋め込み）
+- `go vet .` clean・`go test -count=1 -timeout 300s .`（app）→ ok 25.639 s（titleGroups pin テスト通過・テスト変更不要）
+
+### 画面確認（served）
+
+- **未確認**（前批と同因で再試行不合格）。準備条件は満たした: fresh canonical `hub.exe`（freshness 合格）＋ fresh server instance（port 8747・scratch dataDir `docs/ai/tmp/assess-20261109-1320/served_data`・config/schema コピー。実 DB・完成フォルダ・正典 config 非接触）＋ isolated origin 新規 4 回。
+- 不合格理由: 共用 Playwright browser の並行 session（main busy）が新規 isolated context 作成直後の数秒内で外部 run（furry search）を書き込み、4 context すべてで測定 install 前に hash `#/q/furry/page/1`・storage keys（filters/last_search/title_groups）・map 74 が成立。per-run 呼出回数と before/after（操作前後・同一条件）が帰属確立不能。有効な capture なし → Drive 保存なし（`I:\マイドライブ\kilo\` 配下にフォルダ作らず・スクリーンショットなし・local copy 掃除該当なし）。
+- 観察（汚染 origin・確認合格でないことを区別・自己帰属分のみ）: 実 browser の単一同期 `setItem` write 0.20 ms（n=74・payload 6,819 B・私が呼出した calls として帰属成立）。実 window size 1679x1025（content inner 1666x932・人工 resize なし）。`--search-card-height: 130px` 契約の card rect 約 140.6 px 観察は不合格条件下のため確認結果として採用しない。
+- server 停止済み。残件（project root 外・記録）: Playwright 出力（snapshot yml・console log）が `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`。project root 内（gitignore）残件: `docs/ai/tmp/assess-20261109-1320/served_data/`（cache・hitomi.db・db-shm・db-wal・config.example.json・schema.sql コピー）と前批 diff 転写 2 ファイル。
+
+### 優先順位付けに効く要素（差分）
+
+- 重要度 low〜mid・緊急度 low・リスク low〜mid（前批どおり。機構確定の機能リスク＝storage 上限超過時 silent persist stop）。
+- 新要素: 画面確認が共用 browser の乗っ取りで実況確立不能（前批・今回同じ）。実装前の画面テスト合格は共用 browser の占有解消に依存。debounce 部分（意味変更なし）は単独実施可のまま。
+
+推定規模: 小〜中（search.html helper 群 約 30–60 行＋新テスト。既存テスト変更なし）— 前批と不変。
