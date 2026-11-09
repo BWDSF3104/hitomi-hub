@@ -60,6 +60,8 @@ type viewer struct {
 	atomicWriteSeam
 	cacheWriteGroup           map[string]*cacheWriteCall
 	cacheSingleflightJoinHook func(key string)
+	// 手動 cache clear の削除失敗注入 seam（nil は非適用・A-07a seam 流儀）。
+	cacheRemoveHook func(path string) error
 
 	// R-13: TN / info fetch dedup（案 A・既存流儀: key 単位・mutex・network 中に mutex を保持しない）。
 	// TN は search-card cover 専用・reader 表示源禁止・TN display fallback 禁止・TN バイトを full
@@ -76,8 +78,13 @@ type viewer struct {
 	// DB の 1 表 cache_entries だけで持つ。filesystem scan で数えない。書き込み時 1 行 INSERT、
 	// prune 時にファイル削除 + 1 行 DELETE。cap 超過は作成順（古い順）で捨てる。現在閲覧中の
 	// gallery（書き込みリクエストの gallery）の項目は捨ない。
+	// 手動 clear（decision 2026-11-09-manual-cache-clear-button-approved-design.md）は同じ mutex を使い、
+	// DB 行由来の file を消したうえで、行がない cache file を「削除対象列挙」として消す（件数判定の
+	// filesystem scan 禁止条は無変更）。
 	cacheEntriesMu      sync.Mutex
 	cacheDiskMaxEntries int
+	// 削除列挙の上限（test inject 口・C-05/A-14 bounded 流儀）。0 は正典既定 maxCacheDiskMaxEntries。
+	cacheClearLimit int
 
 	configPath       string
 	settingsWriteMu  sync.Mutex
@@ -183,6 +190,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /api/lists", v.lists)
 	mux.HandleFunc("GET /api/settings", v.settings)
 	mux.HandleFunc("POST /api/settings", v.updateSettings)
+	mux.HandleFunc("POST /api/cache/clear", v.clearCache)
 	mux.HandleFunc("GET /api/viewer-config", v.uiConfig)
 	mux.HandleFunc("GET /api/search", v.search)
 	mux.HandleFunc("GET /api/search-first-status", v.searchFirstStatus)
@@ -610,6 +618,9 @@ type settingsResponse struct {
 	Limits         Limits            `json:"limits"`
 	Cache          settingsCache     `json:"cache"`
 	Constants      settingsConstants `json:"constants"`
+	// read-only 表示用（DB 行だけ。walk preview を UI に置かない・decision 2026-11-09-manual-cache-clear-button-approved-design.md）。
+	// config 値ではないので settingsBaseMap（config write base）には置かない。
+	CacheCounts map[string]int `json:"cache_counts"`
 }
 
 func settingsView(v *viewer) settingsResponse {
@@ -653,6 +664,7 @@ func settingsView(v *viewer) settingsResponse {
 			ScanCacheTTLMS:              int(scanCacheTTL / time.Millisecond),
 			NegativeScanCacheTTLMS:      int(negativeScanCacheTTL / time.Millisecond),
 		},
+		CacheCounts: v.cacheEntryCounts(),
 	}
 }
 

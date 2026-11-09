@@ -71,6 +71,24 @@
     <h2>内部定数</h2>
     <div class="settings-list" id="settings-constants"></div>
   </section>
+  <section id="cache-clear-section">
+    <h2>キャッシュクリア</h2>
+    <p>cache 層（full・thumbs・galleryinfo・server memory）を削除します。完成フォルダ（Galleries・acquisition）と VT 判定 cache は対象外です。削除は取り消せません。</p>
+    <div class="settings-list">
+      <div class="setting-row">
+        <label for="cache-clear-counts">現在の cache 行数 (cache_entries)</label>
+        <div class="value" id="cache-clear-counts"></div>
+        <div class="note">DB 行だけの表示。件数判定は DB 行（filesystem scan は使わない）。</div>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label for="cache-clear-confirm">削除することを理解しました</label>
+      <input type="checkbox" id="cache-clear-confirm" aria-describedby="cache-clear-status">
+      <div class="note">check するまで button は無効。2段階確認（decision 2026-11-09-manual-cache-clear-button-approved-design.md）。</div>
+    </div>
+    <div id="cache-clear-status" class="status" role="status" aria-live="polite"></div>
+    <button type="button" id="cache-clear-button" disabled>キャッシュをクリア</button>
+  </section>
 </main>
 <script>
 function addGroup(container, title, editable) {
@@ -149,6 +167,38 @@ function getValue(settings, key) {
 
 let s = null;
 
+function renderCacheCounts(settings) {
+  const counts = settings.cache_counts || {};
+  const value = document.getElementById("cache-clear-counts");
+  value.textContent = `full ${counts.full} / thumbs ${counts.thumbs}`;
+}
+
+function cacheClearConfirmed() {
+  return document.getElementById("cache-clear-confirm").checked;
+}
+
+async function runCacheClear() {
+  const button = document.getElementById("cache-clear-button");
+  const status = document.getElementById("cache-clear-status");
+  if (!cacheClearConfirmed()) {
+    status.textContent = "確認の check が必要です";
+    return;
+  }
+  button.disabled = true;
+  status.textContent = "削除中…";
+  try {
+    const response = await fetch("/api/cache/clear", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true, scope: ["full", "thumbs", "galleryinfo", "memory"] }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `POST /api/cache/clear failed: ${response.status}`);
+    const d = data.deleted || {};
+    status.textContent = `削除 full ${d.full} / thumbs ${d.thumbs} / galleryinfo ${d.galleryinfo} / 記録前 full ${d.unlisted_full} / 記録前 thumbs ${d.unlisted_thumbs} / memory ${d.memory}・行 ${data.rows_deleted}・skip ${data.skipped_inflight}・失敗 ${data.failed}` + (data.truncated ? "・列挙上限で停止" : "");
+    await loadSettings();
+  } catch (e) {
+    status.textContent = e.message || "cache clear failed";
+  }
+  document.getElementById("cache-clear-button").disabled = !cacheClearConfirmed();
+}
+
 function renderSettings() {
   if (!s) return;
 
@@ -207,6 +257,8 @@ function renderSettings() {
   addSetting(constantsGroup, "Scan cache TTL (scan_cache_ttl_ms)", `${s.constants.scan_cache_ttl_ms} ms`, "positive VT verdict cache TTL。変更可能ではない。", "");
   addSetting(constantsGroup, "negative scan TTL (negative_scan_cache_ttl_ms)", `${s.constants.negative_scan_cache_ttl_ms} ms`, "negative VT verdict cache TTL。変更可能ではない。", "");
   addSetting(constantsGroup, "YARA path (yr)", "not shown", "executable path は UI に表示しない。UI write 対象外。", "");
+
+  renderCacheCounts(s);
 }
 
 function collectPayload() {
@@ -280,6 +332,10 @@ async function saveSettings(event) {
 }
 
 document.getElementById("settings-form").addEventListener("submit", saveSettings);
+document.getElementById("cache-clear-confirm").addEventListener("change", () => {
+  document.getElementById("cache-clear-button").disabled = !cacheClearConfirmed();
+});
+document.getElementById("cache-clear-button").addEventListener("click", runCacheClear);
 loadSettings();
 </script>
 </body>

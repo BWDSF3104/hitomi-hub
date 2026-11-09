@@ -275,6 +275,46 @@ func (c *Client) putIndexNodeCacheLocked(key string, entry *indexNodeCacheEntry)
 	boundedCachePut(c.indexNodeCache, &c.indexNodeCacheBytes, maxEntries, maxBytes, key, entry)
 }
 
+// ClearMemoryCaches は手動 clear の memory 層（decision 2026-11-09-manual-cache-clear-button-approved-design.md）。
+// cache map だけを空にする。singleflight group（呼び出し中）・versions・gg（live 取得が既定）・gate state・
+// blockCooldownUntil・metrics（計数源）は消さない。件数は mutex 単位で数える。
+func (c *Client) ClearMemoryCaches() int {
+	cleared := 0
+
+	c.searchCacheMu.Lock()
+	cleared += len(c.searchCache)
+	c.searchCache = map[string]*searchCacheEntry{}
+	c.searchCacheBytes = 0
+	c.searchCacheMu.Unlock()
+
+	c.searchResultCacheMu.Lock()
+	cleared += len(c.searchResultCache)
+	c.searchResultCache = map[string]*searchResultCacheEntry{}
+	c.searchResultCacheBytes = 0
+	c.searchResultCacheMu.Unlock()
+
+	c.indexTopCacheMu.Lock()
+	cleared += len(c.indexTopCache)
+	c.indexTopCache = map[string]*indexTopCacheEntry{}
+	c.indexTopCacheBytes = 0
+	c.indexTopCacheMu.Unlock()
+
+	c.indexCacheMu.Lock()
+	cleared += len(c.indexNodeCache) + len(c.indexDataCache)
+	c.indexNodeCache = map[string]*indexNodeCacheEntry{}
+	c.indexNodeCacheBytes = 0
+	c.indexDataCache = map[string]*indexDataCacheEntry{}
+	c.indexDataCacheBytes = 0
+	c.indexCacheMu.Unlock()
+
+	c.noFullCacheMu.Lock()
+	cleared += len(c.noFullCache)
+	c.noFullCache = map[string]time.Time{}
+	c.noFullCacheMu.Unlock()
+
+	return cleared
+}
+
 func defaultHitomiConfig() HitomiConfig {
 	return HitomiConfig{MinIntervalMS: 90, ImageMinIntervalMS: 60, GGForceMinIntervalMS: 60000, MaxRetries: 3, RetryBackoffMS: 2000,
 		UserAgent: "hitomi-hub/0.1 (local hub client)", ImageFormat: "webp", UseLiveGG: true, BgGraceMS: defaultBgGraceMS}

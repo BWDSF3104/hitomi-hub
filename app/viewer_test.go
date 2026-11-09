@@ -4970,6 +4970,20 @@ func TestSettingsPageRendersJapaneseLabelsAndGroupCards(t *testing.T) {
 		`VirusTotal`,
 		`内部定数`,
 		`renderSettings();`,
+		`id="cache-clear-section"`,
+		`id="cache-clear-counts"`,
+		`id="cache-clear-confirm"`,
+		`id="cache-clear-status"`,
+		`id="cache-clear-button"`,
+		`type="button" id="cache-clear-button" disabled`,
+		`aria-live="polite"`,
+		`button.disabled = true`,
+		`fetch("/api/cache/clear", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true, scope: ["full", "thumbs", "galleryinfo", "memory"] }) })`,
+		`async function runCacheClear() {`,
+		`renderCacheCounts(s);`,
+		`function cacheClearConfirmed() {`,
+		`キャッシュをクリア`,
+		`cache_counts`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("settings.html missing settings page string %q", want)
@@ -5268,6 +5282,400 @@ func TestImageCacheWriteRecordsCacheEntryRow(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("cache hit must not add a second row, got %d", count)
+	}
+}
+
+func TestSettingsResponseServesDBRowCountsForCacheClearPanel(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	if err := v.recordCacheEntry(strings.Repeat("5", 63)+"1", "webp", "full", "", "miss", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.recordCacheEntry(strings.Repeat("5", 63)+"2", "webp", "thumbs", "bigtn", "tn", 0); err != nil {
+		t.Fatal(err)
+	}
+	// 件数判定は DB 行だけ（R-15 条維持）。UI preview は DB 行数のみで walk を使わない。
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, "untracked.webp"), webpMagicBytes("kk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	counts, ok := out["cache_counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("cache_counts missing: %+v", out)
+	}
+	if counts["full"] != float64(1) || counts["thumbs"] != float64(1) {
+		t.Fatalf("counts must come from DB rows only, got %v", counts)
+	}
+	// config 値ではないので config write base（settingsBaseMap）に置かない。
+	if _, ok := settingsBaseMap(v)["cache_counts"]; ok {
+		t.Errorf("cache_counts must not be part of the config write base")
+	}
+}
+
+func cacheClearPost(t *testing.T, v *viewer, body string) (int, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/cache/clear", body))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("clear response must be json: code %d body %q", rec.Code, rec.Body.String())
+	}
+	return rec.Code, out
+}
+
+func TestCacheClearRequiresConfirmAndRejectsBadRequest(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	cases := []struct {
+		body string
+		want int
+	}{
+		{`{"scope":["full"]}`, http.StatusBadRequest},
+		{`{"confirm":false,"scope":["full"]}`, http.StatusBadRequest},
+		{`{"confirm":true,"scope":["bogus"]}`, http.StatusBadRequest},
+		{`{"confirm":true,"scope":[]}`, http.StatusBadRequest},
+		{`{"confirm":true,"scope":["full"]}`, http.StatusOK},
+	}
+	for _, c := range cases {
+		code, out := cacheClearPost(t, v, c.body)
+		if code != c.want {
+			t.Fatalf("body %s: code %d want %d body %q", c.body, code, c.want, out["error"])
+		}
+	}
+
+	// POST 条件（既存 withPOSTSecurity）は clear でも同じ。
+	req := jsonPOSTRequest("/api/cache/clear", `{"confirm":true,"scope":["full"]}`)
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("content-type guard: code %d", rec.Code)
+	}
+	req = jsonPOSTRequest("/api/cache/clear", `{"confirm":true,"scope":["full"]}`)
+	req.Header.Set("Origin", "http://evil.invalid")
+	rec = httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin guard: code %d", rec.Code)
+	}
+}
+
+func TestCacheClearDeletesDBRowsAndUnlistedFiles(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+
+	// DB 行 + file
+	fullHash := strings.Repeat("a", 63) + "1"
+	thumbHash := strings.Repeat("b", 63) + "1"
+	thumbsDir := filepath.Join(v.cacheRoot, "thumbs")
+	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, fullHash+".webp"), webpMagicBytes("aa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(thumbsDir, thumbHash+".webp.bigtn"), webpMagicBytes("bb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.recordCacheEntry(fullHash, "webp", "full", "", "miss", 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.recordCacheEntry(thumbHash, "webp", "thumbs", "bigtn", "tn", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	// リスト化前（表生成以前の実 cache・backfill 禁止分）: 行がない file も消す。
+	unlistedFull := strings.Repeat("c", 63) + "1"
+	unlistedThumb := strings.Repeat("d", 63) + "1"
+	if err := os.WriteFile(filepath.Join(v.cacheRoot, unlistedFull+".webp"), webpMagicBytes("cc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(thumbsDir, unlistedThumb+".webp.bigtn"), webpMagicBytes("dd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// galleryinfo disk 層
+	if err := os.MkdirAll(v.infoCacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.infoCacheRoot, "42.json"), []byte(`{"id":42,"fetched_at":"2026-11-09T00:00:00Z"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full","thumbs","galleryinfo","memory"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+	deleted, ok := out["deleted"].(map[string]any)
+	if !ok {
+		t.Fatalf("deleted object missing: %+v", out)
+	}
+	want := map[string]float64{
+		"full": 1, "thumbs": 1, "galleryinfo": 1,
+		"unlisted_full": 1, "unlisted_thumbs": 1, "memory": 0,
+	}
+	for key, value := range want {
+		if deleted[key] != value {
+			t.Errorf("deleted.%s must be %v, got %v", key, value, deleted[key])
+		}
+	}
+	if out["rows_deleted"] != float64(2) {
+		t.Errorf("rows_deleted must be 2, got %v", out["rows_deleted"])
+	}
+
+	for _, path := range []string{
+		filepath.Join(v.cacheRoot, fullHash+".webp"),
+		filepath.Join(thumbsDir, thumbHash+".webp.bigtn"),
+		filepath.Join(v.cacheRoot, unlistedFull+".webp"),
+		filepath.Join(thumbsDir, unlistedThumb+".webp.bigtn"),
+		filepath.Join(v.infoCacheRoot, "42.json"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("cache file must be removed: %s", path)
+		}
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, fullHash, "webp", "full", ""); found {
+		t.Errorf("DB row must be deleted")
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, thumbHash, "webp", "thumbs", "bigtn"); found {
+		t.Errorf("thumbs DB row must be deleted")
+	}
+	if v.infoDiskCount != 0 || v.infoDiskBytes != 0 {
+		t.Errorf("galleryinfo disk counter must be reset, got count %d bytes %d", v.infoDiskCount, v.infoDiskBytes)
+	}
+}
+
+func TestCacheClearKeepsRowsWhenFileDeleteFails(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	hash := strings.Repeat("e", 63) + "1"
+	path := filepath.Join(v.cacheRoot, hash+".webp")
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, webpMagicBytes("ee"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.recordCacheEntry(hash, "webp", "full", "", "miss", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// 削除失敗注入 seam（nil は非適用・A-07a seam 流儀）
+	v.cacheRemoveHook = func(string) error { return errors.New("injected remove failure") }
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+	if out["failed"] != float64(1) {
+		t.Fatalf("failed count must be 1, got %v", out["failed"])
+	}
+	if out["rows_deleted"] != float64(0) {
+		t.Errorf("row must be kept when file delete failed, got %v", out["rows_deleted"])
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, hash, "webp", "full", ""); !found {
+		t.Errorf("delete-failed row must be kept for the next attempt")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("file must remain when delete failed: %s", err)
+	}
+}
+
+func TestCacheClearSkipsInflightWritePaths(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	hash := strings.Repeat("f", 63) + "1"
+	path := filepath.Join(v.cacheRoot, hash+".webp")
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, webpMagicBytes("ff"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.recordCacheEntry(hash, "webp", "full", "", "miss", 0); err != nil {
+		t.Fatal(err)
+	}
+	// singleflight で write 中の key（R-16）は触らない
+	if v.cacheWriteGroup == nil {
+		v.cacheWriteGroup = map[string]*cacheWriteCall{}
+	}
+	v.cacheWriteGroup[path] = &cacheWriteCall{done: make(chan struct{})}
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+	if out["skipped_inflight"] != float64(1) {
+		t.Fatalf("skipped_inflight must be 1, got %v", out["skipped_inflight"])
+	}
+	if _, _, _, found := cacheEntryRow(t, v.db, hash, "webp", "full", ""); !found {
+		t.Errorf("in-flight row must be kept")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("in-flight file must not be removed: %s", err)
+	}
+}
+
+func TestCacheClearRefusesCompletionFolderResolution(t *testing.T) {
+	v, galleryRoot := newTestViewer(t, "")
+	v.cacheRoot = galleryRoot
+	galleryFile := filepath.Join(galleryRoot, "9", "001.webp")
+	if err := os.MkdirAll(filepath.Join(galleryRoot, "9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(galleryFile, webpMagicBytes("gg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full"]}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("completion folder resolution must be refused, got code %d body %q", code, out["error"])
+	}
+	if _, err := os.Stat(galleryFile); err != nil {
+		t.Errorf("completion folder file must not be deleted: %s", err)
+	}
+}
+
+func TestCacheClearDoesNotTouchScanCacheOrFilesTable(t *testing.T) {
+	v, galleryRoot := newTestViewer(t, "")
+	if err := cacheStore(v.db, strings.Repeat("1", 64), "pass", "virustotal", "", "positives=0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordDiscovered(v.db, 9, galleryDir(v.cfg, 9)); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordTestFileSize(v.db, "Galleries/9/001.webp", sql.NullInt64{Int64: 9, Valid: true}, 1024); err != nil {
+		t.Fatal(err)
+	}
+	galleryFile := filepath.Join(galleryRoot, "9", "001.webp")
+	if err := os.MkdirAll(filepath.Join(galleryRoot, "9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(galleryFile, webpMagicBytes("hh"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full","thumbs","galleryinfo","memory"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+
+	var count int
+	if err := v.db.QueryRow(`SELECT COUNT(1) FROM scan_cache`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("VT verdict cache (hitomi.db) must not be cleared, got %d rows", count)
+	}
+	if err := v.db.QueryRow(`SELECT COUNT(1) FROM files`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("files table must not be cleared, got %d rows", count)
+	}
+	if _, err := os.Stat(galleryFile); err != nil {
+		t.Errorf("completion folder file must not be deleted: %s", err)
+	}
+}
+
+func TestCacheClearOnlyRemovesCacheNamedFiles(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := []string{"notes.txt", ".cache-123.tmp", "not-a-hash.webp"}
+	for _, name := range keep {
+		if err := os.WriteFile(filepath.Join(v.cacheRoot, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removal := strings.Repeat("2", 63) + "1"
+	removalPath := filepath.Join(v.cacheRoot, removal+".webp")
+	if err := os.WriteFile(removalPath, webpMagicBytes("ii"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+	if out["deleted"].(map[string]any)["unlisted_full"] != float64(1) {
+		t.Fatalf("cache-named file must be removed, got %v", out["deleted"])
+	}
+	for _, name := range keep {
+		if _, err := os.Stat(filepath.Join(v.cacheRoot, name)); err != nil {
+			t.Errorf("non-cache-named file must not be removed: %s", err)
+		}
+	}
+}
+
+func TestCacheClearStopsAtEnumerateLimitAndReportsTruncated(t *testing.T) {
+	v, _ := newTestViewer(t, "")
+	v.cacheClearLimit = 2
+	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{strings.Repeat("3", 63) + "1", strings.Repeat("3", 63) + "2", strings.Repeat("3", 63) + "3"}
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(v.cacheRoot, name+".webp"), webpMagicBytes("jj"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["full"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+	if out["truncated"] != true {
+		t.Fatalf("limit 2 with 3 unlisted files must report truncated, got %v", out)
+	}
+	if out["deleted"].(map[string]any)["unlisted_full"] != float64(2) {
+		t.Fatalf("must remove up to the bounded limit (2), got %v", out["deleted"])
+	}
+	if _, err := os.Stat(filepath.Join(v.cacheRoot, names[2]+".webp")); err != nil {
+		t.Errorf("excess file beyond the limit must not be deleted: %s", err)
+	}
+}
+
+func TestCacheClearResetsMemoryCachesWithoutChangingCacheHeaders(t *testing.T) {
+	galleryJSON := `var galleryinfo = {"id":"4252697","title":"Kemo","language":"japanese","type":"doujinshi",` +
+		`"files":[{"hash":"899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9","name":"001.jpg","width":1813,"height":2542}]}`
+	v, _ := newTestViewer(t, galleryJSON)
+	v.client.cfg.UseLiveGG = false
+	v.client.gg = viewerFixtureGG()
+	hash := strings.Repeat("4", 63) + "1"
+
+	// warm memory（memory hit は network を消費しない・既存流儀）
+	v.infoCacheMu.Lock()
+	v.infoCache[4252697] = &infoCacheEntry{info: &GalleryInfo{ID: 4252697}, lastAccess: time.Now()}
+	v.infoCacheMu.Unlock()
+	v.client.rememberNegativeNoFull(hash, "webp", v.client.gg)
+
+	code, out := cacheClearPost(t, v, `{"confirm":true,"scope":["memory"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("code %d body %q", code, out["error"])
+	}
+	if out["deleted"].(map[string]any)["memory"] != float64(2) {
+		t.Fatalf("memory count must be infoCache + noFullCache, got %v", out["deleted"])
+	}
+	v.infoCacheMu.Lock()
+	if len(v.infoCache) != 0 {
+		t.Errorf("infoCache must be empty after clear")
+	}
+	v.infoCacheMu.Unlock()
+	v.client.noFullCacheMu.Lock()
+	if len(v.client.noFullCache) != 0 {
+		t.Errorf("negative cache must be empty after clear")
+	}
+	v.client.noFullCacheMu.Unlock()
+
+	// x-cache の意味（source）は変わらない。memory clear 後の search-card 表示は miss。
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/search-card/4252697", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-cache") != "miss" {
+		t.Fatalf("memory clear must produce x-cache miss, got code %d x-cache %q", rec.Code, rec.Header().Get("x-cache"))
 	}
 }
 
