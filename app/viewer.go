@@ -773,19 +773,18 @@ func settingsAcquisitionDirValue(v *viewer, raw string) (string, error) {
 		return "", fmt.Errorf("acquisition_dir must be a root-relative folder name")
 	}
 
+	if strings.ContainsAny(raw, "/\\") {
+		return "", fmt.Errorf("acquisition_dir must be a single folder name (path separators are not supported)")
+	}
+
 	for _, r := range raw {
-		if r < 32 || r == 127 || r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+		if r < 32 || r == 127 || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
 			return "", fmt.Errorf("acquisition_dir contains invalid path characters")
 		}
 	}
 
-	for _, segment := range strings.FieldsFunc(raw, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if segment == "" || segment == "." {
-			return "", fmt.Errorf("acquisition_dir segment must not be empty")
-		}
-		if isWindowsReservedName(segment) {
-			return "", fmt.Errorf("acquisition_dir segment must not be a Windows reserved name")
-		}
+	if isWindowsReservedName(raw) {
+		return "", fmt.Errorf("acquisition_dir must not be a Windows reserved name")
 	}
 
 	candidate := filepath.Join(v.root, clean)

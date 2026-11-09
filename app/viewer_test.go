@@ -5240,7 +5240,7 @@ func TestSettingsPostRejectsAcquisitionDirOutsideRoot(t *testing.T) {
 		{"absolute", `{"acquisition_dir":"C:\\escape"}`, "must be a root-relative folder name"},
 		{"drive", `{"acquisition_dir":"S:\\escape"}`, "must be a root-relative folder name"},
 		{"reserved", `{"acquisition_dir":"CON"}`, "Windows reserved name"},
-		{"control", `{"acquisition_dir":"bad\\u0000folder"}`, "invalid path characters"},
+		{"control", `{"acquisition_dir":"bad\u0000folder"}`, "invalid path characters"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
@@ -5251,6 +5251,41 @@ func TestSettingsPostRejectsAcquisitionDirOutsideRoot(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), c.want) {
 			t.Errorf("%s error must mention %q, got %s", c.name, c.want, rec.Body.String())
 		}
+	}
+}
+
+func TestSettingsAcquisitionDirValueDeterministicRejection(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), dir)
+	v.configPath = filepath.Join(dir, "config.json")
+	if err := os.WriteFile(v.configPath, []byte(`{"db":"hub.db","acquisition_dir":"acquisition"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	separatorWant := "must be a single folder name (path separators are not supported)"
+	cases := []struct{ name, body, want string }{
+		{"double-separator", `{"acquisition_dir":"a//b"}`, separatorWant},
+		{"slash", `{"acquisition_dir":"a/b"}`, separatorWant},
+		{"backslash", `{"acquisition_dir":"a\\b"}`, separatorWant},
+		{"trailing-separator", `{"acquisition_dir":"a\\"}`, separatorWant},
+		{"dot-segment", `{"acquisition_dir":"."}`, "must be a root-relative folder name"},
+		{"reserved", `{"acquisition_dir":"CON"}`, "must not be a Windows reserved name"},
+		{"control-char", `{"acquisition_dir":"bad\u0000folder"}`, "contains invalid path characters"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", c.body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s must be rejected, got %d body %q", c.name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s error must mention %q, got %s", c.name, c.want, rec.Body.String())
+		}
+	}
+
+	if value, err := settingsAcquisitionDirValue(v, "collect"); err != nil || value != "collect" {
+		t.Fatalf("single folder name must be accepted unchanged, got %q err %v", value, err)
 	}
 }
 
