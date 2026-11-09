@@ -137,6 +137,14 @@ func (v *viewer) pruneInfoDiskLocked() {
 		return
 	}
 
+	// 案1（hysteresis・ユーザー同意 2026-11-09・記録 2026-11-08-n09）: scan トリガは上限超過時の
+	// まま（正典意味不変）、刈り先を target（上限の 90%）へ分離する。steady state の scan 頻度が
+	// 1/1（毎 new entry 書き込み）から 1/501（cap 5000・target 4500）へ減る。10% が端数で 0 件に
+	// なる小さい cap（cap < 10）は target == cap（正典意味）。order 源（JSON field 正・parse 不可は
+	// mtime fallback）・evict 順（fetched_at 古い順）・scan 時の壊れ除去・mutex 保持は不変。
+	targetEntries := maxEntries - maxEntries/10
+	targetBytes := maxBytes - maxBytes/10
+
 	type diskEntry struct {
 		path      string
 		size      int64
@@ -184,7 +192,7 @@ func (v *viewer) pruneInfoDiskLocked() {
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].fetchedAt.Before(kept[j].fetchedAt) })
 	for _, e := range kept {
-		if v.infoDiskCount <= maxEntries && v.infoDiskBytes <= int64(maxBytes) {
+		if v.infoDiskCount <= targetEntries && v.infoDiskBytes <= int64(targetBytes) {
 			break
 		}
 		if err := os.Remove(e.path); err != nil {

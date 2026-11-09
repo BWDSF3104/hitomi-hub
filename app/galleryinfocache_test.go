@@ -243,8 +243,11 @@ func TestViewerInfoDiskEvictsOldestByFetchedAtWhenOverEntryCap(t *testing.T) {
 			t.Errorf("entry %d must remain: %s", id, err)
 		}
 	}
-	if v.infoDiskCount != 3 {
-		t.Errorf("disk count must stay at cap after evict: count %d", v.infoDiskCount)
+	// hysteresis（案1・ユーザー同意 2026-11-09）: evict は target（上限の 90%・端数切捨て）まで。
+	// cap 3 では 10% が 0 件なので target == cap。scan 頻度 1/501 への減少は scratch harness
+	// 実測（docs/ai/tmp/assess-20261109-1320/）で確認。
+	if target := v.infoDiskMaxEntries - v.infoDiskMaxEntries/10; v.infoDiskCount != target {
+		t.Errorf("disk count must stay at hysteresis target after evict: count %d target %d", v.infoDiskCount, target)
 	}
 	if v.infoDiskBytes > int64(v.infoDiskMaxBytes) {
 		t.Errorf("disk bytes must stay below cap: bytes %d", v.infoDiskBytes)

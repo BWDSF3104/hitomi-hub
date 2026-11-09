@@ -1,9 +1,9 @@
 # N-09: info disk cache の prune が上限到達時に全 JSON を走査
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
-**Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+**Next Action**: 完了（assess-20261109-1320 実装）: 案1 hysteresis（cap 5000・target 4500・scan 1/501）実装・1 assertion 更新・正典検証合格・harness 実測合格
 
 ## 意図 / 背景
 
@@ -120,4 +120,72 @@
 - 実 data file 数確認（read-only）: `output\hitomi-hub\cache\images\galleryinfo` = 429 file
 - 画面確認: 不要記録（UI 項目でない）
 
-実行固有ID: assess-20261109-1320
+# 2026-11-09 実装（assess-20261109-1320・子委譲）
+
+## 採用した判断と根拠（段階1）
+
+- **案1（10% hysteresis）を実施**（ユーザー同意済み 2026-11-09）。承認範囲は `pruneInfoDiskLocked` 内のみ
+  （追加 8 行 + evict break 条件 1 行）。正典意味は維持: scan トリガは上限超過時のみ・order 源（JSON
+  field `fetched_at` 正・parse 不可は mtime fallback）・evict 順（`fetched_at` 古い順）・scan 時の壊れ
+  除去・`infoDiskMu` 保持。案2（mtime 正）は decision 変更（承認案件）のまま実施せず。DB 表への拡張も
+  実施せず（Phase 3 decision の file 方式有効）。
+- target は `cap - cap/10`（切捨て）で分離。正典 cap 5000 → target 4500（推奨どおり・scan 頻度 1/501）。
+- 端数の扱い（記録): `cap < 10` では 10% が 0 件となり target == cap（正典意味のまま）。テストの cap 3 は
+  この範囲なので、承認済みの 1 assertion 更新は「hysteresis target 照合」の意味になっても値は 3 のまま
+  （evict 集合・bounded assertion は無変更で通過）。このため hysteresis の効果（1/501）は正典 cap での
+  scratch harness 実測で証明した。テストの cap を 10 以上へ上げる案は複数 assertion 変更（承認範囲超）と
+  なるため採用しなかった。
+
+## 変更内容
+
+- `app/galleryinfocache.go`（`pruneInfoDiskLocked`・134-196）: `targetEntries` / `targetBytes`（上限の 90%）
+  を分離し、evict の刈り先を target へ変更（トリガは上限のまま）。
+- `app/galleryinfocache_test.go`（`TestViewerInfoDiskEvictsOldestByFetchedAtWhenOverEntryCap`）: 承認済みの
+  1 assertion（「count must stay at cap after evict」）を hysteresis target 照合へ更新。他の assertion・
+  他のテストは非接触。
+
+## 実測（scratch harness・正典流儀・外部 API なし・t.TempDir・実 cache 実データ・実 DB 非接触）
+
+scratch: `docs/ai/tmp/assess-20261109-1320/n09_hysteresis_test.go`（overlay 注入）。変更後の実装を正典
+`writeInfoDisk`（実 `pruneInfoDiskLocked`）経由で呼ぶ。scan 発火は「書き込み後 count が target へ戻る」
+ことで決定論的に検出（非 scan 書き込みは count +1）。
+
+- **H1（変更後実装・cap 5000・target 4500・fill 4500 → 1503 書き込み窓）**: scan **3 回 = 1/501**、発火は
+  501・1002・1503 書き込み（決定論）。per-write avg **26.77 ms**・scan 時 wall worst **30.12 s**・scan 時
+  parse 5001 件。evict 集合は毎回「fetched_at 古い順の 501 件」で実ファイル照合合格（scan1 oldest=1・
+  scan2 oldest=502・scan3 oldest=1003）。count は常に cap 以下（bounded）で target 4500 に収まる。
+- **H2（control・変更前正典意味 target == cap・同一規模 20 書き込み）**: scan **20 回 = 1/1**・per-write
+  avg **2.174 s**（scan worst 30.26 s・parse/書き込み 5001）。→ scan 頻度 1/1 → 1/501、平均負荷
+  2.174 s/件 → 26.77 ms/件（約 **81 倍**）。
+- **H3（reader 待ち・正典 `readInfoDisk`・mutex 保持中）**: scan なし書き込みは **0 s**（write 1.998 ms のみ）、
+  scan 発火時は保持のほぼ全長を待つ（wait **30.64 s** = hold 30.64 s・parse 5001 件・evict 501 件）。
+  `infoDiskMu` 保持意味はコード変更なし（正典どおり）。
+
+## 修正・再検証の試行
+
+- 実装 1 回で合格条件を満たした（試行 1 回）。
+- harness 側修正 1 回（実装ではなく計測スクリプトのバグ）: H3 の scan なし書き込みで `hFill` が 1 件を
+  計上せず count 5002（期待 5001）→ viewer を分離して修正、H3 再実行で合格。
+
+## Verification
+
+- `go vet .`（app）: clean
+- `go test -count=1 -timeout 300s .`（app): ok **28.005 s**（更新 1 assertion 通過。単独確認
+  `-run TestViewerInfoDiskEvictsOldestByFetchedAtWhenOverEntryCap -v`: PASS 0.13 s・経過 1.284 s）
+- `python -m pytest tests/ -v`: **64 passed**（27.48 s）。UI 文件非変更のため正典 build rebuild 該当なし
+- harness 実測: `go test -overlay "docs/ai/tmp/assess-20261109-1320/overlay.json" -run TestN09H -count=1 -v -timeout 600s`
+  （経過 95.8 s・H3 再実行 37.4 s）→ 出力 `docs/ai/tmp/assess-20261109-1320/h1_h3_harness.txt`・
+  `h3_repair1.txt`。実 cache（`output\hitomi-hub\cache\images\galleryinfo`）は read-only も非実施・非接触
+- 画面確認: **該当なし**（UI 項目でない）。Drive 保存なし（local copy なし）
+- 文書矛盾（前批記録どおり・コード優先）: decision `2026-11-09-disk-cache-cap-count-4000` の Status 行
+  「実装未着手」は stale（現行コード実装済み）。採用文書はコード＋日付新（Phase 3 decision の file 方式・
+  R-15 cap 範囲は full/thumbs）。galleryinfo 層の cap（5000）・order 源は本項目で非接触。
+
+## 完了時 Memory Bank 操作
+
+- [x] `current-task.tsv` の参照行を削除（正典 `task_manager end`）
+- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当なし・本項目は findings 記録のみ）
+- [ ] `backlog.md` の完了項目を削除（該当なし）
+
+実行固有ID: assess-20261109-1320（実装）
+
