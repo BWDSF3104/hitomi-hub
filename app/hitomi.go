@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
@@ -101,25 +102,72 @@ type nozomiFetchCall struct {
 type boundedCacheEntry interface {
 	entrySize() int
 	lastAccessed() time.Time
+	recordAccess(t time.Time)
+	accessOrder() *cacheOrderNode
+}
+
+// N-21（assess-20261109-1320・案A・ユーザー同意済み 2026-11-09）: access 順 LRU の物理記録機構。
+// C-05 正典削除順（上 comment・hit 時に access order を更新し、insert 後に最も古い access から
+// eviction）は不変。正典の全 entry 線形走査（O(n)）を、access 時の recordAccess 更新と eviction の
+// list.Back() 取得 O(1) へ置換する。物理順は記録機構から導く。機構を外れた field 直書き
+// （テスト pin・helper 経由 map 書換）は物理順を動かさない（value と分離・正典テストは pin 順 ==
+// insertion 順で as-is 合格）。副作用として LRU tie 決定化（既知 issue archive/
+// 2026-11-04-test-search-cache-size-cap-flaky-lru-tie.md の map 反復順 tie）は物理順ベースで解決。
+type cacheOrderNode struct {
+	list *list.List
+	elem *list.Element
+}
+
+func (n *cacheOrderNode) accessOrder() *cacheOrderNode { return n }
+
+func (n *cacheOrderNode) moveToFront() {
+	if n.list != nil && n.elem != nil {
+		n.list.MoveToFront(n.elem)
+	}
 }
 
 func boundedCachePut[K comparable, E boundedCacheEntry](cache map[K]E, totalBytes *int, maxEntries, maxBytes int, key K, entry E) {
+	node := entry.accessOrder()
 	if old, ok := cache[key]; ok {
 		*totalBytes -= old.entrySize()
+		on := old.accessOrder()
+		node.list, node.elem = on.list, on.elem
+	} else {
+		// 新 entry は order へ登録（既存 order の list 参照のみ共有・既存 entry の elem を写さない）
+		for _, e := range cache {
+			node.list = e.accessOrder().list
+			break
+		}
+	}
+	if node.list == nil {
+		node.list = list.New()
+	}
+	if node.elem == nil {
+		node.elem = node.list.PushFront(key)
+	} else {
+		node.list.MoveToFront(node.elem)
 	}
 	cache[key] = entry
 	*totalBytes += entry.entrySize()
 	for len(cache) > maxEntries || *totalBytes > maxBytes {
-		var oldestKey K
-		var oldest time.Time
-		for k, e := range cache {
-			if oldest.IsZero() || e.lastAccessed().Before(oldest) {
-				oldest = e.lastAccessed()
-				oldestKey = k
-			}
+		elem := node.list.Back()
+		if elem == nil {
+			// helper 経由 direct map 書換（非登録）entry は cap 超過分がその entry のみなら
+			// order で eviction できない（無限ループ防止の guard・正典書込経路は put helper のみで非発動）
+			break
 		}
-		*totalBytes -= cache[oldestKey].entrySize()
-		delete(cache, oldestKey)
+		evictKey, ok := elem.Value.(K)
+		if !ok {
+			break
+		}
+		e, ok := cache[evictKey]
+		if !ok {
+			node.list.Remove(elem)
+			continue
+		}
+		*totalBytes -= e.entrySize()
+		delete(cache, evictKey)
+		node.list.Remove(elem)
 	}
 }
 
@@ -134,6 +182,7 @@ func boundedMax(maxEntries, maxBytes, defaultEntries, defaultBytes int) (int, in
 }
 
 type searchCacheEntry struct {
+	cacheOrderNode
 	ids        []int
 	fetchedAt  time.Time
 	lastAccess time.Time
@@ -141,9 +190,11 @@ type searchCacheEntry struct {
 
 func (e *searchCacheEntry) entrySize() int { return len(e.ids) * 8 }
 func (e *searchCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+func (e *searchCacheEntry) recordAccess(t time.Time) { e.lastAccess = t; e.moveToFront() }
 
 // R-10: (query, lang) 単位の最終結果 cache entry。entrySize は既存 convention（ids*8）。
 type searchResultCacheEntry struct {
+	cacheOrderNode
 	ids        []int
 	storedAt   time.Time
 	lastAccess time.Time
@@ -151,8 +202,10 @@ type searchResultCacheEntry struct {
 
 func (e *searchResultCacheEntry) entrySize() int { return len(e.ids) * 8 }
 func (e *searchResultCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+func (e *searchResultCacheEntry) recordAccess(t time.Time) { e.lastAccess = t; e.moveToFront() }
 
 type indexTopCacheEntry struct {
+	cacheOrderNode
 	node       *bnode
 	fetchedAt  time.Time
 	lastAccess time.Time
@@ -160,8 +213,10 @@ type indexTopCacheEntry struct {
 
 func (e *indexTopCacheEntry) entrySize() int { return maxNodeSize }
 func (e *indexTopCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+func (e *indexTopCacheEntry) recordAccess(t time.Time) { e.lastAccess = t; e.moveToFront() }
 
 type indexNodeCacheEntry struct {
+	cacheOrderNode
 	node       *bnode
 	fetchedAt  time.Time
 	lastAccess time.Time
@@ -169,8 +224,10 @@ type indexNodeCacheEntry struct {
 
 func (e *indexNodeCacheEntry) entrySize() int { return maxNodeSize }
 func (e *indexNodeCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+func (e *indexNodeCacheEntry) recordAccess(t time.Time) { e.lastAccess = t; e.moveToFront() }
 
 type indexDataCacheEntry struct {
+	cacheOrderNode
 	ids        []int
 	fetchedAt  time.Time
 	lastAccess time.Time
@@ -178,6 +235,7 @@ type indexDataCacheEntry struct {
 
 func (e *indexDataCacheEntry) entrySize() int { return len(e.ids) * 8 }
 func (e *indexDataCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+func (e *indexDataCacheEntry) recordAccess(t time.Time) { e.lastAccess = t; e.moveToFront() }
 
 // gateLaneState は Phase 4（decision 2026-11-05）の 2 レーンゲート状態。共有 `last` 連鎖は
 // 系統間隔の global 遵守（FIFO）を維持する。foreground は現行 FIFO 将来予約のまま。

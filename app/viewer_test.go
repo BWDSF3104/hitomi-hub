@@ -965,14 +965,15 @@ func TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit(t *testing.T) {
 	}
 
 	// Windows clock granularity can tie same-instant timestamps. Fix access order
-	// explicitly after each insert so LRU eviction order is deterministic.
+	// explicitly after each insert via the access recording mechanism (N-21・access 順意味・
+	// recordAccess が物理 access order を更新) so LRU eviction order is deterministic.
 	base := time.Now()
 	for i, id := range []int{1, 2, 3} {
 		if _, err := v.info(id, false); err != nil {
 			t.Fatalf("info %d: %s", id, err)
 		}
 		if entry, ok := v.infoCache[id]; ok {
-			entry.lastAccess = base.Add(time.Duration(-30+10*i) * time.Second)
+			entry.recordAccess(base.Add(time.Duration(-30+10*i) * time.Second))
 		}
 	}
 	if len(v.infoCache) != 2 {
@@ -5690,9 +5691,10 @@ func TestCacheClearResetsMemoryCachesWithoutChangingCacheHeaders(t *testing.T) {
 	v.client.gg = viewerFixtureGG()
 	hash := strings.Repeat("4", 63) + "1"
 
-	// warm memory（memory hit は network を消費しない・既存流儀）
+	// warm memory（memory hit は network を消費しない・既存流儀・access 順意味の記録機構経由で
+	// order へ登録）
 	v.infoCacheMu.Lock()
-	v.infoCache[4252697] = &infoCacheEntry{info: &GalleryInfo{ID: 4252697}, lastAccess: time.Now()}
+	v.putInfoCacheLocked(4252697, &infoCacheEntry{info: &GalleryInfo{ID: 4252697}, lastAccess: time.Now()})
 	v.infoCacheMu.Unlock()
 	v.client.rememberNegativeNoFull(hash, "webp", v.client.gg)
 

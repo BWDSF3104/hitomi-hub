@@ -153,6 +153,7 @@ const (
 )
 
 type infoCacheEntry struct {
+	cacheOrderNode
 	info       *GalleryInfo
 	lastAccess time.Time
 }
@@ -175,6 +176,7 @@ func (e *infoCacheEntry) entrySize() int {
 }
 
 func (e *infoCacheEntry) lastAccessed() time.Time { return e.lastAccess }
+func (e *infoCacheEntry) recordAccess(t time.Time) { e.lastAccess = t; e.moveToFront() }
 
 // putInfoCacheLocked must be called with infoCacheMu held.
 func (v *viewer) putInfoCacheLocked(id int, entry *infoCacheEntry) {
@@ -1857,7 +1859,7 @@ func (v *viewer) info(id int, background bool) (*GalleryInfo, error) {
 	v.infoCacheMu.Lock()
 	entry, ok := v.infoCache[id]
 	if ok {
-		entry.lastAccess = time.Now()
+		entry.recordAccess(time.Now())
 		v.infoCacheMu.Unlock()
 		return entry.info, nil
 	}

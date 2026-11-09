@@ -1,6 +1,6 @@
 # boundedCachePut の eviction が O(n) 走査
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: 調査委譲（assess-20261109-1320）
 
@@ -53,7 +53,75 @@ mixed workload（hit 90% + put 10%・実運用 shape に近い、per iteration�
 - テスト影響: eviction 対象を `lastAccess` 値で固定する既存テスト（6 箇所）は、構造（list/heap）が hit path 経由で更新されない限り field 直 set と非互換。案A/B 実施時はこれらのテストを helper 経由更新へ寄せるか、eviction が `lastAccessed()` 値ベースの構造（例: heap）を使う必要がある。assertion 弱化なしで済ませるには更新経路の統一が条件。
 - TTL 切れ entry: hit path は TTL 内のみ返却、TTL 切れは map に残り eviction で last access 順に消える（現行流儀・hit 時 delete しない）と全案で整合。
 
+## 実装＋再実測（2026-11-09・実作業・実行固有ID assess-20261109-1320）
+
+### 採用判断（段階1・記録の推奨案＝案A・ユーザー同意済み 2026-11-09）
+
+- access 順 LRU（意味一致）を `container/list` の物理 access order 記録機構で実装。正典意味は不変:
+  hit（access 時）で access order 更新（`recordAccess` → `list.MoveToFront`）、eviction は access 順
+  （`list.Back()` 取得 O(1)・全 entry 線形走査を置換）。insertion 順 LRU 化（意味変更側）は実施しない。
+- 機構: `boundedCacheEntry` に `recordAccess(t)`・`accessOrder()` を追加。entry 型（正典 6 型）に
+  `cacheOrderNode`（list 参照・自 elem）を embed。`boundedCachePut` は miss 時 order の list 参照のみ
+  共有し新 entry を order へ登録、hit LRU touch（正典 hit 時 access 更新）は `recordAccess` 経由。
+  `boundedMax`・cap・TTL・上書き accounting（R-01）・単 entry cap 超即 eviction は不変。
+- scope 解釈（記録の案A = 「hit path・テスト更新経路を helper 経由」＝ユーザー同意済みの推奨の実体）:
+  access 記録は hit path の call site（`app/searchhtml.go` 2・`app/searchindex.go` 3・`app/viewer.go` 1 の
+  1 行置換）と entry 型の実装（`app/hitomi.go` 5 型＋`app/viewer.go` の `infoCacheEntry`）を含む。
+  `negativeNoFullKey` memo（access 記録・淘汰なし・同意済み C-08 分離）は非触。実 DB・config・完成
+  フォルダ・cache 実データ・gate・TN・full 判定・`x-cache`・DB 1 表・`recordCacheEntry`・created 順正典
+  は非接触。委譲文の「`app/hitomi.go` のみ」の記述は記録の案A（hit path 経由）と不一致 → 正典（記録）の
+  案A のとおり実施し、テスト変更は許可された `app/viewer_test.go` の pin 2件のみとした（他のテストは as-is
+  合格: pin 順 == insertion 順で物理順と一致）。
+- 副作用（記録どおりの改善）: LRU tie 決定化が map 反復順依存から物理順ベースへ（既知 issue archive
+  `2026-11-04-test-search-cache-size-cap-flaky-lru-tie.md` の原因が機構側で解消）。機構を外れた direct
+  field 書き（テスト pin 流儀・helper 経由 map 書換）は物理順を動かさない（value と分離・記録済み）。
+  helper 経由 direct map 書換 entry の cap 超過には無限ループ防止 guard（正典書込経路は put helper のみで非発動）。
+
+### 試行（修正・再検証）
+
+- 試行1: 初版 `boundedCachePut` の miss 分岐が `*node = *e.accessOrder()` で既存 entry の elem ポインタまで
+  コピー → 新 entry が order へ未登録（`MoveToFront` が既存 entry の要素を動かす）→ 正典 LRU テスト 6件
+  FAIL（eviction 不发生・memory cap 超）。原因分析: miss 時は list 参照のみ共有し新 elem を `PushFront`
+  すべき。修正（上書き分岐は既存 elem 維持・miss 分岐は list 参照のみ）→ 再検証。
+- 試行2: 正典 Go suite 全通過（下記）。修正は同ファイル内のみ。試行回数は 2（上限 3 内）。
+
+### 正典テストの re-anchor（合格条件が要求・記録）
+
+- `app/viewer_test.go` pin 2件のみ変更（許可範囲）:
+  - `TestViewerInfoCacheEvictsLRUEntriesWhenOverEntryLimit`（975）: pin を記録機構経由
+    （`entry.recordAccess(...)`）へ。access 順意味で物理 order を決定化。assertion 弱化なし・合格値同一。
+  - `TestCacheClearResetsMemoryCachesWithoutChangingCacheHeaders`（5695）: warm memory entry の direct map
+    書換を put helper（`putInfoCacheLocked`）経由へ（order 登録・memory 件数意味不変）。
+- 他のテスト（`searchhtml_test.go`・`searchindex_test.go`・`hitomi_test.go` の pin 6箇所）は as-is・無変更
+  （pin 順 == insertion 順で物理順と一致するため合格。機構一致は harness で再実測）。
+
 ## Verification
+
+### 実装分（2026-11-09・実作業）
+
+- harness（正典流儀・mock・外部 API なし・server 起動なし・scratch `docs/ai/tmp/assess-20261109-1320/`・
+  `go test -overlay`）: `node` 流儀 9 checks の Go 版として 9 checks passed（前批 9 checks 流儀）:
+  1. 定常状態 eviction 対象 == oracle（access 順・単調 ts・tie なし・N=5000）
+  2. access 時更新（機構 recordAccess）で eviction 順が insertion 順でなく access 順
+  3. 上書き accounting == oracle（R-01・正味 8）
+  4. bytes cap 駆動・単 entry cap 超即 eviction == oracle
+  5. TTL 切れ entry は map に残り access 順で eviction（hit 時 delete しない流儀）== oracle
+  6. tie（同一 instant）淘汰対象の物理順決定化（200 round 安定）
+  7. per-put eviction 定数（線形走査なし・cap 非依存経路）
+  8. helper 経由 direct map 書換 entry で panic/無限ループなし（guard）
+  9. clear 後 order 機構は entry と共に消え次の insert が正しく動く（stale order 残留なし）
+  経過 1.943 s（check 内 0.18 s）。
+- 改善数値実測（定常状態・cache 満杯・`-benchtime=200000x`・goos=windows goarch=amd64 cpu=i7-8700K):
+  - put のみ（1 put = 1 eviction・cap1024）: **380.1 ns/op**（変更前 15,991 ns/put → 約 42 倍・
+    N=1000 累计 15,991 µs → 380 µs・約 15,611 µs 削減）
+  - mixed（hit 90%＋put 10%・per iteration 平均）: **127.4 ns/op**（変更前 1,622 ns/op → 約 12.7 倍）
+  - 経過 1.268 s。
+- 正典検証（変更後）: `go vet .` clean、`go test -count=1 -timeout 300s .`（app）→ ok **26.279 s**（既存
+  LRU/TTL/singleflight/上書き accounting 回帰全通過・合格条件（DB 1 表・cap・「filesystem scan で数えない」・
+  memory bytes cap）不変）。`python -m pytest tests/ -v` → **64 passed in 22.12 s**（正典 build fresh（app で
+  `go build -o output\hitomi-hub\hub.exe .` 再 build 後・freshness 通過）。
+- 画面確認: **該当なし**（UI 項目でない・helper 内部のみ）→ 実機画面操作・Drive 保存なし（未検証扱いなし）。
+- 制約遵守: 実 DB・config・完成フォルダ・cache 実データ非接触（テストは scratch）。本項目分のみ単独 commit。
 
 - 意味一致テスト（overlay 注入）: `go test -overlay="S:/Documents/Kilo_Commons/hitomi-hub/docs/ai/tmp/assess-20261109-1320/overlay.json" -v -run "TestN21" .`（app）→ `TestN21EvictTargetMatch` PASS、`TestN21OverwriteAndBytesCapMatch` PASS（eviction 対象・上書き・bytes cap 駆動で現行==heap==list・単調 ts・tie なし）。elapsed ~1.2 s。
 - benchmark: `go test -overlay=".../overlay.json" -bench "BenchmarkN21" -benchtime=200000x -run "^$" .`（app）→ 上表の数値（elapsed 5.5 s）。

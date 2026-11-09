@@ -126,7 +126,7 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 
 	c.searchCacheMu.Lock()
 	if entry, ok := c.searchCache[cacheKey]; ok && time.Since(entry.fetchedAt) < searchCacheTTL {
-		entry.lastAccess = time.Now()
+		entry.recordAccess(time.Now())
 		c.searchCacheMu.Unlock()
 		return copyInts(entry.ids), nil
 	}
@@ -441,7 +441,7 @@ func (c *Client) searchAllIDs(query, lang string, background bool) ([]int, error
 		cacheKey = searchResultCacheKey(terms, state.language)
 		c.searchResultCacheMu.Lock()
 		if entry, ok := c.searchResultCache[cacheKey]; ok && time.Since(entry.storedAt) < searchResultCacheTTL {
-			entry.lastAccess = time.Now()
+			entry.recordAccess(time.Now())
 			c.searchResultCacheMu.Unlock()
 			return copyInts(entry.ids), nil
 		}
