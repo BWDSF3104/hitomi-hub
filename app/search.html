@@ -226,18 +226,38 @@ function normalizeTitleKey(r) {
   return String(r.title || r.japanese_title || r.id || "").trim().toLowerCase();
 }
 
+const titleGroupsPersistDebounceMs = 250;
+let titleGroupsPersistTimer = null;
+let lastTitleGroupsPersisted = null;
+
 function loadTitleGroups() {
   try {
-    const raw = JSON.parse(localStorage.getItem(TITLE_GROUPS_STORAGE_KEY));
+    const raw = localStorage.getItem(TITLE_GROUPS_STORAGE_KEY);
     if (!raw) return;
-    for (const [key, group] of Object.entries(raw)) titleGroups.set(key, group);
+    lastTitleGroupsPersisted = raw;
+    const parsed = JSON.parse(raw);
+    if (!parsed) return;
+    for (const [key, group] of Object.entries(parsed)) titleGroups.set(key, group);
   } catch (err) {}
 }
 
-function saveTitleGroups() {
+function persistTitleGroups() {
+  const payload = JSON.stringify(Object.fromEntries(titleGroups));
+  if (payload === lastTitleGroupsPersisted) return;
   try {
-    localStorage.setItem(TITLE_GROUPS_STORAGE_KEY, JSON.stringify(Object.fromEntries(titleGroups)));
+    localStorage.setItem(TITLE_GROUPS_STORAGE_KEY, payload);
+    lastTitleGroupsPersisted = payload;
   } catch (err) {}
+}
+
+function flushTitleGroups() {
+  titleGroupsPersistTimer = null;
+  persistTitleGroups();
+}
+
+function saveTitleGroups() {
+  if (titleGroupsPersistTimer) clearTimeout(titleGroupsPersistTimer);
+  titleGroupsPersistTimer = setTimeout(flushTitleGroups, titleGroupsPersistDebounceMs);
 }
 
 function setSearchTitleGroup(r) {

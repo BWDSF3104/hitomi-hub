@@ -1,6 +1,6 @@
 # N-10: titleGroups を毎カード localStorage へ全量書き込み
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 画面確認（served）不合格のまま: 共用 browser の占有解消後、記録の実装 plan（debounce＋同値 skip・named callback 流儀）と scratch の harness コピーを再適用し served 画面確認を再実行 → 正典検証 → task_manager end。実装分は不合格により破棄済み（HEAD d80ca07 復元）
@@ -221,3 +221,48 @@ function saveTitleGroups() { // clearTimeout→reschedule（既存流儀）
 - Status/Next Action は正典 task_manager で更新（本項目は不合格のまま進行中）。
 
 コミット: record only（本項目分）。実装・テスト分は不合格によりコミットしない。
+
+## 2026-11-10 実装委譲再実行（項目#10・実装サブエージェント・assess-20261109-1320 分の再実行）
+
+**合否: 合格（画面確認含む・帰属確立）・項目終了**。修正・再検証試行: 3 回（画面確認試行として。内訳下記）。
+
+### 採用した判断（推奨案・ユーザー同意済み 2026-11-09・記録の実装 plan どおり）
+
+- `app/search.html` persist helper 群（manualBlock/patchHelperBlock/schedulerBlock 境界外）に `titleGroupsPersistDebounceMs = 250`（新定数・`readListsDebounceMs` は流用不変）＋ `lastTitleGroupsPersisted`（raw baseline・`loadTitleGroups()` が raw 文字列で seeds）＋ `persistTitleGroups()`（同値 skip・setItem 成功時のみ baseline 更新・catch 握りつぶし挙動維持）＋ `flushTitleGroups()` ＋ `saveTitleGroups()`（clearTimeout→reschedule 既存 debounce helper 流儀・named callback）。
+- `setSearchTitleGroup` の group 決定条件・呼出口・key・保存内容・データ構造・UI 挙動は不変（persist 束ねのみ）。件数上限・淘汰順（bounded 側）は承認案件のまま未実施。
+- named callback 流儀維持（前回の literal 衝突解決どおり。read_lists_debounce_harness の `clearTimeout < setTimeout(() => {` 順序判定と衝突しない）。既存 pin 全保持（テスト変更不要）。
+- harness 2 ファイルは scratch 残置コピー（`docs/ai/tmp/n10-impl-20261109/`）を `tests/` へ再現（正典流儀・mock・外部 API なし）。
+
+### 実測（harness・再実測）
+
+- `node tests/title_groups_persist_debounce_harness.mjs` → **20 checks passed**（約1 s）。改善数値: sync 75 write 累计 **435.2 ms** → debounce 1 write flush **5.4 ms**（機械分散・前回 447.3→5.2・前批 747→11.1 と同一機構・bounds >300/<100 合格）。決定論動作: cold 75→window 末 1 write・warm round trip 同値 skip（write 0）・load raw seeds・condition classes（schedule 15・skip 10）保持。
+
+### 正典検証（合格）
+
+- `go vet .` clean・`go test -count=1 -timeout 300s .`（app）→ ok 36.240 s（`TestEmbeddedUIHasSameTitleJapaneseAnchor` pin 全保持）。
+- 正典 build fresh（`go build -o ...output/hitomi-hub/hub.exe .`）。`python -m pytest tests/ -v` → **66 passed**（27.39 s・freshness test 含む）。既存 harness: read_lists_debounce 29・manual_jp 20・prefetch 42 → 全通過。
+
+### served 画面確認（合格・帰属確立）
+
+- 準備: fresh canonical `hub.exe`（実装後 build・freshness 合格・同一 exe から served）＋ fresh server instance（pid 23212・port 8761・scratch dataDir `docs/ai/tmp/n10-impl-20261110/served_data`・schema/config コピー。実 DB・正典 config・完成フォルダ非接触）＋ isolated origin（context `n10-impl-20261110`・自 tab のみ）＋ window size 自然 inner 1666x932（outer 1679x1025・人工 resize なし・card 切り取りなし）。
+- 試行1: isolated origin 作成直後に測定 install 前へ state（hash `#/q/furry/page/1`・3 keys・74 groups）出現 → 帰属確立不能（不合格）。**帰属訂正（本実行・実測で閉じた）**: このパターンは app 自身の起動時挙動で説明できる — 起動時 `runSearch()`（`app/search.html` 1122-1123）＋ `#query` 既定値 `furry`（`:105`）＋ `history.replaceState`（`:837`）が同一 origin へ hash/storage を書く。install（write/呼出 counter）を起動 run の write 前に入れ、clean を確認すれば帰属確立可能（前批記録の「共用 browser 乗っ取り」帰属は本実行では成立せず。前批記録は書き換えず本実行の区別記録のみ）。
+- 試行2: clean start 確認済みだが clean 判定の誤検知（patch した `setItem` instance property が `Object.keys(localStorage)` に混入）で測定前に exit（不合格）。
+- 試行3（合格）: 単一 tool call 内で marker 確認 → storage clear → install（呼出/書入 counter）→ clean 確認（install 時 hash ""・keys 空）→ 測定。帰属確立（測定チェーン同一文書・call 内外部変更なし）。
+  - schedules（`saveTitleGroups` 呼出）累计 286 → title_groups key 実 write 14（window 束ね。content 変更 window のみ write）。同値 skip served 実証: 同一 content の再 search/page 移動 flush で title_groups write 追加なし（last_search/filters のみ）。cold page 1（呼出 25）は fetch wave ごとの window write（1349/1909/3128 ms）。
+  - storage 内容 == 画面 map（storageEqualsMap true・groups 121・japanese 52）。pages 1-4（100 cards）で表示↔storage 照合 mismatches 0。
+  - positive link 表示: page 4 English カード「Twitter Archive」に「同名の日本語版: #4298714」link（href `/#/g/4298714` == storage bestId 4298714）。
+  - negative 観察（区別）: page 2 manual click（操作）で該当 term の日本語版見つからず link 化なし。
+  - 保存結果正しさ: storageEqualsMap 全測定点 true・同値 skip・window 束ね（write ≤ window 数 < schedules）。
+
+### Drive 保存（フォルダ名＝項目 slug・規則準守）
+
+- `I:\マイドライブ\kilo\2026-11-10-hitomi-hub\` へ confirmation txt + 10 png（before/after 各組): `n10-t3-cold-before-20261110.png` / `n10-t3-cold-after-20261110.png` / `n10-t3-page2-before-20261110.png` / `n10-t3-page2-after-20261110.png` / `n10-t3-manualclick-before-20261110.png`（negative 観察）/ `n10-t3-page3-before-20261110.png` / `n10-t3-page3-after-20261110.png` / `n10-t3-page4-before-20261110.png` / `n10-t3-page4-after-20261110.png` / `n10-t3-link4298714-card-20261110.png`（positive link card 被写体）。
+- local copy cleanup: project root 内の `n10-t3-link4298714-card-20261110.png` は正典 `kilo-safe-remove` でゴミ箱へ送った（Drive 側保持）。Playwright 出力 png（project root 外 `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`）は正典削除の承認範囲外 → 残存＝追加承認要（正典条の例外として記録）。
+
+### ブラウザ
+
+- 自 isolated tab（`n10-impl-20261110`）を閉じた（閉じた事実は結果報告時にも維持）。server（pid 23212）停止済み。
+
+### commit（本項目分のみ）
+
+- `app/search.html`（persist helper 群）・`tests/title_groups_persist_debounce_harness.mjs`（新規）・`tests/test_title_groups_persist_debounce.py`（新規）・本タスク記録追記・`current-task.tsv` 本項目参照行（`task_manager end`）。commit・push は commit message 記載（コミット後ハッシュは結果報告に残す）。
