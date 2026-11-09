@@ -2,7 +2,7 @@
 
 **実行固有ID**: assess-20261109-1320
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: 調査委譲（assess-20261109-1320）
 
@@ -57,6 +57,11 @@ B-10（`a303a4e`・11-03、残件 `6a18e14`・11-04）は Python 単側（Go の
 
 推定規模: decision 記録・小（docs のみ）。テスト分類（案A の核心語彙固定）: 小（既存 17 組の明示注記）。案B 実施（承認後）: 中（削除 1450 行＋正典条 2 変更）。
 
+### 実行（記録のみ・2026-11-09）
+
+- decision エントリ作成: `docs/ai/decisions/2026-11-09-scan-parity-direction-go-implementation-canonical.md`（方向定義: Go＝実装正典・Python＝核心語彙の单向例示・drift＝例示差異・テスト分類は記載のみ・AGENTS.md 両立説明を含む）。ユーザー同意（2026-11-09・推奨案A）を根拠として明記。
+- 実測補足（ミラー照合): 名前完全一致のミラーは **10 組**（`tests/test_scan.py` 49 ↔ `app/scan_test.go` 37）。記録の 17 組は cross-name pair を含む分類数で、cross-name pair の実在を確認（`app/main_test.go`: `TestNewDBFindingsUniqueIndexKeyIncludesPath`・`TestAddFindingIsIdempotentForSameFinding`・`TestRescanContentChangeMarksStaleFindingsResolved`）。17 組は実ファイル基準ではなく記録上の分類数として decision に実測補付きで記載。テスト実ファイル・`src/scan.py`・`app/scan.go` は非変更（移動・改名・削除なし）。
+
 優先順位付け要素: 重要度=中（保守性。ユーザー影響なし・cross-check 価値は実証済み）、緊急度=低〜中（現在失败 0。drift 3 件は別項目で pending）、リスク=案B 中（正典変更＋検証ネット喪失）、依存=decision 2026-11-09 implementation list（`tests/test_scan.py:417`）・N-01（pending）・AGENTS.md Code Scope（write-protected）。
 
 UI 確認: UI 項目でない（画面該当なし）→ 省略。キャプチャ保存なし。
@@ -66,6 +71,7 @@ UI 確認: UI 項目でない（画面該当なし）→ 省略。キャプチ�
 - ルート `python -m pytest tests/ -v`（2026-11-09・assess-20261109-1320）: **60 passed / 0 failed・25.66 s**（`tests/test_scan.py` 49 件・`test_canonical_build_freshness.py` 含む合格）。2026-11-08 の N-01 実測で 1 failed で記録された `test_canonical_build_freshness_rule_exists`（KI-20261106-04）は archive 済みの該当 issue と整合し、今回合格。
 - `app` で `go vet . && go test -count=1 -timeout 300s .`（2026-11-09・同ID）: vet clean・**ok 47.503 s**（Go 変更案があるため実施。本項目はソース無変更）。
 - 実 DB・完成フォルダ・config 非変更。使い捨てスクリプトなし（静的確認＋suite 実行のみ）。
+- 実行フェーズ再実測（2026-11-09・同ID・記録のみ変更後): ルート `python -m pytest tests/ -v` = **63 passed / 0 failed・15.48 s**。`app` で `go vet .` clean・`go test -count=1 -timeout 300s .` = **ok 38.232 s**。正典 suite 全緑。
 
 ## 完了時 Memory Bank 操作
 
