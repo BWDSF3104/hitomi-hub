@@ -89,27 +89,27 @@ function renderSettings() {
     settingsList.innerHTML = "";
     constantsList.innerHTML = "";
 
-    addRow(settingsList, "DB ファイル名", String(s.db), "ローカル DB file. UI write excluded.");
-    addRow(settingsList, "download 完成フォルダ名", String(s.gallery_dir), "download 成果物 folder.アプリ側では削除しない.");
-    addRow(settingsList, "永続 cache folder", String(s.cache_dir), "full cache root. galleryinfo は <cache_dir>/galleryinfo. UI write excluded.");
-    addRow(settingsList, "acquisition folder", String(s.acquisition_dir), "画面「取得」で write する folder.アプリ側では削除しない. UI write excluded.");
+    addRow(settingsList, "DB file name (db)", String(s.db), "ローカル DB file. UI write excluded.");
+    addRow(settingsList, "download completed folder name (gallery_dir)", String(s.gallery_dir), "download 成果物 folder. This is not acquisition folder.");
+    addRow(settingsList, "persistent cache folder (cache_dir)", String(s.cache_dir), "full cache root. galleryinfo is <cache_dir>/galleryinfo. UI write excluded.");
+    addRow(settingsList, "acquisition folder (acquisition_dir)", String(s.acquisition_dir), "画面「取得」で write する folder. This is not download completed folder.");
     addRow(settingsList, "Viewer port / bind", `${s.viewer.port} / ${s.viewer.bind}`, "listener setting. restart required. UI write excluded.");
     addRow(settingsList, "Browser memory cap", String(s.viewer.max_object_urls), "page objectURL count cap. UI write excluded.");
-    addRow(settingsList, "hitomi data interval", `${s.hitomi.min_interval_ms} ms`, "data lane gate interval.");
-    addRow(settingsList, "hitomi image interval", `${s.hitomi.image_min_interval_ms} ms`, "image lane gate interval.");
+    addRow(settingsList, "data lane interval", `${s.hitomi.min_interval_ms} ms`, "data lane gate interval.");
+    addRow(settingsList, "image lane interval", `${s.hitomi.image_min_interval_ms} ms`, "image lane gate interval.");
     addRow(settingsList, "image format", String(s.hitomi.image_format), "shard URL format. galleryinfo name ext is not used.");
     addRow(settingsList, "VirusTotal flags", `${String(s.virustotal.enabled)} / ${String(s.virustotal.hash_only)} / ${String(s.virustotal.upload_unknown)}`, "enabled / hash_only / upload_unknown.");
     addRow(settingsList, "VirusTotal env name", String(s.virustotal.api_key_env), "API key value is not shown. env name is shown.");
     addRow(settingsList, "Limits", `${s.limits.max_entries} / ${s.limits.max_uncompressed_bytes} / ${s.limits.max_scan_bytes}`, "export entries / uncompressed bytes / scan head bytes.");
 
     addRow(constantsList, "Disk cache cap", String(s.constants.cache_disk_max_entries), "full/thumbs count cap per kind, created order. UI write excluded.");
-    addRow(constantsList, "Viewer floor", String(s.constants.viewer_floor), "memory cap lower bound. UI write excluded.");
-    addRow(constantsList, "Negative cache cap", String(s.constants.negative_cache_max_entries), "no_full negative cache cap.");
-    addRow(constantsList, "Negative cache TTL", `${s.constants.negative_cache_ttl_ms} ms`, "no_full, search result, block penalty window.");
-    addRow(constantsList, "Politeness interval", `${s.constants.politeness_default_interval_ms} ms`, "backoff target while block is active.");
-    addRow(constantsList, "Gallery info disk cap", `${s.constants.galleryinfo_disk_max_entries} entries / ${s.constants.galleryinfo_disk_max_bytes} bytes`, "galleryinfo disk cache cap.");
+    addRow(constantsList, "Viewer lower bound", String(s.constants.viewer_floor), "memory cap lower bound. UI write excluded.");
+    addRow(constantsList, "negative cache cap", String(s.constants.negative_cache_max_entries), "no_full negative cache cap.");
+    addRow(constantsList, "negative cache TTL", `${s.constants.negative_cache_ttl_ms} ms`, "no_full, search result, block penalty window.");
+    addRow(constantsList, "politely backoff interval", `${s.constants.politeness_default_interval_ms} ms`, "backoff target while block is active.");
+    addRow(constantsList, "gallery info disk cap", `${s.constants.galleryinfo_disk_max_entries} entries / ${s.constants.galleryinfo_disk_max_bytes} bytes`, "galleryinfo disk cache cap.");
     addRow(constantsList, "Scan cache TTL", `${s.constants.scan_cache_ttl_ms} ms`, "positive VT verdict cache TTL.");
-    addRow(constantsList, "Negative scan TTL", `${s.constants.negative_scan_cache_ttl_ms} ms`, "negative VT verdict cache TTL.");
+    addRow(constantsList, "negative scan TTL", `${s.constants.negative_scan_cache_ttl_ms} ms`, "negative VT verdict cache TTL.");
     addRow(constantsList, "YARA path", "not shown", "executable path is intentionally not shown in UI. UI write excluded.");
   }).catch((e) => {
     status.textContent = e.message || "settings fetch failed";

@@ -55,6 +55,7 @@ guard・secret・security:
 - `GET /api/settings` を追加。`read_only` を返し、`api_key` value を返さない。`api_key_env` だけ返す。
 - settings UI は `viewer.html` から削除し、`/settings` dedicated settings page を追加。
 - Settings values/constants は Japanese labels、value cell、meaning、grid gap `.75rem 1.25rem` で表示。
+- Settings page labels を Japanese name + original constant name formatへ更新。`Galleries` row は `download completed folder name (gallery_dir)`、`acquisition` row は `acquisition folder (acquisition_dir)` にし、両者を混同しない意味 added.
 - Dedicated settings page 内では `Browser memory cap` と `Disk cache cap` を read-only 表示項目として扱う。Viewer page には cap notification UI を置かない。
 - `viewer.html` に settings panel、`settings-values`、settings fetch、`renderSettings()` を含めない。
 - `settings.html` を `go:embed` に追加し、canonical freshness test へ `app/settings.html` を追加。
@@ -66,7 +67,7 @@ guard・secret・security:
 - `python -m pytest tests/ -v`: 60 passed。`test_canonical_executable_embeds_current_pages` 合格（`app/settings.html` を含む）、`test_viewer_objecturl_cap_and_status_priority_behaviours` の no notification UI condition 合格。
 - canonical build freshness: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` を再実行。
 - served canonical server: `curl.exe -s http://127.0.0.1:8731/api/settings` が `read_only=true`、`api_key` value なし、`api_key_env=VIRUSTOTAL_API_KEY`、`constants.cache_disk_max_entries=4000`、`constants.viewer_floor=1000` を返す。
-- served `/settings` visual: fresh isolated origin `settings-page-20261109`。actual window size `1666x932`、content height `1751`。Settings values/constants が Japanese labels + `gap: .75rem 1.25rem` で表示。Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\settings-page-20261109.png`。
+- served `/settings` visual: fresh isolated origin `settings-page-20261109`。actual window size `1666x932`、content height `1751`。Settings values/constants が Japanese labels + `gap: .75rem 1.25rem` で表示。Updated label verification: `DB file name (db)`, `download completed folder name (gallery_dir)`, `acquisition folder (acquisition_dir)`, `Viewer lower bound`, `negative cache cap`, `politely backoff interval`, `gallery info disk cap`. Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\settings-page-20261109-v2-full.png`。
 - existing viewer behavior: served `/` visual snapshot に settings panel なし。Viewer page の nav、reader controls、acquisition controls、reader form は表示。Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\viewer-no-settings-panel-20261109.png`。local copies were moved to `scratch/` and sent to Recycle Bin by `kilo-safe-remove`.
 
 ## 完了時 Memory Bank 操作

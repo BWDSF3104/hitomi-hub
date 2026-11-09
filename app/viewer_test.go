@@ -4900,7 +4900,9 @@ func TestSettingsPageRendersJapaneseLabelsAndSpacing(t *testing.T) {
 		`document.createElement("dt")`,
 		`document.createElement("dd")`,
 		`String(s.constants.cache_disk_max_entries)`,
-		`DB ファイル名`,
+		`DB file name (db)`,
+		`download completed folder name`,
+		`acquisition folder`,
 		`Disk cache cap`,
 		`renderSettings();`,
 	} {
