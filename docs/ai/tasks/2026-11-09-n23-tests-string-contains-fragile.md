@@ -1,6 +1,6 @@
 # テストの HTML 文字列部分一致依存（保守性）
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: 調査委譲（assess-20261109-1320）
 
@@ -60,11 +60,19 @@
 
 UI 項目ではない（テスト方式の保守性評価）。画面確認は該当しないため省略。
 
+### 5. 本次の実施（decision 追認記録の作成・2026-11-09）
+
+- 段階1（推奨案で進める）: ユーザー同意済みの推奨（增量方針の追認）どおり decision エントリを作成 — `docs/ai/decisions/2026-11-09-tests-anchor-harness-incremental-policy-ratified.md`。
+- 追認内容: ①新規 UI 行為テストは Node harness 執行検査（正典流儀のまま）②既存 Go HTML anchor は正典意味固定の設計コストとして維持（re-anchor は変更時のみ）③全面移行は不採用（正典ルール変更・承認案件のまま）。
+- 変更は decision エントリと本タスク記録のみ。テストコード・テスト分類の実ファイル変更なし。正典 suite の合格条件は変更なし。段階3の持ち帰りなし。
+- 試行回数: 1（記録作成＋検証 1 回で合格）。
+
 ## Verification
 
 - `go vet . && go test -count=1 -timeout 300s .`（app）: 2026-11-09 実測 — vet 問題なし、go test `ok hitomi-hub/app 26.290s`
 - `python -m pytest tests/ -v`: 2026-11-09 実測 — `60 passed in 28.41s`（node harness 7 本・wrapper 10 本含む全通過）
 - 実測スクリプト: `docs/ai/tmp/assess-20261109-1320-contains-scan.py`（関数別 Contains 件数・HTML anchor 分類）
+- 合格条件の再実測（decision 追認時 2026-11-09・本次分 commit 前）: app `go vet . && go test -count=1 -timeout 300s .` — vet 問題なし・`ok hitomi-hub/app 37.362s`（全緑）。root `python -m pytest tests/ -v` — `63 passed in 15.97s`（全緑。63 件は追加テスト test_viewer_page_basis・test_viewer_prefetch_race 含む）。画面確認該当なし。
 
 ## 完了時 Memory Bank 操作
 
