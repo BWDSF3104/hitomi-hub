@@ -1,8 +1,8 @@
 # KI-20261109-01 — galleryinfo disk 層の置き場が `cache_dir` 既定形とズレる（手动 clear の実測で確認）
 
 **Date**: 2026-11-09
-**Status**: 記録（blocker なし・shape 決定待ち点は `app/main.go:80` の正典コメントに既記）
-**Task**: `docs/ai/tasks/2026-11-09-settings-manual-cache-clear-button.md`
+**Status**: 解決（2026-11-09・shape 決定 `docs/ai/decisions/2026-11-09-info-cache-shape-unified-with-cache-dir.md`・実データ move 完了）
+**Task**: `docs/ai/tasks/2026-11-09-settings-manual-cache-clear-button.md`（発見）・`docs/ai/tasks/2026-11-09-info-cache-shape-unified.md`（解消）
 
 ## 事実
 
@@ -22,3 +22,9 @@
 
 - 画面の「キャッシュクリア」で消えない galleryinfo file が残ることがある（過去の shape 由来）。データ損失・誤削除はない。
 - shape 決定（`defaultInfoCacheDirName` と `defaultCacheDirName` の形）が確定すれば解消する。解消作業は本タスクの範囲外。
+
+## 解決（2026-11-09）
+
+- 決定: `defaultInfoCacheDirName` = `defaultCacheDirName`（`cache/images`）へ統一（`docs/ai/decisions/2026-11-09-info-cache-shape-unified-with-cache-dir.md`）。
+- 実データ正規化: `output\hitomi-hub\cache\galleryinfo` の 429 file（9730497 byte）を app 経路 `output\hitomi-hub\cache\images\galleryinfo` へ move（move 後 old 0・new 429）。空 folder は `kilo-safe-rmdir` でゴミ箱。
+- served 実測: `GET /api/gallery/3888535` が移行後 path の disk file 内容と一致し、request 後も LastWriteTime が変わっていない（disk 層から読み・remote 書き換えなし）。

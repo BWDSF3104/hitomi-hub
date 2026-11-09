@@ -71,13 +71,12 @@ type Config struct {
 
 // 名前の既定値の単一出力元（decision docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md）。
 // cap・floor・TTL は設定化せず定数正典（同 decision）。page 側定数は config 外。
-// `defaultInfoCacheDirName` は galleryinfo 用の base。full cache（`defaultCacheDirName`）と
-// 形が異なる点は未確定（shape 決定待ち）で、挙動は変更しない。
+// `defaultInfoCacheDirName` は galleryinfo 用の base。full cache（`defaultCacheDirName`）と同じ形へ統一（decision 2026-11-09-info-cache-shape-unified-with-cache-dir）。
 const (
 	defaultDBName             = "hitomi.db"
 	defaultGalleryDirName     = "Galleries"
 	defaultCacheDirName       = "cache/images"
-	defaultInfoCacheDirName   = "cache"
+	defaultInfoCacheDirName   = defaultCacheDirName
 	defaultAcquisitionDirName = "acquisition"
 )
 

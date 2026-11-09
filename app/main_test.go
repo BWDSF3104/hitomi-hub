@@ -1609,6 +1609,19 @@ func TestConfigExampleDirNamesMatchCodeDefaults(t *testing.T) {
 	}
 }
 
+// decision docs/ai/decisions/2026-11-09-info-cache-shape-unified-with-cache-dir.md:
+// info 層の base は full cache と同一形。既定も明示値も同じ folder を追う。
+func TestInfoCacheDirNameSharesCacheDirBase(t *testing.T) {
+	var c Config
+	if c.InfoCacheDirName() != defaultCacheDirName || c.CacheDirName() != defaultCacheDirName {
+		t.Errorf("unified base must resolve to %s: info %q cache %q", defaultCacheDirName, c.InfoCacheDirName(), c.CacheDirName())
+	}
+	c.CacheDir = "scratch-cache"
+	if c.InfoCacheDirName() != "scratch-cache" || c.CacheDirName() != "scratch-cache" {
+		t.Errorf("explicit cache_dir must be followed by both layers: info %q cache %q", c.InfoCacheDirName(), c.CacheDirName())
+	}
+}
+
 // 設定化しない値（cap・floor・TTL）は example に key を置かない（同 decision）。
 // limits は例に列挙済みで、コード既定と一致することを固定する。
 func TestConfigExampleLimitsMatchCodeDefaults(t *testing.T) {

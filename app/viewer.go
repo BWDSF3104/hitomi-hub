@@ -39,7 +39,7 @@ type viewer struct {
 
 	// Phase 3（decision 2026-11-05）: gallery 情報の永続キャッシュ層（memory → disk → remote）。
 	// 画像バイト経路（imageProxy・TN・full cache）とは分離。置き場は完成フォルダ内
-	// cache/galleryinfo/<id>.json。
+	// <cache_dir>/galleryinfo/<id>.json（既定 cache/images・decision 2026-11-09-info-cache-shape-unified-with-cache-dir）。
 	infoCacheRoot   string
 	infoDiskTTL     time.Duration
 	infoDiskMaxEntries int
