@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-09
-**Next Action**: Settings page is read-only only. Original editable requirement needs write channel implementation. Settings labels updated to Japanese constant names; download/acquisition labels separated.
+**Next Action**: commit completed settings editable implementation
 
 ## 意図 / 背景
 
@@ -50,7 +50,7 @@ guard・secret・security:
 
 ## 変更内容（read-only implementation）
 
-推奨承認（`docs/ai/decisions/2026-11-09-settings-webui-approved-recommendations.md`）で実装したのは display-only settings panel だけ。future write allowlist は未実装。
+推奨承認（`docs/ai/decisions/2026-11-09-settings-webui-approved-recommendations.md`）で実装したのは dedicated settings page と editable write channel。Viewer page に settings panel は置かない。
 
 - `GET /api/settings` を追加。`read_only` を返し、`api_key` value を返さない。`api_key_env` だけ返す。
 - settings UI は `viewer.html` から削除し、`/settings` dedicated settings page を追加。
@@ -61,13 +61,36 @@ guard・secret・security:
 - `settings.html` を `go:embed` に追加し、canonical freshness test へ `app/settings.html` を追加。
 - Settings API に `constants` を追加。`api_key` value は返さない。`api_key_env` だけ返す。YARA path は UI で表示しない。
 
+## 変更内容（editable write implementation）
+
+- `POST /api/settings` を dedicated settings page へ追加。`GET /api/settings` は `read_only: false`、`editable: true`、`editable_keys` を返す。
+- Write allowlist は top-level `viewer`、`hitomi`、`limits`、`virustotal`。Field allowlist は `viewer.max_object_urls`、`hitomi.min_interval_ms`、`hitomi.image_min_interval_ms`、`hitomi.gg_force_min_interval_ms`、`hitomi.max_retries`、`hitomi.retry_backoff_ms`、`hitomi.image_format`、`hitomi.use_live_gg`、`limits.max_entries`、`limits.max_uncompressed_bytes`、`limits.max_ratio`、`limits.max_scan_bytes`、`limits.yr_timeout_sec`、`limits.yr_cpu_limit`、`limits.yr_skip_larger`、`limits.yr_fast_scan`、`virustotal.enabled`、`virustotal.hash_only`、`virustotal.upload_unknown`。
+- `main.go` の `view` command で `v.configPath = cfgPath` を設定し、write target は resolved primary `config.json`。`config.example.json` を指定しても write target は同じ dir の `config.json`。
+- `settingsWriteMu` で settings write を直列化し、config 用 `atomicWriteConfigFile`（temp+rename）を使う。cache 専用 `writeAtomically` は流用しない。
+- Existing primary `config.json` を read して allowlisted field だけ update し、existing fields と `api_key` を preserve する。
+- Validation は `json.Number` で整数を read し、negative と `viewer_floor` / `minHitomiRateFloorMS` を再実行。`hitomi.image_format` は `webp`、`avif`、`jpg`、`png`。Boolean fields は checkbox から bool で送る。`limits.yr_fast_scan` は checkbox として UI で bool 型を保つ。
+- Immediate memory update は successful write 後。`v.cfg` に allowlisted values を反映し、`v.client.cfg = v.cfg.Hitomi` で client request-time interval values を即時反映する。
+- Settings page は Japanese labels + original constant name を使う。Button は `設定を保存`。`settings-status` に result を表示。Viewer page に settings panel、settings fetch、`settings-values`、`renderSettings()` を含めない。
+
+## Test plan / tests added
+
+- `TestSettingsEndpointServesEditableSettingsWithoutAPIKey`: `editable`、`editable_keys`、`api_key` non-exposure、constants anchors。
+- `TestSettingsPostUpdatesAllowedValuesAndPreservesExistingFields`: allowed write、memory immediate update、`v.client.cfg` immediate、existing `api_key` preserve、atomic temp cleanup。
+- `TestSettingsPostRejectsUnknownKeysAndValuesBelowFloors`: top-level key、unknown field、floor、negative、format、type、null、`api_key_env` reject。
+- `TestSettingsPostWritesPrimaryConfigAndDoesNotWriteExample`: primary `config.json` write、example values preserve。
+- `TestSettingsPageRendersJapaneseLabelsAndEditableForm`: Japanese labels、spacing、`data-key`、`aria-label`、`設定を保存`、`collectPayload()`、`saveSettings()`、POST fetch strings、boolean checkbox handling。
+
 ## Verification
 
 - `go vet . && go test -count=1 -timeout 300s .`: ok。Settings API constants test、viewer no-settings-panel test、settings page label/spacing test を追加。
 - `python -m pytest tests/ -v`: 60 passed。`test_canonical_executable_embeds_current_pages` 合格（`app/settings.html` を含む）、`test_viewer_objecturl_cap_and_status_priority_behaviours` の no notification UI condition 合格。
 - canonical build freshness: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` を再実行。
-- served canonical server: `curl.exe -s http://127.0.0.1:8731/api/settings` が `read_only=true`、`api_key` value なし、`api_key_env=VIRUSTOTAL_API_KEY`、`constants.cache_disk_max_entries=4000`、`constants.viewer_floor=1000` を返す。
-- served `/settings` visual: fresh isolated origin `settings-page-20261109`。actual window size `1666x932`、content height `1751`。Settings values/constants が Japanese labels + `gap: .75rem 1.25rem` で表示。Updated label verification: `DB file name (db)`, `download completed folder name (gallery_dir)`, `acquisition folder (acquisition_dir)`, `Viewer lower bound`, `negative cache cap`, `politely backoff interval`, `gallery info disk cap`. Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\settings-page-20261109-v2-full.png`。
+- served canonical server read settings: `curl.exe -s http://127.0.0.1:8731/api/settings` が `read_only=false`、`editable=true`、`editable_keys`、`api_key` value なし、`api_key_env=VIRUSTOTAL_API_KEY`、`constants.cache_disk_max_entries=4000`、`constants.viewer_floor=1000` を返す。
+- Settings write confirmed via served UI in isolated context `settings-write-20261109`: `viewer.max_object_urls=6000`、`hitomi.min_interval_ms=70`、`hitomi.max_retries=4`、`limits.yr_fast_scan=true` を POST。`settings-status` は `Saved`。Canonical primary `config.json` に same values が書かれ、existing `api_key_env` は preserve。No temp files.
+- Initial boolean UI bug: before fix, `limits.yr_fast_scan` was number input and served POST caused panic `interface conversion: interface {} is int64, not bool`. Fixed by making `limits.yr_fast_scan` checkbox in settings UI. Canonical primary config had transient numeric `yr_fast_scan: 0` from pre-fix request; repaired to `false` before final served confirmation.
+- Current Go verification elapsed: `go vet . && go test -count=1 -timeout 300s .` ok in app, elapsed `25.5s`。
+- Current Python verification elapsed: `python -m pytest tests/ -v` 60 passed, elapsed `13.9s`。Canonical freshness includes current `app/settings.html`.
+- served `/settings` visual current: fresh isolated origin `settings-write-20261109`。Window size `1666x932`。Button `設定を保存` and `settings-status=Saved` displayed. Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\settings-page-20261109-v4-japanese-labels-full.png`。Local copy sent to Recycle Bin by `kilo-safe-remove`.
 - existing viewer behavior: served `/` visual snapshot に settings panel なし。Viewer page の nav、reader controls、acquisition controls、reader form は表示。Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\viewer-no-settings-panel-20261109.png`。local copies were moved to `scratch/` and sent to Recycle Bin by `kilo-safe-remove`.
 
 ## 完了時 Memory Bank 操作

@@ -4811,7 +4811,7 @@ func TestViewerConfigEndpointServesEffectiveMaxObjectURLs(t *testing.T) {
 	}
 }
 
-func TestSettingsEndpointReturnsReadOnlySettingsWithoutAPIKey(t *testing.T) {
+func TestSettingsEndpointServesEditableSettingsWithoutAPIKey(t *testing.T) {
 	db := openTestDB(t)
 	cfg := Config{
 		Limits:   defaultLimits(),
@@ -4840,8 +4840,21 @@ func TestSettingsEndpointReturnsReadOnlySettingsWithoutAPIKey(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["read_only"] != true {
-		t.Fatalf("settings must be marked read-only, got %v", out["read_only"])
+	if out["read_only"] != false {
+		t.Fatalf("settings must not be read-only, got %v", out["read_only"])
+	}
+	if out["editable"] != true {
+		t.Fatalf("settings must be marked editable, got %v", out["editable"])
+	}
+	keys, ok := out["editable_keys"].([]any)
+	if !ok || len(keys) == 0 {
+		t.Fatalf("editable_keys must list allowlisted settings, got %v", out["editable_keys"])
+	}
+	for _, key := range keys {
+		parts := strings.Split(key.(string), ".")
+		if len(parts) != 2 || !isAllowedSettingsField(parts[0], parts[1]) {
+			t.Fatalf("editable key %v is not allowlisted", key)
+		}
 	}
 	if out["db"] != defaultDBName || out["gallery_dir"] != defaultGalleryDirName || out["cache_dir"] != defaultCacheDirName || out["acquisition_dir"] != defaultAcquisitionDirName {
 		t.Fatalf("settings names must use code defaults, got %+v", out)
@@ -4889,21 +4902,40 @@ func TestViewerPageDoesNotRenderSettingsPanel(t *testing.T) {
 	}
 }
 
-func TestSettingsPageRendersJapaneseLabelsAndSpacing(t *testing.T) {
+func TestSettingsPageRendersJapaneseLabelsAndEditableForm(t *testing.T) {
 	s := uiText(t, "settings.html")
 	for _, want := range []string{
 		`<title>hitomi hub settings</title>`,
 		`id="settings-values"`,
 		`id="settings-constants"`,
+		`id="settings-form"`,
 		`gap: .75rem 1.25rem`,
-		`function addRow(container, label, value, meaning) {`,
+		`function addRow(container, label, value, meaning, key) {`,
+		`function editableInput(key, value) {`,
+		`key === "hitomi.use_live_gg" || key === "limits.yr_fast_scan" || section === "virustotal"`,
+		`function collectPayload() {`,
+		`async function saveSettings(event) {`,
+		`document.getElementById("settings-form")`,
+		`data-key`,
+		`aria-label`,
+		`設定を保存`,
+		`fetch("/api/settings", { cache: "no-store" })`,
+		`fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })`,
 		`document.createElement("dt")`,
 		`document.createElement("dd")`,
 		`String(s.constants.cache_disk_max_entries)`,
-		`DB file name (db)`,
-		`download completed folder name`,
-		`acquisition folder`,
-		`Disk cache cap`,
+		`DBファイル名 (db)`,
+		`download 完了フォルダ名 (gallery_dir)`,
+		`取得フォルダ (acquisition_dir)`,
+		`Disk cache cap (cache_disk_max_entries)`,
+		`Viewer lower bound (viewer_floor)`,
+		`negative cache cap (negative_cache_max_entries)`,
+		`negative cache TTL (negative_cache_ttl_ms)`,
+		`politely backoff interval (politeness_default_interval_ms)`,
+		`gallery info disk cap (galleryinfo_disk_max_entries / galleryinfo_disk_max_bytes)`,
+		`Scan cache TTL (scan_cache_ttl_ms)`,
+		`negative scan TTL (negative_scan_cache_ttl_ms)`,
+		`YARA path (yr)`,
 		`renderSettings();`,
 	} {
 		if !strings.Contains(s, want) {
@@ -4914,6 +4946,143 @@ func TestSettingsPageRendersJapaneseLabelsAndSpacing(t *testing.T) {
 		if strings.Contains(s, forbidden) {
 			t.Errorf("settings.html must not keep old settings panel string %q", forbidden)
 		}
+	}
+}
+
+func TestSettingsPostUpdatesAllowedValuesAndPreservesExistingFields(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	cfg := Config{
+		Limits:   defaultLimits(),
+		Hitomi:   defaultHitomiConfig(),
+		Viewer:   UIConfig{Port: 8731, Bind: "127.0.0.1", MaxObjectURLs: 4500},
+		VirusTotal: VTConfig{
+			Enabled:       true,
+			HashOnly:      true,
+			UploadUnknown: false,
+			APIKeyEnv:     "VIRUSTOTAL_API_KEY",
+			APIKey:        "secret",
+			MaxPerMinute:  4,
+			MaxDaily:      500,
+		},
+	}
+	v := newViewer(db, cfg, dir)
+	v.configPath = filepath.Join(dir, "config.json")
+	if err := os.WriteFile(v.configPath, []byte(`{"db":"hub.db","viewer":{"max_object_urls":4500,"bind":"127.0.0.1"},"hitomi":{"min_interval_ms":60,"max_retries":3},"limits":{"max_ratio":200},"virustotal":{"api_key":"secret","hash_only":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", `{"viewer":{"max_object_urls":5000},"hitomi":{"min_interval_ms":70},"virustotal":{"upload_unknown":true}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["editable"] != true {
+		t.Fatalf("settings must remain editable, got %v", out)
+	}
+	viewer, ok := out["viewer"].(map[string]any)
+	if !ok || viewer["max_object_urls"] != float64(5000) {
+		t.Fatalf("memory update must apply viewer.max_object_urls immediately, got %+v", out["viewer"])
+	}
+	hitomi, ok := out["hitomi"].(map[string]any)
+	if !ok || hitomi["min_interval_ms"] != float64(70) {
+		t.Fatalf("memory update must apply hitomi.min_interval_ms immediately, got %+v", out["hitomi"])
+	}
+	vt, ok := out["virustotal"].(map[string]any)
+	if !ok || vt["upload_unknown"] != true || vt["hash_only"] != true {
+		t.Fatalf("memory update must apply virustotal flags immediately, got %+v", vt)
+	}
+	if v.client == nil || v.client.cfg.MinIntervalMS != 70 {
+		t.Fatalf("client cfg must reflect immediate update, got %+v", v.client)
+	}
+	if v.cfg.Limits.MaxRatio != defaultLimits().MaxRatio {
+		t.Fatalf("unrequested limits must remain unchanged, got %d", v.cfg.Limits.MaxRatio)
+	}
+	raw, err := os.ReadFile(v.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"api_key": "secret"`) {
+		t.Fatalf("settings write must preserve existing api_key, got %s", raw)
+	}
+	for _, want := range []string{`"max_object_urls": 5000`, `"min_interval_ms": 70`, `"upload_unknown": true`, `"max_ratio": 200`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("settings file must contain %q, got %s", want, raw)
+		}
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "config.json.tmp")); err != nil || len(matches) != 0 {
+		t.Fatalf("atomic settings write must not leave temp files, got %v", matches)
+	}
+}
+
+func TestSettingsPostRejectsUnknownKeysAndValuesBelowFloors(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	cfg := Config{
+		Limits: defaultLimits(),
+		Hitomi: defaultHitomiConfig(),
+		Viewer: UIConfig{Port: 8731, Bind: "127.0.0.1", MaxObjectURLs: 4500},
+	}
+	v := newViewer(db, cfg, dir)
+	v.configPath = filepath.Join(dir, "config.json")
+	if err := os.WriteFile(v.configPath, []byte(`{"db":"hub.db","viewer":{"max_object_urls":4500}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct{ name, body, want string }{
+		{"top-level", `{"db":"other.db"}`, "db"},
+		{"unknown", `{"viewer":{"bind":"0.0.0.0"}}`, "viewer.bind"},
+		{"floor", `{"viewer":{"max_object_urls":999}}`, "max_object_urls"},
+		{"negative", `{"hitomi":{"min_interval_ms":-1}}`, "min_interval_ms"},
+		{"format", `{"hitomi":{"image_format":"exe"}}`, "image_format"},
+		{"type", `{"limits":{"max_entries":"5000"}}`, "max_entries"},
+		{"null", `{"hitomi":{"use_live_gg":null}}`, "use_live_gg"},
+		{"api_key_env", `{"virustotal":{"api_key_env":"VIRUSTOTAL_API_KEY"}}`, "api_key_env"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", c.body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s must be rejected, got %d body %q", c.name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s error must mention %q, got %s", c.name, c.want, rec.Body.String())
+		}
+	}
+}
+
+func TestSettingsPostWritesPrimaryConfigAndDoesNotWriteExample(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), dir)
+	v.configPath = filepath.Join(dir, "config.example.json")
+	example := `{"db":"hub.db","hitomi":{"min_interval_ms":60,"image_min_interval_ms":150}}`
+	if err := os.WriteFile(v.configPath, []byte(example), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", `{"hitomi":{"min_interval_ms":80}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	primary := filepath.Join(dir, "config.json")
+	raw, err := os.ReadFile(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"min_interval_ms": 80`) {
+		t.Fatalf("primary config must contain updated value, got %s", raw)
+	}
+	if strings.Contains(string(raw), `"image_min_interval_ms": 150`) {
+		t.Fatalf("primary config must not be overwritten from example, got %s", raw)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "config.json.tmp")); err != nil || len(matches) != 0 {
+		t.Fatalf("atomic settings write must not leave temp files, got %v", matches)
 	}
 }
 

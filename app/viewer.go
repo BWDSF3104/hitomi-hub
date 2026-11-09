@@ -78,6 +78,9 @@ type viewer struct {
 	// gallery（書き込みリクエストの gallery）の項目は捨ない。
 	cacheEntriesMu      sync.Mutex
 	cacheDiskMaxEntries int
+
+	configPath       string
+	settingsWriteMu  sync.Mutex
 }
 
 type tnFetchCall struct {
@@ -179,6 +182,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /settings", v.serveSettingsPage)
 	mux.HandleFunc("GET /api/lists", v.lists)
 	mux.HandleFunc("GET /api/settings", v.settings)
+	mux.HandleFunc("POST /api/settings", v.updateSettings)
 	mux.HandleFunc("GET /api/viewer-config", v.uiConfig)
 	mux.HandleFunc("GET /api/search", v.search)
 	mux.HandleFunc("GET /api/search-first-status", v.searchFirstStatus)
@@ -591,6 +595,8 @@ type settingsConstants struct {
 
 type settingsResponse struct {
 	ReadOnly       bool              `json:"read_only"`
+	Editable       bool              `json:"editable"`
+	EditableKeys   []string          `json:"editable_keys"`
 	DB             string            `json:"db"`
 	GalleryDir     string            `json:"gallery_dir"`
 	CacheDir       string            `json:"cache_dir"`
@@ -608,7 +614,9 @@ func settingsView(v *viewer) settingsResponse {
 		port = 8731
 	}
 	return settingsResponse{
-		ReadOnly:       true,
+		ReadOnly:       false,
+		Editable:       true,
+		EditableKeys:   settingsEditableKeys(),
 		DB:             v.cfg.DBName(),
 		GalleryDir:     v.cfg.GalleryDirName(),
 		CacheDir:       v.cfg.CacheDirName(),
@@ -642,7 +650,349 @@ func settingsView(v *viewer) settingsResponse {
 	}
 }
 
+func settingsEditableKeys() []string {
+	return []string{
+		"viewer.max_object_urls",
+		"hitomi.min_interval_ms",
+		"hitomi.image_min_interval_ms",
+		"hitomi.gg_force_min_interval_ms",
+		"hitomi.max_retries",
+		"hitomi.retry_backoff_ms",
+		"hitomi.image_format",
+		"hitomi.use_live_gg",
+		"limits.max_entries",
+		"limits.max_uncompressed_bytes",
+		"limits.max_ratio",
+		"limits.max_scan_bytes",
+		"limits.yr_timeout_sec",
+		"limits.yr_cpu_limit",
+		"limits.yr_skip_larger",
+		"limits.yr_fast_scan",
+		"virustotal.enabled",
+		"virustotal.hash_only",
+		"virustotal.upload_unknown",
+	}
+}
+
+func isAllowedSettingsTopKey(key string) bool {
+	return key == "viewer" || key == "hitomi" || key == "limits" || key == "virustotal"
+}
+
+func isAllowedSettingsField(section, key string) bool {
+	switch section {
+	case "viewer":
+		return key == "max_object_urls"
+	case "hitomi":
+		return key == "min_interval_ms" || key == "image_min_interval_ms" || key == "gg_force_min_interval_ms" ||
+			key == "max_retries" || key == "retry_backoff_ms" || key == "image_format" || key == "use_live_gg"
+	case "limits":
+		return key == "max_entries" || key == "max_uncompressed_bytes" || key == "max_ratio" || key == "max_scan_bytes" ||
+			key == "yr_timeout_sec" || key == "yr_cpu_limit" || key == "yr_skip_larger" || key == "yr_fast_scan"
+	case "virustotal":
+		return key == "enabled" || key == "hash_only" || key == "upload_unknown"
+	default:
+		return false
+	}
+}
+
+func settingsNumberInt64(value any) (int64, bool) {
+	n, ok := value.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	iv, err := n.Int64()
+	if err != nil {
+		return 0, false
+	}
+	return iv, true
+}
+
+func settingsNumberError(section, key string, value int64) error {
+	if value < 0 {
+		return fmt.Errorf("%s.%s must not be negative", section, key)
+	}
+	if section == "viewer" && key == "max_object_urls" && value != 0 && value < minViewerMaxObjectURLs {
+		return fmt.Errorf("viewer.max_object_urls must be 0 (unspecified, use default) or >= %d", minViewerMaxObjectURLs)
+	}
+	if section == "hitomi" && (key == "min_interval_ms" || key == "image_min_interval_ms") && value != 0 && value < minHitomiRateFloorMS {
+		return fmt.Errorf("hitomi.%s must be 0 (unspecified, use default) or >= %d ms", key, minHitomiRateFloorMS)
+	}
+	return nil
+}
+
+func settingsFormatError(value string) error {
+	format := normalizeFormat(value)
+	switch format {
+	case "webp", "avif", "jpg", "png":
+		return nil
+	default:
+		return fmt.Errorf("hitomi.image_format must be one of: webp, avif, jpg, png")
+	}
+}
+
+func settingsBaseMap(v *viewer) map[string]any {
+	var yr any
+	if v.cfg.Yr != "" {
+		yr = v.cfg.Yr
+	}
+	return map[string]any{
+		"db":              v.cfg.DBName(),
+		"gallery_dir":     v.cfg.GalleryDirName(),
+		"cache_dir":       v.cfg.CacheDirName(),
+		"acquisition_dir": v.cfg.AcquisitionDirName(),
+		"yr":              yr,
+		"viewer": map[string]any{
+			"port":            v.cfg.Viewer.Port,
+			"bind":            orDefault(v.cfg.Viewer.Bind, "127.0.0.1"),
+			"max_object_urls": v.effectiveMaxObjectURLs(),
+		},
+		"hitomi": map[string]any{
+			"min_interval_ms":          v.cfg.Hitomi.MinIntervalMS,
+			"image_min_interval_ms":    v.cfg.Hitomi.ImageMinIntervalMS,
+			"gg_force_min_interval_ms": v.cfg.Hitomi.GGForceMinIntervalMS,
+			"max_retries":              v.cfg.Hitomi.MaxRetries,
+			"retry_backoff_ms":         v.cfg.Hitomi.RetryBackoffMS,
+			"image_format":             imageFormat(v.cfg),
+			"use_live_gg":              v.cfg.Hitomi.UseLiveGG,
+		},
+		"virustotal": map[string]any{
+			"enabled":                 v.cfg.VirusTotal.Enabled,
+			"hash_only":               v.cfg.VirusTotal.HashOnly,
+			"upload_unknown":          v.cfg.VirusTotal.UploadUnknown,
+			"api_key_env":             orDefault(v.cfg.VirusTotal.APIKeyEnv, "VIRUSTOTAL_API_KEY"),
+			"max_requests_per_minute": v.cfg.VirusTotal.MaxPerMinute,
+			"max_daily_requests":      v.cfg.VirusTotal.MaxDaily,
+		},
+		"limits": map[string]any{
+			"max_entries":             v.cfg.Limits.MaxEntries,
+			"max_uncompressed_bytes":  v.cfg.Limits.MaxUncompressed,
+			"max_ratio":               v.cfg.Limits.MaxRatio,
+			"max_scan_bytes":          v.cfg.Limits.MaxScanBytes,
+			"yr_timeout_sec":          v.cfg.Limits.YrTimeoutSec,
+			"yr_cpu_limit":            v.cfg.Limits.YrCpuLimit,
+			"yr_skip_larger":          v.cfg.Limits.YrSkipLarger,
+			"yr_fast_scan":            v.cfg.Limits.YrFastScan,
+		},
+	}
+}
+
+func settingsWritePath(configPath string) string {
+	if configPath == "" {
+		return filepath.Join(dataDir, "config.json")
+	}
+	if filepath.Base(configPath) == "config.example.json" {
+		return filepath.Join(filepath.Dir(configPath), "config.json")
+	}
+	return configPath
+}
+
+func loadJSONMap(path string) (map[string]any, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	decoder.UseNumber()
+	out := map[string]any{}
+	if err := decoder.Decode(&out); err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
+}
+
+func atomicWriteConfigFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "config.json.tmp")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
+}
+
 func (v *viewer) settings(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, settingsView(v))
+}
+
+func (v *viewer) updateSettings(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
+	raw := map[string]any{}
+	if err := decoder.Decode(&raw); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	updates := map[string]map[string]any{}
+	for topKey, rawSection := range raw {
+		if !isAllowedSettingsTopKey(topKey) {
+			writeJSONError(w, http.StatusBadRequest, topKey+" is not editable in settings UI")
+			return
+		}
+		section, ok := rawSection.(map[string]any)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, topKey+" must be an object")
+			return
+		}
+		if updates[topKey] == nil {
+			updates[topKey] = map[string]any{}
+		}
+		for key, value := range section {
+			if !isAllowedSettingsField(topKey, key) {
+				writeJSONError(w, http.StatusBadRequest, topKey+"."+key+" is not editable in settings UI")
+				return
+			}
+			if value == nil {
+				writeJSONError(w, http.StatusBadRequest, topKey+"."+key+" must not be null")
+				return
+			}
+			switch typed := value.(type) {
+			case json.Number:
+				number, ok := settingsNumberInt64(typed)
+				if !ok {
+					writeJSONError(w, http.StatusBadRequest, topKey+"."+key+" must be an integer")
+					return
+				}
+				if err := settingsNumberError(topKey, key, number); err != nil {
+					writeJSONError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				updates[topKey][key] = number
+			case bool:
+				updates[topKey][key] = typed
+			case string:
+				if topKey == "hitomi" && key == "image_format" {
+					format := normalizeFormat(typed)
+					if err := settingsFormatError(format); err != nil {
+						writeJSONError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					updates[topKey][key] = format
+				} else {
+					writeJSONError(w, http.StatusBadRequest, topKey+"."+key+" must be a number or boolean")
+					return
+				}
+			default:
+				writeJSONError(w, http.StatusBadRequest, topKey+"."+key+" must be a number, boolean, or format string")
+				return
+			}
+		}
+	}
+
+	if len(updates) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "no editable settings were provided")
+		return
+	}
+
+	v.settingsWriteMu.Lock()
+	defer v.settingsWriteMu.Unlock()
+
+	target := settingsWritePath(v.configPath)
+	base, existed, err := loadJSONMap(target)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "settings file read failed: "+err.Error())
+		return
+	}
+	if !existed {
+		base = settingsBaseMap(v)
+	}
+
+	for topKey, fields := range updates {
+		section, ok := base[topKey].(map[string]any)
+		if !ok {
+			section = map[string]any{}
+			base[topKey] = section
+		}
+		for key, value := range fields {
+			section[key] = value
+		}
+	}
+
+	data, err := json.MarshalIndent(base, "", "  ")
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "settings file encode failed: "+err.Error())
+		return
+	}
+	if err := atomicWriteConfigFile(target, data); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "settings file write failed: "+err.Error())
+		return
+	}
+
+	for topKey, fields := range updates {
+		for key, value := range fields {
+			switch topKey {
+			case "viewer":
+				if key == "max_object_urls" {
+					v.cfg.Viewer.MaxObjectURLs = int(value.(int64))
+				}
+			case "hitomi":
+				switch key {
+				case "min_interval_ms":
+					v.cfg.Hitomi.MinIntervalMS = int(value.(int64))
+				case "image_min_interval_ms":
+					v.cfg.Hitomi.ImageMinIntervalMS = int(value.(int64))
+				case "gg_force_min_interval_ms":
+					v.cfg.Hitomi.GGForceMinIntervalMS = int(value.(int64))
+				case "max_retries":
+					v.cfg.Hitomi.MaxRetries = int(value.(int64))
+				case "retry_backoff_ms":
+					v.cfg.Hitomi.RetryBackoffMS = int(value.(int64))
+				case "image_format":
+					v.cfg.Hitomi.ImageFormat = value.(string)
+				case "use_live_gg":
+					v.cfg.Hitomi.UseLiveGG = value.(bool)
+				}
+			case "limits":
+				switch key {
+				case "max_entries":
+					v.cfg.Limits.MaxEntries = int(value.(int64))
+				case "max_uncompressed_bytes":
+					v.cfg.Limits.MaxUncompressed = value.(int64)
+				case "max_ratio":
+					v.cfg.Limits.MaxRatio = value.(int64)
+				case "max_scan_bytes":
+					v.cfg.Limits.MaxScanBytes = value.(int64)
+				case "yr_timeout_sec":
+					v.cfg.Limits.YrTimeoutSec = int(value.(int64))
+				case "yr_cpu_limit":
+					v.cfg.Limits.YrCpuLimit = int(value.(int64))
+				case "yr_skip_larger":
+					v.cfg.Limits.YrSkipLarger = value.(int64)
+				case "yr_fast_scan":
+					v.cfg.Limits.YrFastScan = value.(bool)
+				}
+			case "virustotal":
+				switch key {
+				case "enabled":
+					v.cfg.VirusTotal.Enabled = value.(bool)
+				case "hash_only":
+					v.cfg.VirusTotal.HashOnly = value.(bool)
+				case "upload_unknown":
+					v.cfg.VirusTotal.UploadUnknown = value.(bool)
+				}
+			}
+		}
+	}
+	if v.client != nil {
+		v.client.cfg = v.cfg.Hitomi
+	}
+
 	jsonOut(w, settingsView(v))
 }
 

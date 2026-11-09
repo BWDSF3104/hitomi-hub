@@ -1382,6 +1382,7 @@ func main() {
 			cfg.Viewer.Port = f.port
 		}
 		v := newViewer(db, cfg, root)
+		v.configPath = cfgPath
 		if err := v.serve(); err != nil {
 			fmt.Fprintln(os.Stderr, "viewer: "+err.Error())
 			os.Exit(1)
