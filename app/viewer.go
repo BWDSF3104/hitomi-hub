@@ -177,6 +177,7 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /", v.index)
 	mux.HandleFunc("GET /search", v.serveSearchPage)
 	mux.HandleFunc("GET /api/lists", v.lists)
+	mux.HandleFunc("GET /api/settings", v.settings)
 	mux.HandleFunc("GET /api/viewer-config", v.uiConfig)
 	mux.HandleFunc("GET /api/search", v.search)
 	mux.HandleFunc("GET /api/search-first-status", v.searchFirstStatus)
@@ -558,6 +559,62 @@ func (v *viewer) effectiveMaxObjectURLs() int {
 // 通知 UI を置かない項目のため、この口は設定値の受け渡しのみ（画面表示しない）。
 func (v *viewer) uiConfig(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"max_object_urls": v.effectiveMaxObjectURLs()})
+}
+
+// settingsView は read-only settings panel 用（decision docs/ai/decisions/2026-11-09-settings-webui-approved-recommendations.md）。
+// API key value は返さず、env 名だけ返す。UI から変更可能にする future allowlist はこの口では書き込まない。
+type settingsVirusTotal struct {
+	Enabled       bool   `json:"enabled"`
+	HashOnly      bool   `json:"hash_only"`
+	UploadUnknown bool   `json:"upload_unknown"`
+	APIKeyEnv     string `json:"api_key_env"`
+	MaxPerMinute  int    `json:"max_requests_per_minute"`
+	MaxDaily      int    `json:"max_daily_requests"`
+}
+
+type settingsResponse struct {
+	ReadOnly       bool              `json:"read_only"`
+	DB             string            `json:"db"`
+	GalleryDir     string            `json:"gallery_dir"`
+	CacheDir       string            `json:"cache_dir"`
+	AcquisitionDir string            `json:"acquisition_dir"`
+	Viewer         UIConfig          `json:"viewer"`
+	Hitomi         HitomiConfig      `json:"hitomi"`
+	VirusTotal     settingsVirusTotal `json:"virustotal"`
+	Limits         Limits            `json:"limits"`
+}
+
+func settingsView(v *viewer) settingsResponse {
+	port := v.cfg.Viewer.Port
+	if port == 0 {
+		port = 8731
+	}
+	return settingsResponse{
+		ReadOnly:       true,
+		DB:             v.cfg.DBName(),
+		GalleryDir:     v.cfg.GalleryDirName(),
+		CacheDir:       v.cfg.CacheDirName(),
+		AcquisitionDir: v.cfg.AcquisitionDirName(),
+		Viewer: UIConfig{
+			Port:          port,
+			Bind:          orDefault(v.cfg.Viewer.Bind, "127.0.0.1"),
+			MaxObjectURLs: v.effectiveMaxObjectURLs(),
+		},
+		Hitomi: v.cfg.Hitomi,
+		VirusTotal: settingsVirusTotal{
+			Enabled:       v.cfg.VirusTotal.Enabled,
+			HashOnly:      v.cfg.VirusTotal.HashOnly,
+			UploadUnknown: v.cfg.VirusTotal.UploadUnknown,
+			APIKeyEnv:     orDefault(v.cfg.VirusTotal.APIKeyEnv, "VIRUSTOTAL_API_KEY"),
+			MaxPerMinute:  v.cfg.VirusTotal.MaxPerMinute,
+			MaxDaily:      v.cfg.VirusTotal.MaxDaily,
+		},
+		Limits: v.cfg.Limits,
+	}
+}
+
+func (v *viewer) settings(w http.ResponseWriter, r *http.Request) {
+	jsonOut(w, settingsView(v))
 }
 
 func requestGalleryID(r *http.Request) int {

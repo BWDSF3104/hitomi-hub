@@ -4811,6 +4811,76 @@ func TestViewerConfigEndpointServesEffectiveMaxObjectURLs(t *testing.T) {
 	}
 }
 
+func TestSettingsEndpointReturnsReadOnlySettingsWithoutAPIKey(t *testing.T) {
+	db := openTestDB(t)
+	cfg := Config{
+		Limits:   defaultLimits(),
+		Hitomi:   defaultHitomiConfig(),
+		Viewer:   UIConfig{Port: 8731, Bind: "127.0.0.1", MaxObjectURLs: 4500},
+		VirusTotal: VTConfig{
+			Enabled:       true,
+			HashOnly:      true,
+			UploadUnknown: false,
+			APIKeyEnv:     "VIRUSTOTAL_API_KEY",
+			APIKey:        "secret",
+			MaxPerMinute:  4,
+			MaxDaily:      500,
+		},
+	}
+	v := newViewer(db, cfg, t.TempDir())
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"api_key"`) {
+		t.Fatalf("settings response must not contain api_key value: %s", rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["read_only"] != true {
+		t.Fatalf("settings must be marked read-only, got %v", out["read_only"])
+	}
+	if out["db"] != defaultDBName || out["gallery_dir"] != defaultGalleryDirName || out["cache_dir"] != defaultCacheDirName || out["acquisition_dir"] != defaultAcquisitionDirName {
+		t.Fatalf("settings names must use code defaults, got %+v", out)
+	}
+	viewer, ok := out["viewer"].(map[string]any)
+	if !ok {
+		t.Fatalf("viewer object missing: %+v", out)
+	}
+	if viewer["max_object_urls"] != float64(4500) {
+		t.Fatalf("configured max_object_urls must pass through, got %v", viewer["max_object_urls"])
+	}
+	vt, ok := out["virustotal"].(map[string]any)
+	if !ok {
+		t.Fatalf("virustotal object missing: %+v", out)
+	}
+	if vt["api_key_env"] != "VIRUSTOTAL_API_KEY" {
+		t.Fatalf("api_key_env must show env name only, got %v", vt["api_key_env"])
+	}
+	if _, ok := vt["api_key"]; ok {
+		t.Fatalf("settings must not expose api_key: %+v", vt)
+	}
+}
+
+func TestViewerSettingsPanelRendersReadOnlySettings(t *testing.T) {
+	s := uiText(t, "viewer.html")
+	for _, want := range []string{
+		`id="settings-values"`,
+		`fetch("/api/settings", { cache: "no-store" })`,
+		`function renderSettings() {`,
+		`document.createElement("li")`,
+		`String(row[1])`,
+		`renderSettings();`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("viewer.html missing settings panel string %q", want)
+		}
+	}
+}
+
 func TestImageCacheWriteRecordsCacheEntryRow(t *testing.T) {
 	v, _ := newTestViewer(t, "")
 	v.client.cfg.UseLiveGG = false
