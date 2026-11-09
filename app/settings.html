@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>hitomi hub settings</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14161a;
+    --surface: #1d2126;
+    --border: #2f343b;
+    --border-soft: #23272d;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --link: #8ab4f8;
+    --focus: #8ab4f8;
+    --font-ui: system-ui, "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+    --font-value: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --radius: 6px;
+    --line-height: 1.5;
+  }
+  body { font-family: var(--font-ui); margin: var(--space-4); background: var(--bg); color: var(--text); line-height: var(--line-height); }
+  main { max-width: 65rem; }
+  h1 { font-size: 1.15rem; margin: 0 0 var(--space-4); }
+  h2 { font-size: 1rem; margin: 0 0 var(--space-3); color: var(--muted); }
+  nav { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); }
+  a { color: var(--link); text-decoration: none; }
+  a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  section { margin-bottom: var(--space-4); }
+  p { margin: 0 0 var(--space-3); max-width: 65ch; color: var(--muted); }
+  .note { margin-bottom: var(--space-2); }
+  .status { margin-bottom: var(--space-3); color: var(--focus); }
+  dl { margin: 0; display: grid; grid-template-columns: minmax(12rem, 20rem) minmax(18rem, 1fr); gap: .75rem 1.25rem; }
+  dt { color: var(--muted); font-weight: 600; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  dd.value { font-family: var(--font-value); }
+  dd.meaning { grid-column: 2; min-width: 0; }
+  li { margin-bottom: .5rem; }
+  @media (max-width: 54rem) {
+    dl { grid-template-columns: 1fr; }
+    dd.meaning { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>設定</h1>
+  <nav>
+    <a href="/">閲覧</a>
+    <a href="/search">検索</a>
+  </nav>
+  <p>このページは現在有効な設定値と内部定数を read-only で表示する専用ページです。ここで値を書き換えることはできません。</p>
+  <div id="settings-status" class="status" role="status" aria-live="polite"></div>
+  <section>
+    <h2>設定値</h2>
+    <dl class="settings-list" id="settings-values"></dl>
+  </section>
+  <section>
+    <h2>内部定数</h2>
+    <dl class="settings-list" id="settings-constants"></dl>
+  </section>
+</main>
+<script>
+function addRow(container, label, value, meaning) {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+
+  const valueEl = document.createElement("dd");
+  valueEl.className = "value";
+  valueEl.textContent = value;
+
+  const meaningEl = document.createElement("dd");
+  meaningEl.className = "meaning";
+  meaningEl.textContent = meaning;
+
+  container.append(dt, valueEl, meaningEl);
+}
+
+function renderSettings() {
+  const settingsList = document.getElementById("settings-values");
+  const constantsList = document.getElementById("settings-constants");
+  const status = document.getElementById("settings-status");
+
+  fetch("/api/settings", { cache: "no-store" }).then((r) => r.json()).then((s) => {
+    settingsList.innerHTML = "";
+    constantsList.innerHTML = "";
+
+    addRow(settingsList, "DB ファイル名", String(s.db), "ローカル DB file. UI write excluded.");
+    addRow(settingsList, "download 完成フォルダ名", String(s.gallery_dir), "download 成果物 folder.アプリ側では削除しない.");
+    addRow(settingsList, "永続 cache folder", String(s.cache_dir), "full cache root. galleryinfo は <cache_dir>/galleryinfo. UI write excluded.");
+    addRow(settingsList, "acquisition folder", String(s.acquisition_dir), "画面「取得」で write する folder.アプリ側では削除しない. UI write excluded.");
+    addRow(settingsList, "Viewer port / bind", `${s.viewer.port} / ${s.viewer.bind}`, "listener setting. restart required. UI write excluded.");
+    addRow(settingsList, "Browser memory cap", String(s.viewer.max_object_urls), "page objectURL count cap. UI write excluded.");
+    addRow(settingsList, "hitomi data interval", `${s.hitomi.min_interval_ms} ms`, "data lane gate interval.");
+    addRow(settingsList, "hitomi image interval", `${s.hitomi.image_min_interval_ms} ms`, "image lane gate interval.");
+    addRow(settingsList, "image format", String(s.hitomi.image_format), "shard URL format. galleryinfo name ext is not used.");
+    addRow(settingsList, "VirusTotal flags", `${String(s.virustotal.enabled)} / ${String(s.virustotal.hash_only)} / ${String(s.virustotal.upload_unknown)}`, "enabled / hash_only / upload_unknown.");
+    addRow(settingsList, "VirusTotal env name", String(s.virustotal.api_key_env), "API key value is not shown. env name is shown.");
+    addRow(settingsList, "Limits", `${s.limits.max_entries} / ${s.limits.max_uncompressed_bytes} / ${s.limits.max_scan_bytes}`, "export entries / uncompressed bytes / scan head bytes.");
+
+    addRow(constantsList, "Disk cache cap", String(s.constants.cache_disk_max_entries), "full/thumbs count cap per kind, created order. UI write excluded.");
+    addRow(constantsList, "Viewer floor", String(s.constants.viewer_floor), "memory cap lower bound. UI write excluded.");
+    addRow(constantsList, "Negative cache cap", String(s.constants.negative_cache_max_entries), "no_full negative cache cap.");
+    addRow(constantsList, "Negative cache TTL", `${s.constants.negative_cache_ttl_ms} ms`, "no_full, search result, block penalty window.");
+    addRow(constantsList, "Politeness interval", `${s.constants.politeness_default_interval_ms} ms`, "backoff target while block is active.");
+    addRow(constantsList, "Gallery info disk cap", `${s.constants.galleryinfo_disk_max_entries} entries / ${s.constants.galleryinfo_disk_max_bytes} bytes`, "galleryinfo disk cache cap.");
+    addRow(constantsList, "Scan cache TTL", `${s.constants.scan_cache_ttl_ms} ms`, "positive VT verdict cache TTL.");
+    addRow(constantsList, "Negative scan TTL", `${s.constants.negative_scan_cache_ttl_ms} ms`, "negative VT verdict cache TTL.");
+    addRow(constantsList, "YARA path", "not shown", "executable path is intentionally not shown in UI. UI write excluded.");
+  }).catch((e) => {
+    status.textContent = e.message || "settings fetch failed";
+  });
+}
+
+renderSettings();
+</script>
+</body>
+</html>

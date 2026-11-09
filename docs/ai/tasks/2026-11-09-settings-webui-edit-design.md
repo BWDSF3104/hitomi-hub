@@ -2,7 +2,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-09
-**Next Action**: Read-only settings display completed. Future write allowlist, atomic write, floor re-validation, shared config reference, path guard undecided.
+**Next Action**: Settings dedicated page implemented and verified. Future write allowlist, atomic write, floor re-validation, shared config reference, path guard undecided.
 
 ## 意図 / 背景
 
@@ -53,17 +53,21 @@ guard・secret・security:
 推奨承認（`docs/ai/decisions/2026-11-09-settings-webui-approved-recommendations.md`）で実装したのは display-only settings panel だけ。future write allowlist は未実装。
 
 - `GET /api/settings` を追加。`read_only` を返し、`api_key` value を返さない。`api_key_env` だけ返す。
-- settings panel は existing `viewer.html` 内。3 枚目 embed は増やさない。
-- R-15 の「cap の通知 UI を置かない」条件を壊さないため、UI settings row から `viewer.max_object_urls` は表示しない。Settings API には machine-read 用として残る。
-- page string anchors を追加。既存 `viewer_test.go` の cap harness string anchor は更新しない。
+- settings UI は `viewer.html` から削除し、`/settings` dedicated settings page を追加。
+- Settings values/constants は Japanese labels、value cell、meaning、grid gap `.75rem 1.25rem` で表示。
+- Dedicated settings page 内では `Browser memory cap` と `Disk cache cap` を read-only 表示項目として扱う。Viewer page には cap notification UI を置かない。
+- `viewer.html` に settings panel、`settings-values`、settings fetch、`renderSettings()` を含めない。
+- `settings.html` を `go:embed` に追加し、canonical freshness test へ `app/settings.html` を追加。
+- Settings API に `constants` を追加。`api_key` value は返さない。`api_key_env` だけ返す。YARA path は UI で表示しない。
 
 ## Verification
 
-- `go vet . && go test -count=1 -timeout 300s .`: ok。`TestSettingsEndpointReturnsReadOnlySettingsWithoutAPIKey`、`TestViewerSettingsPanelRendersReadOnlySettings` を追加。
-- `python -m pytest tests/ -v`: 60 passed。`test_canonical_executable_embeds_current_pages` 合格、`test_viewer_objecturl_cap_and_status_priority_behaviours` の no notification UI condition 合格。
+- `go vet . && go test -count=1 -timeout 300s .`: ok。Settings API constants test、viewer no-settings-panel test、settings page label/spacing test を追加。
+- `python -m pytest tests/ -v`: 60 passed。`test_canonical_executable_embeds_current_pages` 合格（`app/settings.html` を含む）、`test_viewer_objecturl_cap_and_status_priority_behaviours` の no notification UI condition 合格。
 - canonical build freshness: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` を再実行。
-- served canonical server: `curl.exe -s http://127.0.0.1:8731/api/settings` が `read_only=true`、`api_key` value なし、`api_key_env=VIRUSTOTAL_API_KEY` を返す。
-- served UI visual: fresh isolated origin `settings-read-only-20261109`。actual window size `1665x932`。`settings-values` に `DB hitomi.db`, `Galleries Galleries`, `cache cache/images`, `acquisition acquisition`, `viewer 8731 / 127.0.0.1`, `hitomi 90 / 60 / webp`, `limits 2000 / 209715200 / 2097152` を表示。Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\settings-read-only-20261109.png`。local copy was moved to `scratch/` and sent to Recycle Bin by `kilo-safe-remove`.
+- served canonical server: `curl.exe -s http://127.0.0.1:8731/api/settings` が `read_only=true`、`api_key` value なし、`api_key_env=VIRUSTOTAL_API_KEY`、`constants.cache_disk_max_entries=4000`、`constants.viewer_floor=1000` を返す。
+- served `/settings` visual: fresh isolated origin `settings-page-20261109`。actual window size `1666x932`、content height `1751`。Settings values/constants が Japanese labels + `gap: .75rem 1.25rem` で表示。Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\settings-page-20261109.png`。
+- existing viewer behavior: served `/` visual snapshot に settings panel なし。Viewer page の nav、reader controls、acquisition controls、reader form は表示。Drive: `I:\マイドライブ\kilo\2026-11-09-settings-webui-edit-design\viewer-no-settings-panel-20261109.png`。local copies were moved to `scratch/` and sent to Recycle Bin by `kilo-safe-remove`.
 
 ## 完了時 Memory Bank 操作
 

@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-//go:embed viewer.html search.html
+//go:embed viewer.html search.html settings.html
 var uiPage embed.FS
 
 type viewer struct {
@@ -176,6 +176,7 @@ func (v *viewer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", v.index)
 	mux.HandleFunc("GET /search", v.serveSearchPage)
+	mux.HandleFunc("GET /settings", v.serveSettingsPage)
 	mux.HandleFunc("GET /api/lists", v.lists)
 	mux.HandleFunc("GET /api/settings", v.settings)
 	mux.HandleFunc("GET /api/viewer-config", v.uiConfig)
@@ -286,6 +287,10 @@ func (v *viewer) index(w http.ResponseWriter, r *http.Request) {
 
 func (v *viewer) serveSearchPage(w http.ResponseWriter, r *http.Request) {
 	v.serveHTML(w, "search.html")
+}
+
+func (v *viewer) serveSettingsPage(w http.ResponseWriter, r *http.Request) {
+	v.serveHTML(w, "settings.html")
 }
 
 func (v *viewer) serveHTML(w http.ResponseWriter, name string) {
@@ -572,6 +577,18 @@ type settingsVirusTotal struct {
 	MaxDaily      int    `json:"max_daily_requests"`
 }
 
+type settingsConstants struct {
+	CacheDiskMaxEntries         int `json:"cache_disk_max_entries"`
+	ViewerFloor                 int `json:"viewer_floor"`
+	NegativeCacheMaxEntries     int `json:"negative_cache_max_entries"`
+	NegativeCacheTTLMS          int `json:"negative_cache_ttl_ms"`
+	PolitenessDefaultIntervalMS int `json:"politeness_default_interval_ms"`
+	GalleryInfoDiskMaxEntries   int `json:"galleryinfo_disk_max_entries"`
+	GalleryInfoDiskMaxBytes     int `json:"galleryinfo_disk_max_bytes"`
+	ScanCacheTTLMS              int `json:"scan_cache_ttl_ms"`
+	NegativeScanCacheTTLMS      int `json:"negative_scan_cache_ttl_ms"`
+}
+
 type settingsResponse struct {
 	ReadOnly       bool              `json:"read_only"`
 	DB             string            `json:"db"`
@@ -582,6 +599,7 @@ type settingsResponse struct {
 	Hitomi         HitomiConfig      `json:"hitomi"`
 	VirusTotal     settingsVirusTotal `json:"virustotal"`
 	Limits         Limits            `json:"limits"`
+	Constants      settingsConstants `json:"constants"`
 }
 
 func settingsView(v *viewer) settingsResponse {
@@ -610,6 +628,17 @@ func settingsView(v *viewer) settingsResponse {
 			MaxDaily:      v.cfg.VirusTotal.MaxDaily,
 		},
 		Limits: v.cfg.Limits,
+		Constants: settingsConstants{
+			CacheDiskMaxEntries:         v.cacheDiskMaxEntries,
+			ViewerFloor:                 minViewerMaxObjectURLs,
+			NegativeCacheMaxEntries:     defaultNoFullCacheMaxEntries,
+			NegativeCacheTTLMS:          int(negativeNoFullCacheTTL / time.Millisecond),
+			PolitenessDefaultIntervalMS: politenessDefaultIntervalMS,
+			GalleryInfoDiskMaxEntries:   defaultInfoDiskMaxEntries,
+			GalleryInfoDiskMaxBytes:     defaultInfoDiskMaxBytes,
+			ScanCacheTTLMS:              int(scanCacheTTL / time.Millisecond),
+			NegativeScanCacheTTLMS:      int(negativeScanCacheTTL / time.Millisecond),
+		},
 	}
 }
 

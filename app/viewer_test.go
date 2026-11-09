@@ -4853,6 +4853,16 @@ func TestSettingsEndpointReturnsReadOnlySettingsWithoutAPIKey(t *testing.T) {
 	if viewer["max_object_urls"] != float64(4500) {
 		t.Fatalf("configured max_object_urls must pass through, got %v", viewer["max_object_urls"])
 	}
+	constants, ok := out["constants"].(map[string]any)
+	if !ok {
+		t.Fatalf("constants object missing: %+v", out)
+	}
+	if constants["cache_disk_max_entries"] != float64(defaultCacheDiskMaxEntries) {
+		t.Fatalf("constants cache cap must use canonical default, got %v", constants["cache_disk_max_entries"])
+	}
+	if constants["viewer_floor"] != float64(minViewerMaxObjectURLs) {
+		t.Fatalf("constants viewer floor must use canonical default, got %v", constants["viewer_floor"])
+	}
 	vt, ok := out["virustotal"].(map[string]any)
 	if !ok {
 		t.Fatalf("virustotal object missing: %+v", out)
@@ -4865,18 +4875,42 @@ func TestSettingsEndpointReturnsReadOnlySettingsWithoutAPIKey(t *testing.T) {
 	}
 }
 
-func TestViewerSettingsPanelRendersReadOnlySettings(t *testing.T) {
+func TestViewerPageDoesNotRenderSettingsPanel(t *testing.T) {
 	s := uiText(t, "viewer.html")
-	for _, want := range []string{
+	for _, forbidden := range []string{
+		`<h2>設定（read-only）</h2>`,
 		`id="settings-values"`,
 		`fetch("/api/settings", { cache: "no-store" })`,
-		`function renderSettings() {`,
-		`document.createElement("li")`,
-		`String(row[1])`,
+		`renderSettings();`,
+	} {
+		if strings.Contains(s, forbidden) {
+			t.Errorf("viewer.html must not render settings panel string %q", forbidden)
+		}
+	}
+}
+
+func TestSettingsPageRendersJapaneseLabelsAndSpacing(t *testing.T) {
+	s := uiText(t, "settings.html")
+	for _, want := range []string{
+		`<title>hitomi hub settings</title>`,
+		`id="settings-values"`,
+		`id="settings-constants"`,
+		`gap: .75rem 1.25rem`,
+		`function addRow(container, label, value, meaning) {`,
+		`document.createElement("dt")`,
+		`document.createElement("dd")`,
+		`String(s.constants.cache_disk_max_entries)`,
+		`DB ファイル名`,
+		`Disk cache cap`,
 		`renderSettings();`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("viewer.html missing settings panel string %q", want)
+			t.Errorf("settings.html missing settings page string %q", want)
+		}
+	}
+	for _, forbidden := range []string{`<section>\n  <h2>設定（read-only）</h2>`, `String(row[1])`} {
+		if strings.Contains(s, forbidden) {
+			t.Errorf("settings.html must not keep old settings panel string %q", forbidden)
 		}
 	}
 }

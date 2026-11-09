@@ -127,11 +127,6 @@
 <body>
 <h1>hitomi hub viewer（閲覧ページ）</h1>
 <nav class="page-nav"><a href="/search">検索</a></nav>
-<section>
-  <h2>設定（read-only）</h2>
-  <ul id="settings-values"></ul>
-  <div id="settings-status" class="meta" role="status"></div>
-</section>
 <div class="cols">
   <div class="main">
     <section>
@@ -1506,36 +1501,6 @@ function applyViewerConfigCap() {
 
 applyViewerConfigCap();
 
-function renderSettings() {
-  const list = document.getElementById("settings-values");
-  if (!list) return;
-  fetch("/api/settings", { cache: "no-store" }).then((r) => r.json()).then((s) => {
-    const rows = [
-      ["DB", s.db],
-      ["Galleries", s.gallery_dir],
-      ["cache", s.cache_dir],
-      ["acquisition", s.acquisition_dir],
-      ["viewer", `${s.viewer.port} / ${s.viewer.bind}`],
-      ["hitomi", `${s.hitomi.min_interval_ms} / ${s.hitomi.image_min_interval_ms} / ${s.hitomi.image_format}`],
-      ["limits", `${s.limits.max_entries} / ${s.limits.max_uncompressed_bytes} / ${s.limits.max_scan_bytes}`],
-    ];
-    list.innerHTML = "";
-    for (const row of rows) {
-      const li = document.createElement("li");
-      const key = document.createElement("span");
-      key.className = "meta";
-      key.textContent = row[0];
-      const value = document.createElement("span");
-      value.textContent = String(row[1]);
-      li.append(key, value);
-      list.append(li);
-    }
-  }).catch((e) => {
-    document.getElementById("settings-status").textContent = e.message || "settings fetch failed";
-  });
-}
-
-renderSettings();
 loadSpreadDirection();
 const spreadButton = document.getElementById("spread-direction");
 if (spreadButton) spreadButton.textContent = spreadDirection;

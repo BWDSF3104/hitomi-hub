@@ -6,7 +6,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "app"
-UI_PATHS = [APP_DIR / "viewer.html", APP_DIR / "search.html"]
+UI_PATHS = [APP_DIR / "viewer.html", APP_DIR / "search.html", APP_DIR / "settings.html"]
 CANONICAL_EXE = ROOT / "output" / "hitomi-hub" / "hub.exe"
 SCRATCH_BUILD_EXE = ROOT / "scratch" / "canonical_build_freshness" / "hub.exe"
 
