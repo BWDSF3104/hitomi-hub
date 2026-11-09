@@ -3,7 +3,7 @@
 **Status**: 進行中
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
-**Next Action**: 段階3持ち帰り（assess-20261109-1320）: info 分 claim 伝達路の決定が必要（ctx route 変更/getWithGate 参照/lane 単位の3案すべて承認範囲超）。TN・full・nozomi と gateLane 参照1箇所は承認範囲内で実装可。決定後実装委譲
+**Next Action**: 実装（案2）- group registry 案（候補3）ユーザー承認 2026-11-09: gateLane key 参照＋info join guard 追加・pin 1件更新承認済み・委譲準備
 
 ## 意図 / 背景
 
