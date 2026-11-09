@@ -6,11 +6,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -207,6 +210,96 @@ func TestNoFullCacheDoesNotEvictActiveEntriesWhenOverEntryLimit(t *testing.T) {
 		if !c.canUseNegativeNoFull(hash, "webp", gg) {
 			t.Errorf("active entry %s must remain a TTL hit", hash)
 		}
+	}
+}
+
+// N-08（assess-20261109-1320）合格条件: memo 版 negativeNoFullKey が現状（全ソート・文字列化）と
+// 意味一致であること（400 random + 11 known）。oracle は buildNegativeNoFullKey（現状＝正典）。
+func TestNegativeNoFullKeyMemoEqualsCanonicalOracle(t *testing.T) {
+	// 11 known（再構成・記録に列挙根拠明記）: snapshot 正典窓（n=2112）＋空/nil・insertion 順
+	// != sorted 順・境界値（0・int max）・単独 case・多要素既知集合。
+	knownSets := []map[int]bool{
+		ggCaseSet,
+		nil,
+		{},
+		{2488: true},
+		{1: true, 3: true},
+		{7: true, 2: true, 9: true},
+		{4096: true, 5000: true},
+		{0: true},
+		{2147483647: true},
+		{42: true, 420: true, 4200: true},
+		{101: true, 103: true, 2112: true},
+	}
+	for i, set := range knownSets {
+		gg := GG{Bucket: "1793494803/", CaseSet: set, Source: "snapshot"}
+		for _, hash := range []string{sampleHash, "h0", "h2112"} {
+			for _, format := range []string{"webp", "avif"} {
+				if got := negativeNoFullKey(hash, format, gg); got != buildNegativeNoFullKey(hash, format, gg) {
+					t.Fatalf("known set %d hash %s format %s must equal oracle: memo %q oracle %q", i, hash, format, got, buildNegativeNoFullKey(hash, format, gg))
+				}
+			}
+		}
+	}
+
+	rng := rand.New(rand.NewSource(20261109))
+	for i := 0; i < 400; i++ {
+		n := 1 + rng.Intn(300)
+		set := make(map[int]bool, n)
+		for j := 0; j < n; j++ {
+			set[rng.Intn(1<<16)] = true
+		}
+		gg := GG{Bucket: fmt.Sprintf("179349%04d/", i), CaseSet: set, Source: "live"}
+		hash := fmt.Sprintf("random-hash-%d", i)
+		format := "webp"
+		if i%2 == 1 {
+			format = "avif"
+		}
+		if got := negativeNoFullKey(hash, format, gg); got != buildNegativeNoFullKey(hash, format, gg) {
+			t.Fatalf("random case %d must equal oracle: memo %q oracle %q", i, got, buildNegativeNoFullKey(hash, format, gg))
+		}
+	}
+
+	// insertion 順 != sorted 順の同一内容（別 instance）→ 同一 key（意味等価性）。
+	setA := map[int]bool{7: true, 2: true, 9: true}
+	setB := map[int]bool{9: true, 7: true, 2: true}
+	ggA := GG{Bucket: "1793494803/", CaseSet: setA, Source: "live"}
+	ggB := GG{Bucket: "1793494803/", CaseSet: setB, Source: "live"}
+	if negativeNoFullKey(sampleHash, "webp", ggA) != negativeNoFullKey(sampleHash, "webp", ggB) {
+		t.Errorf("same case set must produce same key regardless of instance")
+	}
+}
+
+// memo は access 時刻を記録し、淘汰しない（ユーザー同意済み 2026-11-09）。entry 数無制限・
+// CaseSet insertion 順正典意味（FIFO・insertion 順・bump 優先）とは分離したmemo構造。
+func TestNegativeNoFullKeyMemoRecordsAccessTimeAndNoEviction(t *testing.T) {
+	gg := snapshotGG()
+	hash := "access-time-hash"
+	mk := noFullKeyMemoKey{hash: hash, format: "webp", source: gg.Source, bucket: gg.Bucket,
+		caseSet: reflect.ValueOf(gg.CaseSet).Pointer(), caseLen: len(gg.CaseSet)}
+
+	if negativeNoFullKey(hash, "webp", gg) != buildNegativeNoFullKey(hash, "webp", gg) {
+		t.Fatal("miss must equal oracle")
+	}
+	entry, ok := noFullKeyMemo[mk]
+	if !ok {
+		t.Fatal("miss must store memo entry (key + lastAccess)")
+	}
+	first := entry.lastAccess
+	time.Sleep(2 * time.Millisecond)
+	if negativeNoFullKey(hash, "webp", gg) != entry.key {
+		t.Fatal("hit must return the memoized key string")
+	}
+	if noFullKeyMemo[mk].lastAccess.Before(first) {
+		t.Errorf("hit must record access time: first %v got %v", first, noFullKeyMemo[mk].lastAccess)
+	}
+
+	// 淘汰なし: 2000 件の別 key を memo 化しても access 記録 entry は残る。
+	for i := 0; i < 2000; i++ {
+		negativeNoFullKey(fmt.Sprintf("eviction-probe-%d", i), "webp", gg)
+	}
+	if _, ok := noFullKeyMemo[mk]; !ok {
+		t.Errorf("memo entry must not be evicted (no eviction by approved design)")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -334,7 +335,59 @@ func newPooledTransport() *http.Transport {
 	return t
 }
 
+// N-08（assess-20261109-1320・ユーザー同意済み 2026-11-09）: key 単位の memoization。
+// memo は正典 builder（`buildNegativeNoFullKey`）が生成した key 文字列のみを保持し、呼出ごとに
+// 再ソート・再連結しない。key の byte 列（hash|format|gg.Source|gg.Bucket|sorted CaseSet）と
+// hit 判定意味（同一 case 集合 → 同一 key）は不变。access 時刻を記録し、淘汰はしない（同意済み）。
+// CaseSet の insertion 順正典意味（insertion 順・FIFO・bump 優先）とは分離して維持する。
+// 等価性の根拠: CaseSet は生成後に内容が変更されない（parseGG は new map・snapshot の
+// ggCaseSet は静的・生成後の in-place 書き込みは grep で 0 件）。memo key は CaseSet instance の
+// 識別（map pointer と件数）で同一生成元のみ参照する。
+type noFullKeyMemoEntry struct {
+	key        string
+	lastAccess time.Time
+}
+
+type noFullKeyMemoKey struct {
+	hash    string
+	format  string
+	source  string
+	bucket  string
+	caseSet uintptr
+	caseLen int
+}
+
+var (
+	noFullKeyMemo   = map[noFullKeyMemoKey]noFullKeyMemoEntry{}
+	noFullKeyMemoMu sync.Mutex
+)
+
 func negativeNoFullKey(hash, format string, gg GG) string {
+	mk := noFullKeyMemoKey{
+		hash:    hash,
+		format:  format,
+		source:  gg.Source,
+		bucket:  gg.Bucket,
+		caseSet: reflect.ValueOf(gg.CaseSet).Pointer(),
+		caseLen: len(gg.CaseSet),
+	}
+
+	noFullKeyMemoMu.Lock()
+	defer noFullKeyMemoMu.Unlock()
+
+	if entry, ok := noFullKeyMemo[mk]; ok {
+		entry.lastAccess = time.Now()
+		noFullKeyMemo[mk] = entry
+		return entry.key
+	}
+	key := buildNegativeNoFullKey(hash, format, gg)
+	noFullKeyMemo[mk] = noFullKeyMemoEntry{key: key, lastAccess: time.Now()}
+	return key
+}
+
+// buildNegativeNoFullKey は正典の key 生成そのもの（呼出ごとに sorted CaseSet 連結）。
+// memo の miss 生成元・意味等価性テスト（400 random + 11 known）の oracle として保持する。
+func buildNegativeNoFullKey(hash, format string, gg GG) string {
 	values := make([]int, 0, len(gg.CaseSet))
 	for value := range gg.CaseSet {
 		values = append(values, value)

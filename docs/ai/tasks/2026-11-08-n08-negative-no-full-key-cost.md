@@ -1,6 +1,6 @@
 # N-08: negativeNoFullKey が呼出ごとに case 値をソート・連結（约 12KB）
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -115,3 +115,41 @@
 - スクラッチ実測（`docs/ai/tmp/assess-20261109-1320/r08/`・`go test -overlay` 注入）: PASS（call counts・length・timing・fp 等価性）
 - UI 項目でないため画面確認・screenshot・Drive 保存は該当なし（不要として記録）
 - 正典コード非触（git status clean）。実 DB・完成フォルダ非触
+
+## 2026-11-09 実装（memoize・assess-20261109-1320・子）
+
+### 採用判断（段階1・推奨案）
+
+- 採用 = memoize（ユーザー同意済み 2026-11-09 の推奨案。access 時刻・key のみ・淘汰不要・CaseSet の insertion 順正典意味と分離して維持）。fingerprint（単射保証要求時の最小案）は不要 — key の byte 列が不変のまま CPU 改善を達成。
+- 設計（`app/hitomi.go`）: memo key = `hash|format|gg.Source|gg.Bucket` + CaseSet instance 識別（map pointer・件数）。value = 正典 builder `buildNegativeNoFullKey`（現状の全ソート・文字列化）生成の key 文字列 + `lastAccess`。hit 時 access 記録、miss 時 1 回生成。淘汰なし（同意済み）。正典 call site（`imageFetchKey`・`tnFetchKey`・`canUse`・`clear`・`remember`）は memo 経由の `negativeNoFullKey` を共用。
+- 等価性構造保証: CaseSet は生成後に内容変更なし（grep 根拠: 書き込みは `parseGG` の new map 生成時だけ・snapshot `ggCaseSet` 静的・テストも new map）。memo は builder 生成の byte 列をそのまま保持するため、memo 版＝現状（同一 case 集合→同一 key・別集合→別 key）は構造上成立。件数 guard（memo key に件数）は len 変化の検知のみ。
+- `ClearMemoryCaches` 非触（memo は memory clear scope の正典列挙に含まれない・記録のみ）。
+
+### 意味等価性実測（合格条件）
+
+- 400 random + 11 known で memo 版 == 現状（oracle `buildNegativeNoFullKey`）一致。正典テスト 2 件追加（`hitomi_test.go`・mock なし・外部 API なし）:
+  - `TestNegativeNoFullKeyMemoEqualsCanonicalOracle` — 400 random（seed 20261109・case 数 1–300・hash/format 変化）+ 11 known（前批 scratch が archive 済みで定義未取得のため再構成・列挙: snapshot `ggCaseSet` n=2112・nil・空・{2488}・{1,3}・{7,2,9}（insertion 順 ≠ sorted 順）・{4096,5000}・{0}・{2147483647}・{42,420,4200}・{101,103,2112}。各 3 hash × 2 format）。同一内容・insertion 順違いの別 instance → 同一 key も確認。
+  - `TestNegativeNoFullKeyMemoRecordsAccessTimeAndNoEviction` — access 時刻記録・2000 件 insert 後でも entry 残存（淘汰なし）。
+- 既存テスト pin 非触（key oracle 使用・byte 列固定なしの 5 件と `imageFetchKey == negativeNoFullKey` 同一性固定・format/gg 分離・TN variant 接尾は memo 版でも一致）。insertion 順正典意味・FIFO・bump 優先テスト非触。
+
+### 呼出あたり再実測（144 ns 級）
+
+- 流儀: `go test -overlay` は現 toolchain（go1.27.3 windows）で仮想 file が package listing に出ず、既存 file 置換も test 名 discovery に反映なし（3 key 形で実測確認）→ 正典 app の全 copy（byte-identical・SHA256 照合: hitomi.go `D9431E96…`・gg.go `FF8FC2E7…`）+ scratch 計測 test へ変更（`docs/ai/tmp/assess-20261109-1320/r08/appcopy/`・mock・外部 API・server 起動なし・実 DB/cache 非触）。
+- N=100,000・3 run（正典コード照合済み copy 計測）: 現行 161,398 / 160,089 / 159,826 ns/呼出 → memo hit 120 / 110 / 110 ns/呼出（1,345–1,455x・ns 級）。小 N run の 0 ns 表示は clock 分解能異常として根拠から除外（median ~110–120 ns）。
+- key byte 列 10,070 B（現状と同一・snapshot 窓）。`tnFetchKey` の variant 接尾維持を 1 回実測確認。
+
+### Verification（実装・合格）
+
+- `go vet .`（app）: 合格（出力なし）。
+- `go test -count=1 -timeout 300s .`（app）: `ok hitomi-hub/app 27.294s`（全通過・新規 2 件含む）。
+- `python -m pytest tests/ -v`: 64 passed（26.04 s・freshness test 含む）。
+- 正典 build: `go build -o output/hitomi-hub/hub.exe .`（現 app からの fresh build）合格。
+- UI 項目でないため画面確認・screenshot・Drive 保存は該当なし（表示源・x-cache 判定非触。gate・singleflight・generation guard・full 経路順序・TN display fallback 禁止・TN バイト非保存は非触）。
+- 試行回数: 1（設計→実装→検証の一 passes。計測流儀の overlay→全 copy 切替は手法切替で修正試行ではない）。
+
+### 変更ファイル
+
+- `app/hitomi.go`（+53: memo 構造・memo 版 `negativeNoFullKey`・正典 builder `buildNegativeNoFullKey`（oracle）・reflect import）
+- `app/hitomi_test.go`（+93: 意味等価性 400 random + 11 known・access 記録/淘汰なしテスト）
+- 本タスク記録追記・`docs/ai/decisions/2026-11-09-n08-negative-no-full-key-memoize.md`（正典 decision として adoption 記録）
+- `docs/ai/tasks/2026-11-03-c08-no-full-storm.md` の key 構成記載（sorted CaseSet）は byte 列不変のため更新不要（fingerprint 案採用時だけの対象）。
