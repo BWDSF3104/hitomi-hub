@@ -288,21 +288,6 @@ function collectPayload() {
   return payload;
 }
 
-async function saveSettings(event) {
-  event.preventDefault();
-  const status = document.getElementById("settings-status");
-  const payload = collectPayload();
-  try {
-    const response = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `POST /api/settings failed: ${response.status}`);
-    status.textContent = "Saved";
-    renderSettings();
-  } catch (e) {
-    status.textContent = e.message || "settings save failed";
-  }
-}
-
 async function loadSettings() {
   try {
     const response = await fetch("/api/settings", { cache: "no-store" });

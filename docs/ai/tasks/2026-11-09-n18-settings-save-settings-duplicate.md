@@ -1,8 +1,8 @@
 # settings.html の saveSettings 二重定義
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
-**Next Action**: 調査委譲（assess-20261109-1320）
+**Next Action**: 実装完了（served 画面確認合格・試行1回）。Drive capture 上書き（同名 png）旨を板で親へ共有済み
 
 ## 意図 / 背景
 
@@ -55,6 +55,32 @@
 - コード変更なしのため `go vet`/`go test` の再実行は該当なし（AGENTS 共通条: docs/ai 変更のみは検証不要）。
 - ローカルのスクリーンショットコピー（scratch 経由）は正典 `kilo-safe-remove` でゴミ箱へ送出済み。Drive 側は保持。
 - 補足: canonical server（fresh instance・port 8731）を本調査で起動し、Playwright browser の tab を複数兄弟セッションが同一 origin で共有している状況。server はこの子セッションの lifetime で停止するため、兄弟の cold claims で同一 instance 共有による汚染（warm 化）Occurred 点を親へ板で共有。
+
+## 実装（委譲実行 2026-11-09・assess-20261109-1320 項目分）
+
+- 採用: 推奨案（ユーザー同意済み）どおり前定義の削除。実挙動は不変。
+- 変更: `app/settings.html` 前定義（削除前 settings.html:291-304・14行 + 直後空行1）を削除。削除後 `saveSettings` 定義は 1 個（`s = data` を含む有効定義）。後定義・`s = data` 意味・`#settings-status`・`#cache-clear-status`・テストは未変更。
+- 承認範囲内の単独 commit（本項目分のみ: `app/settings.html`・本タスク記録・`current-task.tsv` 本項目参照行）。tsv の他実行分（staged 混入）は commit 不含・非接触（正典 commit-tree で本項目分のみのツリーを構成。コミット ID は結果報告参照）。
+
+## 検証（実装 phase）
+
+- `python -m pytest tests/ -v` → 64 passed（34.52s、freshness test 含む。fresh canonical build 後）
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok hitomi-hub/app 43.186s（試行1回）
+- fresh canonical build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`（app）→ 成功。同一 exe から fresh instance server（pid 26660・port 8731・起動前に port 8731 非 listening を確認）で served 画面確認。data-dir は scratch コピー（`docs/ai/tmp/n18-impl-20261109/data`。理由: POST /api/settings は data-dir 内 config.json へ書くため実 config・実 DB 非接触）。server は確認後停止済み。
+
+## 画面確認（実装 phase・served）
+
+- cold hygiene 3条件: fresh canonical build（pytest freshness 合格）・fresh server instance（pid 26660）・isolated origin（Playwright isolated context `n18-impl-20261109`・clean）。共用 browser の他 tab は別 origin（port 8753・別 context）で本 server へリクエストなし、network requests は自 tab の GET 200 / POST 200 のみで帰属確立。
+- window size（fresh target 実測・人工 resize なし）: inner 1666x932 / outer 1679x1025（dpr 2）。被写体範囲は before/after で同一（full page）。要素切り取りなし（settings ページは scroll 対象。scrollHeight 4322）。
+- 操作: 現在の値のまま「設定を保存」submit（設定値の変更なし）。
+- 実測: served HTML 内 `async function saveSettings(event) {` 定義数 = 1（前定義削除を served 画面で確認）。bound 定義の `saveSettings.toString()` に `s = data;` を含む。settings-status: before "" → after "Saved"。cache-clear-status: before "" → after ""（表示先分離・実挙動不変）。
+- 合否: 合格（試行1回）。
+- Drive 保存: `I:\マイドライブ\kilo\2026-11-09-n18-settings-save-settings-duplicate\`（フォルダ名＝項目 slug）
+  - `n18-settings-save-settings-duplicate-impl-before-20261109.png` / `n18-settings-save-settings-duplicate-impl-after-20261109.png`（before/after。同一 window size・同一範囲・同一取得方法）
+  - `n18-settings-save-settings-duplicate-implementation-confirmation-2026-11-09.txt`（手順・実測値・合否）
+  - 注意: 同一フォルダの調査 phase png（同名 `...-before-20261109.png` / `...-after-20261109.png`）は本実装 run の capture で上書き occurred。実装 run 分は `-impl-` 接尾で区別し、調査 txt は保持。上書き旨を結果で親へ板共有済み。
+- local copy（project `scratch/n18-impl-20261109/`）は正典 `kilo-safe-remove` でゴミ箱へ送出済み。Drive 側は保持。git に screenshot binary なし。
+- ブラウザ: 自 tab（Playwright browser tool）を Drive 保存・記録終了後閉じた（閉じた時点で browser tool の open tabs は自 tab なし。他セッション所有の tab は非接触）。
 
 ## 完了時 Memory Bank 操作
 
