@@ -1,6 +1,6 @@
 # N-11: renderPrefetchStatus が呼出ごとに current.files 全件走査（O(N^2)）
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -89,8 +89,30 @@ node harness（`docs/ai/tmp/assess-20261108-1332/r11/r11_measure.mjs`・正典 `
 
 - 有効（未解決・実装未開始）。counts の差分更新は既存だが、表示 3 値の per-call 全件走査は現行でも未解消。前批推荐（差分カウンタ案）のまま。優先度: 重要度中（表示正しさは現行で正しく、性能のみ）・緊急度低・リスク中（mutation 点の transition 意味保持）・依存（正典 exe 再生成・test pin re-anchor・viewer_test.go 更新 or guarded reconciliation 選択）。推定規模: viewer.html 関数内部約 40 行 + mutation helper + test pin 更新（小）。
 
+## 実装（assess-20261109-1320・実施 2026-11-09）
+
+### 採用した判断（段階1・推奨案）
+
+- 実装形: **guarded reconciliation + mutation 点差分カウンタ**（per-gallery `displayCountsByGallery`・`reconciled` フラグ）。初回/gallery 切替（setGalleryMeta）と全件 clear（revokeFullObjectUrls）時のみ全件照合、steady state は mutation 点の before/after 差分（O(1)）。
+- 採用根拠: 正典意味（displayPass=DOM truth・status=source truth・map 由来件数・呼出ごとの即時表示）を保持しつつ、テスト pin（`viewer_test.go:3004` の `displayPassByEntry.get(key)`/`sourceTypeByEntry.get(key)`/`activeObjectUrlKeys.has(key` が `renderPrefetchStatus` 本文内）を re-anchor せずに維持できる。pure delta だと本文から get/has が消え pin 更新が必要だが、推奨実装形（guarded reconciliation）で回避。テスト変更なし。
+- mutation 点（差分適用）: `setSourceStatus`・`setSourceTypeFromKey`・`recordImageDisplayPassFromImg`（displayPass set）・`revokeFullObjectUrl`（delete 前 snapshot）・`storeFullCache`（objectURL 分支の add）・`revokeFullObjectUrls`（全件 clear→カウンタ dirty）。gallery 切替: `setGalleryMeta` で dirty 化。
+- predicate は現行と同一（`displayContribution` = pass / pass&&local-direct / active&&statusIsViewerDisplaySource）。key 帰属は key prefix（`keyGalleryId`・`decrementPrefetchedCountForKey` 流儀）。呼出条件・即時性は不変（呼出箇所そのまま）。debounce は実施しない（承認案件として分離済み）。
+
 ### Verification（assess-20261109-1320）
 
 - `python -m pytest tests/ -v` → 60 passed（12.50 s）。
 - `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・ok 26.403 s（pin 現行 anchor で通過・源コード非変更）。
 - 画面確認: 上記 served 実測・合格。before/after 同一 window size・同一 full page・同一取得方法。
+
+### Verification（実装 2026-11-09・assess-20261109-1320）
+
+- harness（正典 `tests/harness_lib.mjs` 流儀・`bodyIn` 抽出 + `new Function`・`docs/ai/tmp/assess-20261109-1320/n11_impl_check.mjs`・HEAD `a5579a0` 全件走査 vs 実装 delta・決定論 event stream・外部 API なし）→ 13 checks passed:
+  - N=1000（呼出 1037 = open 1 + 完了 1000 + display pass 37): 現行==delta の per-call 表示文字列全一致（即時性保持・呼出数同一）。oracle（raw map 全件再計算）両実装一致。
+  - 実測改善（oracle off・同一 stream・cumulative ms）: 現行 639.615 ms（走査 1,037,000）→ delta 10.224 ms（走査 1,000＝初回照合1回＋steady O(1)・key 生成 1,000）・62.6×（前批推定約1/79と一致するオーダー）。scaling: N=100→14.5×・500→58.4×・1000→91.4×・2000→195.2×・4000→466.6×（textsEqual 全 true）。
+  - 境界一致: E1 既知 key status 遷移・E2 sourceType objectURL→local-direct・E3 revoke（delete 前 snapshot）・E4 他 gallery key 帰属と切替（key prefix 帰属）・E5 全件 clear → dirty → 次呼出で照合一致。すべて現行==delta。
+- `go vet . && go test -count=1 -timeout 300s .`（app・実装後）→ vet clean・ok 31.357 s。テスト変更なし（guarded reconciliation で pin `displayPassByEntry.get(key)`/`sourceTypeByEntry.get(key)`/`activeObjectUrlKeys.has(key)`・関数順・`renderRetryButtonState()` 呼出を本文内維持。re-anchor 不要と判断・採用）。
+- `python -m pytest tests/ -v`（実装後・fresh canonical build 込み）→ 63 passed（15.30 s・12.22 s）。既知 failure なし（fresh build 後 freshness test 合格）。
+- 画面確認（served・正典ルール準守・合格）: fresh build hub.exe・fresh instance pid 11464・port 8731・isolatedContext `n11-impl-20261109`・window outer 1679x1025・inner 1666x932（実測・resize なし・before/after 同一）・gallery 358885（74 files）。
+  - before `実表示ピクセル 50/74 | ローカル直接 0/74 | objectURLキャッシュ 74/74 | フル画像なし 0/74 | TN表示フォールバック禁止` → 操作（#next・hash page 51-52 の未表示 page）→ #prefetch-status MutationObserver: 200 mutations・値変化 124・maxJumpPerValue=1（呼出ごとの即時逐次更新・中間スキップなし）。page 51-52 で load event ごとに actualPixels 50→74 の +1 即時更新確認。after `実表示ピクセル 74/74 | objectURLキャッシュ 74/74`。
+  - 保存先: `I:\マイドライブ\kilo\2026-11-08-n11-render-prefetch-status-on2\`（`n11-impl-before-20261109.png`・`n11-impl-after-20261109.png`・`n11-render-prefetch-status-confirmation-2026-11-09.txt`）。Playwright 出力が project root に落ちた 2 枚の local copy は正典 `kilo-safe-remove` でゴミ箱へ送った。server（8731）は本確認専用で停止済み。
+- 呼出条件は不変（呼出箇所そのまま・debounce なし・display pass 339→呼出、revoke、evict、updatePrefetchCounts、clear、gallery open、manualRetry finally）。正典不変条件（full 画像経路・TN 表示源禁止・TN バイト非保存・x-cache・generation guard）非接触。
