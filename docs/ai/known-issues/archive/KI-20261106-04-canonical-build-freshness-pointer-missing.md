@@ -34,7 +34,7 @@
 
 - 正典 build command（app）: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → 出力なし（成功）。現 app からの fresh build として freshness test 合格（stale 化解消）。
 - `python -m pytest tests/ -v`（ルート）: **60 passed / 0 failed**（13.00s）。`test_canonical_build_freshness_rule_exists` PASSED、`test_canonical_executable_embeds_current_pages` PASSED。
-- `go vet . && go test -count=1 -timeout 300s .`（app）: `go vet` ok。`go test` は既存 failure 2件（`app/viewer_test.go:1818` slice end not found after start、`app/viewer_test.go:2536` initial search restore not found・`app/search.html` の現行構造と test 期待値の不一致）。`git diff HEAD -- app` は空＝app 側は無変更、本件は Python テストのみ変更で Go test を参照しない → 本件の解決条件ではなく、本件変更由来ではない既存 failure として未解決残留（親へ報告）。
+- `go vet . && go test -count=1 -timeout 300s .`（app）: `go vet` ok。`go test` は既存 failure 2件（`app/viewer_test.go:1818` slice end not found after start、`app/viewer_test.go:2536` initial search restore not found・`app/search.html` の現行構造と test 期待値の不一致）。`git diff HEAD -- app` は空＝app 側は無変更、本件は Python テストのみ変更で Go test を参照しない → 本件の解決条件ではなく、本件変更由来ではない既存 failure として未解決残留（親へ報告）。 ※ stale（現行実測と矛盾・下記「訂正補記」参照・2026-11-09）
 
 ## 親の機械確認
 
@@ -44,3 +44,13 @@
 ## クローズ判定
 
 - 本 issue の「次の対応」案（テスト側を `docs/ai/rules/confirmation-test-rule.md` の pointer へ更新）を実施し、pytest 全件合格で確認。AGENTS.md は無変更（write-protected）。→ 解決。
+
+## 訂正補記（2026-11-09・項目 #17・assess-20261109-1320・記録訂正のみ）
+
+- stale 記述: 上記 Verification（2026-11-08・実測）の「Go 側未解決残留（2 件 failure）」は状態記述として現行実測（2026-11-09）と矛盾し、stale。本補記で訂正（古い状態記述は根拠にしない・日付優先）。
+- 機構の訂正: 2 件の失敗は構造不一致ではなく EOL（CRLF）依存。`core.autocrlf=true`（実測）・`.gitattributes` 不在（実測）でワーキングツリーが CRLF であり、`go:embed`（`app/viewer.go:23`）はディスク bytes を埋めるため raw `\n` の完全 adjacency を要求する needle（`viewer_test.go:1818` 相当・`:2536` 相当）が CRLF 内容で不一致になっていた。LF blob（git show）上では構造は照合条件と常に一致（`docs/ai/tmp/assess-20261109-1320/check_literals.py`・`check_eol.py`）。
+- 閉機構: commit `b2641df`（2026-11-09 01:08・UFI-1 dedicated Series/Type filter）が 2 assertion を EOL 非依存形へ re-anchor（`sliceBetween(..., "<script>")` 終端、showLists 後の restore 順序照合）。guard 意味維持（results が `.side` に戻らない 2 ファイル分離照合・restore 順序）。現行 CRLF ツリーで全件合格。
+- 現行実測（2026-11-09・本実行）: `go vet . && go test -count=1 -timeout 300s .`（app）= vet ok / test ok（26.999s・失敗なし）。`python -m pytest tests/ -v`（ルート・正典 build fresh 後）= 65 passed（21.98s）。該当 2 テスト個別 PASS（`go test -v -run "TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs|TestEmbeddedUIPreservesSearchStateAcrossReload"` → 2 件 PASS・1.560s）。正典 build（app）`go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` 成功（fresh）。画面確認: UI 項目でないため該当なし（Drive 保存なし）。
+- 採用文書: 日付優先により現行実測（2026-11-09）と `b2641df` を採用。矛盾した古い状態記述（2026-11-08 の未解決残留）は上に変更済み（stale マーカー付与・原文は歴史的記録として保持）。
+- 代替案（承認要・実施しない・記録のみ): `.gitattributes` で `app/*.html` を LF 固定し EOL 依存脆性を根源から除去。現行 assertion は EOL 非依存なので追加措置不要（将来 raw `\n` needle 追加時に再発リスク）。
+- 正典流儀: 本補記は archive エントリへの状態記述訂正（1 エントリ 1 ファイル・日本語）のみ。テスト実ファイル・既存テスト・AGENTS.md（write-protected）は無変更。個別タスク記録: `docs/ai/tasks/2026-11-08-n17-pytest-freshness-pointer-missing.md`。

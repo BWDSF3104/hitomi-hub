@@ -69,11 +69,11 @@ UI 項目でないため該当なし。Drive 保存なし。正典 exe・served 
 
 ## 完了時 Memory Bank 操作
 
-- [ ] `current-task.tsv` の参照行を削除
-- [ ] 解決した `known-issues/` ファイルを `known-issues/archive/` へ `mv`（該当する場合）— `KI-20261106-04` はテスト側修正の実装完了まで未解決のまま（本調査は実施していない）
-- [ ] `backlog.md` の完了項目を削除（該当する場合）
+- [x] `current-task.tsv` の参照行を削除 → 正典 `task_manager end` で本実行（2026-11-09）に適用
+- [x] `KI-20261106-04` は archive 済み（2026-11-08・pytest 側解決）。Go 側は `b2641df`（2026-11-09）の EOL re-anchor で閉 → 2026-11-09 訂正補記で stale 記述を訂正（mv 不要）
+- [ ] `backlog.md` の完了項目を削除（該当なし）
 
-実装開始指示待ち（テスト側修正は未実施）。推奨のみ記録。
+テスト側修正（推奨案）は 2026-11-08 に実施済み（commit 参照・pytest 合格）。本実行は残作業の記録訂正のみ。
 
 ## 2026-11-09 再調査（assess-20261109-1320）
 
@@ -121,3 +121,25 @@ UI 項目でないため該当なし。Drive 保存なし。
 - `go vet . && go test -count=1 -timeout 300s .`（app）: vet ok / test ok 38.094s（2026-11-09）
 - 個別 `-v -run "TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs|TestEmbeddedUIPreservesSearchStateAcrossReload"`: 2 件 PASS（1.207s）
 - 調査 scratch: `docs/ai/tmp/assess-20261109-1320/`（gitignore 対象）
+
+## 記録訂正の実施（assess-20261109-1320 子実行・2026-11-09）
+
+- 実施: archive エントリ `docs/ai/known-issues/archive/KI-20261106-04-canonical-build-freshness-pointer-missing.md` に「訂正補記」節を追記（stale 記述行に stale マーカー・訂正補記は追記のみで原文は歴史的記録として保持）。内容: stale 記述の訂正・EOL（CRLF）機構・閉機構 `b2641df`（2026-11-09 01:08）・現行実測結果・採用文書（日付優先）・`.gitattributes` LF 固定の代替案（承認案件・実施しない・記録分離維持）。
+- 正典流儀: 1 エントリ 1 ファイル・日本語・memory-bank-guide（archive 参照）。テスト実ファイル・既存テスト・AGENTS.md 変更なし。実装 0（本項目分は記録訂正のみ）。
+- 試行回数: 1（修正反復なし。合格条件は記録訂正＋実測証拠）。
+- 画面確認: UI 項目でないため該当なし（Drive 保存なし）。正典 build 実機確認は既存 rule 上可能な範囲（fresh build＋pytest freshness 合格・served 画面操作は該当なし）。
+
+### 実測（この記録訂正実行・2026-11-09）
+
+- 正典 build（app・fresh）: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → 成功（出力なし）。注: ルートには go.mod がない（module は `app/`）。ルートでの `go build` は「cannot find main module」で失敗（正典 build command は app で実行）。
+- `python -m pytest tests/ -v`（ルート・fresh build 後）: **65 passed in 21.98s**（`test_canonical_build_freshness_rule_exists`・`test_canonical_executable_embeds_current_pages` PASSED）。
+- `go vet . && go test -count=1 -timeout 300s .`（app）: vet ok / test **ok（26.999s・失敗なし）**。
+- 該当 2 テスト個別（`go test -v -count=1 -run "TestEmbeddedUISearchPageLayoutSeparatesResultsFromSideInputs|TestEmbeddedUIPreservesSearchStateAcrossReload"`）: **2 件 PASS（1.560s）**。
+- commit（本項目分単独・明示ステージ）: archive 訂正補記＋本タスク記録＋`current-task.tsv`（正典 `task_manager end`）＝単独 commit・push。commit hash は git log（本項目分）参照。
+
+### 合格条件の充足
+
+- 訂正補記: archive エントリに正典流儀で記録済み（上）。
+- 実測証拠: pytest 65 passed・go vet/test 失敗なし・該当 2 テスト個別 PASS（上）。
+- 画面確認: 該当なし（明記済み）。
+- 不合格点・未解決事項: なし。`.gitattributes` LF 固定は承認案件のまま記録（実施しない）。
