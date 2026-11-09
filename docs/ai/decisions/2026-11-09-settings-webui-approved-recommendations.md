@@ -9,7 +9,7 @@ Web UI settings は recommended form で承認した。実装済み範囲は ded
 
 1. settings write target は primary `config.json`。`config.example.json` は既定正典として書き込まない。atomic write は config 用 temp+rename。
 2. settings write で即時反映できるのは request 時に cfg を読む値だけ。port/bind・db・dataDir・dir root・schema/pragmas は restart required と UI で明示した。
-3. settings write allowlist は `viewer.max_object_urls`、`hitomi` interval/retry、`image_format`、`use_live_gg`、`limits.*`、`virustotal.enabled`、`virustotal.hash_only`、`virustotal.upload_unknown` に限定。dir・port・bind・db・YARA path・api_key value・cap・floor・TTL・page constants は UI write 対象外。
+3. settings write allowlist は `viewer.max_object_urls`、`hitomi` interval/retry、`image_format`、`use_live_gg`、`limits.*`、`virustotal.enabled`、`virustotal.hash_only`、`virustotal.upload_unknown` に限定。`acquisition_dir` はユーザー指示で UI write allowlist に追加した。他の dir path・port・bind・db・YARA path・api_key value・cap・floor・TTL・page constants は UI write 対象外。
 4. settings write では floor guard を書き込み時に再実行し、不正値を拒否して表示する。path を UI で書ける形にはしない。
 5. secret は UI へ api_key value として出さない。`api_key_env` 名だけ表示できる。Existing primary `config.json` の `api_key` は write 時に preserve する。
 6. settings UI は `viewer.html` に置かない。`/settings` dedicated settings page を embed 追加する。Viewer page に settings panel を残さない。
@@ -43,6 +43,14 @@ Web UI settings は recommended form で承認した。実装済み範囲は ded
 - `config.example.json` に `cache` block を追加し、`cache_disk_max_entries` key を canonical default `4000` の写しとして列挙する。Existing `limits` test は `cache_disk_max_entries` を `limits` key として検出しない。
 - Settings page で `viewer_floor` を `内部定数` の read-only row として表示し、`cache_disk_max_entries` は `キャッシュ` の editable row として表示する。Viewer page の settings panel、settings fetch、`settings-values`、`renderSettings()` 禁止条件は維持する。
 
+## 実施（acquisition folder editable）
+
+- `acquisition_dir` を Settings UI editable allowlist に追加した。UI input key は top-level `acquisition_dir` で、`collectPayload()` は `parts.length === 1` の top-level string を `{"acquisition_dir": "..."}` として送る。
+- Settings write validation は top-level string を clean path にする。空 string は unspecified default `acquisition`。Absolute path、drive prefix、`..` segment、invalid path characters、empty segment、`.` segment、Windows reserved name segment は reject。
+- Path は root-relative に限定し、`withinRoot(v.root, filepath.Join(v.root, clean))` を満たす必要がある。完成フォルダ内書き込み条と root 内 guard なし条を UI write path で埋める。
+- Successful write 後 `v.cfg.AcquisitionDir` と `v.acquisitionRoot` を memory へ即時反映する。Existing acquisition endpoint の folder base は `v.acquisitionRoot` を使う。
+- Settings UI group は `取得フォルダ`。Read-only group から `取得フォルダ (acquisition_dir)` を editable group へ移し、label、`aria-describedby`、`data-key` で input を結ぶ。
+
 ## Supersedes
 
-この decision の page 配置点だけ、同日の初期 viewer panel 案を supersede する。R-15 の viewer cap notification UI 禁止、secret 表示条件は維持する。`docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md` の cap notification UI 条件は維持する。`cache_disk_max_entries` を settings へ移動する点だけ、`docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md` の「cap・floor・TTL は settings 化しない」条件のうち cache cap 部分を supersede する。`viewer_floor` の settings 化は supersede しない。`docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md` の canonical default 値 `4000` はそのまま。
+この decision の page 配置点だけ、同日の初期 viewer panel 案を supersede する。R-15 の viewer cap notification UI 禁止、secret 表示条件は維持する。`docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md` の cap notification UI 条件は維持する。`cache_disk_max_entries` を settings へ移動する点だけ、`docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md` の「cap・floor・TTL は settings 化しない」条件のうち cache cap 部分を supersede する。`viewer_floor` の settings 化は supersede しない。`docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md` の canonical default 値 `4000` はそのまま。`acquisition_dir` を UI editable allowlist に追加する点だけ、この decision の初期 dir path UI write 対象外条件を supersede する。他の dir path・port・bind・db・YARA path・api_key・cap・floor・TTL・page constants は UI write 対象外のままだ。

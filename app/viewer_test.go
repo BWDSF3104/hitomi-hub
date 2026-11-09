@@ -4850,11 +4850,25 @@ func TestSettingsEndpointServesEditableSettingsWithoutAPIKey(t *testing.T) {
 	if !ok || len(keys) == 0 {
 		t.Fatalf("editable_keys must list allowlisted settings, got %v", out["editable_keys"])
 	}
+	foundAcquisition := false
 	for _, key := range keys {
-		parts := strings.Split(key.(string), ".")
-		if len(parts) != 2 || !isAllowedSettingsField(parts[0], parts[1]) {
-			t.Fatalf("editable key %v is not allowlisted", key)
+		keyString := key.(string)
+		parts := strings.Split(keyString, ".")
+		if len(parts) == 1 {
+			if !isAllowedSettingsTopKey(parts[0]) {
+				t.Fatalf("editable key %v is not allowlisted", keyString)
+			}
+			if keyString == "acquisition_dir" {
+				foundAcquisition = true
+			}
+			continue
 		}
+		if len(parts) != 2 || !isAllowedSettingsField(parts[0], parts[1]) {
+			t.Fatalf("editable key %v is not allowlisted", keyString)
+		}
+	}
+	if !foundAcquisition {
+		t.Fatalf("editable_keys must include acquisition_dir, got %v", out["editable_keys"])
 	}
 	if out["db"] != defaultDBName || out["gallery_dir"] != defaultGalleryDirName || out["cache_dir"] != defaultCacheDirName || out["acquisition_dir"] != defaultAcquisitionDirName {
 		t.Fatalf("settings names must use code defaults, got %+v", out)
@@ -4932,10 +4946,14 @@ func TestSettingsPageRendersJapaneseLabelsAndGroupCards(t *testing.T) {
 		`設定を保存`,
 		`fetch("/api/settings", { cache: "no-store" })`,
 		`fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })`,
+		`String(s.acquisition_dir)`,
 		`String(s.cache.cache_disk_max_entries)`,
 		`DBファイル名 (db)`,
 		`download 完了フォルダ名 (gallery_dir)`,
+		`取得フォルダ`,
 		`取得フォルダ (acquisition_dir)`,
+		`key === "acquisition_dir"`,
+		`parts.length === 1`,
 		`Disk cache cap (cache_disk_max_entries)`,
 		`Viewer lower bound (viewer_floor)`,
 		`negative cache cap (negative_cache_max_entries)`,
@@ -5108,6 +5126,73 @@ func TestSettingsPostWritesCacheDiskCapAndAppliesItImmediately(t *testing.T) {
 	}
 	if matches, err := filepath.Glob(filepath.Join(dir, "config.json.tmp")); err != nil || len(matches) != 0 {
 		t.Fatalf("atomic settings write must not leave temp files, got %v", matches)
+	}
+}
+
+func TestSettingsPostWritesAcquisitionDirAndRecomputesAcquisitionRoot(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), dir)
+	v.configPath = filepath.Join(dir, "config.json")
+	if err := os.WriteFile(v.configPath, []byte(`{"db":"hub.db","acquisition_dir":"acquisition"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", `{"acquisition_dir":"collect"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["acquisition_dir"] != "collect" {
+		t.Fatalf("settings response must return updated acquisition_dir, got %v", out)
+	}
+	if v.cfg.AcquisitionDir != "collect" || v.acquisitionRoot != filepath.Join(dir, "collect") {
+		t.Fatalf("memory must reflect acquisition_dir immediately, got cfg=%q root=%q", v.cfg.AcquisitionDir, v.acquisitionRoot)
+	}
+
+	raw, err := os.ReadFile(v.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"acquisition_dir": "collect"`) {
+		t.Fatalf("settings file must contain updated acquisition_dir, got %s", raw)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "config.json.tmp")); err != nil || len(matches) != 0 {
+		t.Fatalf("atomic settings write must not leave temp files, got %v", matches)
+	}
+}
+
+func TestSettingsPostRejectsAcquisitionDirOutsideRoot(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), dir)
+	v.configPath = filepath.Join(dir, "config.json")
+	if err := os.WriteFile(v.configPath, []byte(`{"db":"hub.db","acquisition_dir":"acquisition"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct{ name, body, want string }{
+		{"type", `{"acquisition_dir":1}`, "acquisition_dir"},
+		{"null", `{"acquisition_dir":null}`, "must be a string"},
+		{"traversal", `{"acquisition_dir":"../escape"}`, "must be a root-relative folder name"},
+		{"absolute", `{"acquisition_dir":"C:\\escape"}`, "must be a root-relative folder name"},
+		{"drive", `{"acquisition_dir":"S:\\escape"}`, "must be a root-relative folder name"},
+		{"reserved", `{"acquisition_dir":"CON"}`, "Windows reserved name"},
+		{"control", `{"acquisition_dir":"bad\\u0000folder"}`, "invalid path characters"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", c.body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s must be rejected, got %d body %q", c.name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s error must mention %q, got %s", c.name, c.want, rec.Body.String())
+		}
 	}
 }
 

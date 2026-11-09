@@ -658,6 +658,7 @@ func settingsView(v *viewer) settingsResponse {
 
 func settingsEditableKeys() []string {
 	return []string{
+		"acquisition_dir",
 		"cache.cache_disk_max_entries",
 		"viewer.max_object_urls",
 		"hitomi.min_interval_ms",
@@ -682,7 +683,7 @@ func settingsEditableKeys() []string {
 }
 
 func isAllowedSettingsTopKey(key string) bool {
-	return key == "cache" || key == "viewer" || key == "hitomi" || key == "limits" || key == "virustotal"
+	return key == "acquisition_dir" || key == "cache" || key == "viewer" || key == "hitomi" || key == "limits" || key == "virustotal"
 }
 
 func isAllowedSettingsField(section, key string) bool {
@@ -740,6 +741,40 @@ func settingsFormatError(value string) error {
 	default:
 		return fmt.Errorf("hitomi.image_format must be one of: webp, avif, jpg, png")
 	}
+}
+
+func settingsAcquisitionDirValue(v *viewer, raw string) (string, error) {
+	if raw == "" {
+		return defaultAcquisitionDirName, nil
+	}
+	if strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "\\") || drivePrefix.MatchString(raw) || containsDotDotSegment(raw) {
+		return "", fmt.Errorf("acquisition_dir must be a root-relative folder name")
+	}
+	clean := filepath.Clean(filepath.FromSlash(raw))
+	if clean == "." || filepath.IsAbs(clean) {
+		return "", fmt.Errorf("acquisition_dir must be a root-relative folder name")
+	}
+
+	for _, r := range raw {
+		if r < 32 || r == 127 || r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			return "", fmt.Errorf("acquisition_dir contains invalid path characters")
+		}
+	}
+
+	for _, segment := range strings.FieldsFunc(raw, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if segment == "" || segment == "." {
+			return "", fmt.Errorf("acquisition_dir segment must not be empty")
+		}
+		if isWindowsReservedName(segment) {
+			return "", fmt.Errorf("acquisition_dir segment must not be a Windows reserved name")
+		}
+	}
+
+	candidate := filepath.Join(v.root, clean)
+	if !withinRoot(v.root, candidate) {
+		return "", fmt.Errorf("acquisition_dir must stay inside root")
+	}
+	return clean, nil
 }
 
 func settingsBaseMap(v *viewer) map[string]any {
@@ -855,10 +890,25 @@ func (v *viewer) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updates := map[string]map[string]any{}
+	pathUpdates := map[string]string{}
 	for topKey, rawSection := range raw {
 		if !isAllowedSettingsTopKey(topKey) {
 			writeJSONError(w, http.StatusBadRequest, topKey+" is not editable in settings UI")
 			return
+		}
+		if topKey == "acquisition_dir" {
+			rawPath, ok := rawSection.(string)
+			if !ok {
+				writeJSONError(w, http.StatusBadRequest, "acquisition_dir must be a string")
+				return
+			}
+			value, err := settingsAcquisitionDirValue(v, rawPath)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			pathUpdates[topKey] = value
+			continue
 		}
 		section, ok := rawSection.(map[string]any)
 		if !ok {
@@ -910,7 +960,7 @@ func (v *viewer) updateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(updates) == 0 {
+	if len(updates) == 0 && len(pathUpdates) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "no editable settings were provided")
 		return
 	}
@@ -926,6 +976,10 @@ func (v *viewer) updateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if !existed {
 		base = settingsBaseMap(v)
+	}
+
+	for topKey, value := range pathUpdates {
+		base[topKey] = value
 	}
 
 	for topKey, fields := range updates {
@@ -947,6 +1001,13 @@ func (v *viewer) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if err := atomicWriteConfigFile(target, data); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "settings file write failed: "+err.Error())
 		return
+	}
+
+	for topKey, value := range pathUpdates {
+		if topKey == "acquisition_dir" {
+			v.cfg.AcquisitionDir = value
+			v.acquisitionRoot = filepath.Join(v.root, value)
+		}
 	}
 
 	for topKey, fields := range updates {

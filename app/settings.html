@@ -126,7 +126,10 @@ function editableInput(key, value) {
   const section = parts[0];
   const subkey = parts[1];
 
-  if (section === "hitomi" && subkey === "image_format") {
+  if (key === "acquisition_dir") {
+    input.type = "text";
+    input.value = value;
+  } else if (section === "hitomi" && subkey === "image_format") {
     input.type = "text";
     input.value = value;
   } else if (key === "hitomi.use_live_gg" || key === "limits.yr_fast_scan" || section === "virustotal") {
@@ -159,8 +162,10 @@ function renderSettings() {
   addSetting(readOnlyGroup, "DBファイル名 (db)", String(s.db), "ローカル DB file。UI write 対象外。", "");
   addSetting(readOnlyGroup, "download 完了フォルダ名 (gallery_dir)", String(s.gallery_dir), "download 成果物 folder。取得 folder ではない。", "");
   addSetting(readOnlyGroup, "永続 cache フォルダ (cache_dir)", String(s.cache_dir), "full cache root。galleryinfo は <cache_dir>/galleryinfo。UI write 対象外。", "");
-  addSetting(readOnlyGroup, "取得フォルダ (acquisition_dir)", String(s.acquisition_dir), "画面「取得」で write する folder。download 完了 folder ではない。", "");
   addSetting(readOnlyGroup, "Viewer port / bind (viewer.port / viewer.bind)", `${s.viewer.port} / ${s.viewer.bind}`, "listener setting。restart が必要。UI write 対象外。", "");
+
+  const acquisitionGroup = addGroup(settingsList, "取得フォルダ", true);
+  addSetting(acquisitionGroup, "取得フォルダ (acquisition_dir)", String(s.acquisition_dir), "画面「取得」で write する folder。download 完了 folder ではない。root 内の folder name。", "acquisition_dir");
 
   const cacheGroup = addGroup(settingsList, "キャッシュ", true);
   addSetting(cacheGroup, "Disk cache cap (cache_disk_max_entries)", String(s.cache.cache_disk_max_entries), "full/thumbs 件数 cap。kind 単位・作成順。変更可能。", "cache.cache_disk_max_entries");
@@ -208,14 +213,24 @@ function collectPayload() {
   const payload = {};
   for (const input of document.querySelectorAll("input[data-key]")) {
     const key = input.getAttribute("data-key");
-    const [section, subkey] = key.split(".");
-    if (!payload[section]) payload[section] = {};
+    const parts = key.split(".");
+
+    let value;
     if (input.type === "number") {
-      payload[section][subkey] = Number(input.value);
+      value = Number(input.value);
     } else if (input.type === "checkbox") {
-      payload[section][subkey] = input.checked;
+      value = input.checked;
     } else {
-      payload[section][subkey] = input.value;
+      value = input.value;
+    }
+
+    if (parts.length === 1) {
+      payload[key] = value;
+    } else {
+      const section = parts[0];
+      const subkey = parts[1];
+      if (!payload[section]) payload[section] = {};
+      payload[section][subkey] = value;
     }
   }
   return payload;
