@@ -1,6 +1,6 @@
 # N-07: prefetch worker の race で item が undefined（KI-20261107-01）
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -94,3 +94,39 @@
 - scratch harness `docs/ai/tmp/assess-20261109-1320/n07_worker_race.mjs`: 6 check 全 pass（経過 <1 s）。数値は前批と一致（上記）。
 - コード検証コマンド（Go app `go vet . && go test -count=1 -timeout 300s .`）は実行不要として記録: 本調査はソース変更なし、テスト呼び出しの要否は読み取り（worker 内部固定アサーションなし）で足りると確認。実装実施時に変更後に実行する。
 - ソース未変更（guard はスクラッチ側のみ適用）。Status・Next Action は親管理（正典 task_manager）として変更せず、本節のみ追記。
+
+## 2026-11-09 実施（assess-20261109-1320・子）
+
+### 変更内容
+
+- `app/viewer.html` `startBackgroundWorkers(signal)` の `worker()`：`const item = prefetchQueue.shift();`（1111 行）直後へ `if (!item) return;` を 1 行追加（推奨案どおり・承認範囲内）。KI 記載の代替案（length check を await 後へ移す）ではなく shift 直後 guard を採用（前批の採用判断を維持：`while` 条件の自然終了と一致し追加意味 0）。
+- 回帰テスト追加（正典流儀 `tests/harness_lib.mjs`・`bodyIn` 抽出 + `new Function`）：
+  - `tests/viewer_prefetch_race_harness.mjs`（8 check）: guard anchor（単一・shift 直後・try 前）・catch 内 `updatePrefetchCounts("error", item.entry, item.galleryId)` の正典意味保持・microtask 登録順での race 決定論再現（unguarded 版は外部 TypeError `Cannot read properties of undefined (reading 'entry')` 1・error count 0・worker 正常 1/例外 1）・guard 版 race（例外 0・worker 正常 2・undefined が prefetch/counts に届かない・正味処理同一）・error path 一致（error 1・worker 継続して正常終了）。
+  - `tests/test_viewer_prefetch_race.py`: harness を node で実行し PASS ラベル 8 件を固定。
+- 他のテスト pin は変更なし（viewer_test.go の文字列 pin は非接触で通過確認）。`app/search.html` は非接触（変更なし）。
+
+### 試行記録
+
+- 試行1: 実装＋harness 作成。初回 harness 実行で 1 check 失敗。原因分析: harness 側の `counts` 初期化なし（`counts.error` が undefined → `=== 0` 判定 false、実測 JSON で確認）。harness 側を `{ error: 0, cache: 0 }` 初期化（正典スクラッチ harness と同一）へ修正 → 再実行で 8 check 全 pass。実装（guard）の修正は不要だった。
+- 試行回数は上記 1 回（修正は harness 初期化のみ。3 回上限内）。
+
+### Verification（実施）
+
+- harness `tests/viewer_prefetch_race_harness.mjs`: 8 check 全 pass。数値: race 現行機構再現（例外 1・error 0・処理 1・worker 1/1・queue 0）→ guard 版（例外 0・worker 正常 2・処理 1・queue 0）→ error path 一致（error 1・処理 2・worker 継続）＝前批記録の 9 check/6 check 数値と一致。
+- `python -m pytest tests/ -v`: 62 passed（新 test 1 件含む。15 s 内）。初回実行で `test_canonical_executable_embeds_current_pages` が stale hub.exe で 1 fail（UI 変更後の正典 build 前のため規則どおり）→ 正典 build 実行後 62 passed。
+- `go vet . && go test -count=1 -timeout 300s .`（app）: vet clean・`ok hitomi-hub/app 25.848s`。
+- 正典 build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`（freshness test 合格＝現 app 由来 embed 確認）。
+- served 画面確認（正典 confirmation-test-rule.md）: 正典 server command で fresh instance 起動（pid 11732）→ isolated origin（Playwright context `n07-assess-20261109-race`・localStorage clear）→ window size inner 1666x932（dpr 2）→ before（ギャラリー未開設）→ hash route `#/g/4299126/page/1` 操作（UI ルート）→ after。実測: prefetch-status「実表示ピクセル 37/37・error 0・no_full 0・TN表示フォールバック禁止」、/api/image 38 件全 200（サンプル 200・x-cache: cache・111,022 bytes。初回 1 件 x-cache: miss）。served `/` 応答（status 200）の worker() に guard 直後在位を実測確認。console error は favicon.ico 404（リソースエラー）のみ、worker 由来 JS error・unhandled rejection 0。
+  - race の決定論再現は served で不可（microtask 順序依存・ソース変更禁止）→ harness で閉（前批の例外事情どおり）。served 部分是上記の worker 起動・prefetch 正常・guard 在位で合格。
+  - Drive 保存: `I:\マイドライブ\kilo\2026-11-09-n07-prefetch-worker-undefined-item-race\`（`n07-race-before-20261109.png`・`n07-race-after-20261109.png`・`n07-served-confirmation-2026-11-09.txt`）。local copy（scratch/ の 2 png）は正典 `kilo-safe-remove` でゴミ箱へ送出。server は確認後停止。
+- 正典不変条件照合: full 画像経路順序・TN rules・x-cache 判定・generation guard・queue 优先级（`prefetchQueueKeys`）非接触（guard は worker の shift 直後の undefined 早期 return のみ。error path 意味一致は harness 実測で確認）。
+
+### 合否
+
+- 合格（race 再現＋guard 版 例外 0＋error path 一致＝harness 実測。served 画面確認合格。既存テスト全通過）。KI-20261107-01 は解決扱い（実装完了）。
+
+### 完了時 Memory Bank 操作
+
+- [x] `current-task.tsv` の参照行を削除（正典 `task_manager end` で実施）
+- [x] 解決した `known-issues/` ファイルを `known-issues/archive/` へ mv（`task_manager end` で実施）
+- [x] `backlog.md` の完了項目を削除（該当なし）

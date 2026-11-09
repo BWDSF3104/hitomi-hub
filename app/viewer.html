@@ -1109,6 +1109,7 @@ function startBackgroundWorkers(signal) {
       await currentPriorityDone;
       if (signal.aborted) return;
       const item = prefetchQueue.shift();
+      if (!item) return;
       try {
         const cache = await prefetchPageImage(item.entry, signal, item.galleryId);
         if (signal.aborted) return;
