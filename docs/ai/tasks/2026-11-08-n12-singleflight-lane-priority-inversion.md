@@ -1,6 +1,6 @@
 # N-12: singleflight で leader の lane により優先度が逆転する
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 実装（案2）- group registry 案（候補3）ユーザー承認 2026-11-09: gateLane key 参照＋info join guard 追加・pin 1件更新承認済み・委譲準備
@@ -196,5 +196,41 @@ scratch replica（`docs/ai/tmp/assess-20261109-1320/r12/`・module `assess202611
 - `python -m pytest tests/ -v`（HEAD・変更なし）: `64 passed in 26.01s`。
 - harness 再実測: 実施せず（実装形が info 分で確定できず、「実装形」の再実測が成立しない。前批の機構数値 data 209 ms／image 240 ms・同一 key 1 回・1 slot は機構として有効なまま。本段階では推翻していない）。
 - 変更したのは個別タスク記録のみ（本節＋Next Action の task_manager 更新）。ソース・既存テスト非触。`Set-Content` パイプライン不使用。
+
+### 実装（assess-20261109-1320 子・2026-11-09 承認形どおり・実施済み）
+
+- decision（実装前作成）: `docs/ai/decisions/2026-11-09-n12-group-registry-effective-lane-exception.md`（正典例外＋実装形）。作業前チェックの3 decision（`2026-11-01-root-and-tn-display-correction-policy.md`・`2026-11-01-fast-nonblocking-viewer-policy.md`・`2026-11-01-ggset-generation-and-drift.md`）を読了。
+- `app/hitomi.go`: `groupClaim`（fgCount・wake）＋`groupCtxKeyType`/`groupCtxKey`＋`withGroupKey`/`groupKeyFromCtx`＋`recordGroupClaim`/`releaseGroupClaim`/`deleteGroupClaim`（`mu` 保護・network 中に mutex 非保持）。`Client` に `groupClaims map[string]*groupClaim`。`gateLane` は ctx の key から registry を参照し、fg claim 決定分岐は plain sleepCtx（決定確定後 wake なし＝二重予約禁止・1 slot。初版の `continue` 二重 advance を修正）。bg path の joiner arrival 再評価は `sleepWake`/`claimWake` select。`Client.Gallery`（2 args pin）は `galleryCtx(ctx,...)` の wrapper へ。
+- `app/viewer.go`: `fetchTNOnce`・`fetchFullImageOnce`・`resolveInfoOnce`（ctx 追加）で joiner 参加時 claim 記録・canceled joiner 即 return＋claim 解放。info join guard 追加（TN と同じ「即 return」）。pin 維持流儀: `v.info(id, background)`（galleryinfocache_test・viewer_test 2 args pin）は `infoCtx` の wrapper、handler 2 箇所は `v.infoCtx(r.Context(), ...)`。`searchResult(id, background)`（`app/viewer_test.go:1691` pin）は ctx なし＝guard 該当ルートなし。
+- `app/searchhtml.go`: `SearchNozomiParts` join block に claim 記録（ctx guard なし＝既存 pin・canceled joiner 該当なし）、leader fetch の ctx を `c.withGroupKey(context.Background(), cacheKey)` へ、group 完了3経路で `deleteGroupClaim`。
+- 固定テスト更新（承認済み1件のみ）: `app/hitomi_test.go` `TestBackgroundGateDoesNotReserveSlotWhileForegroundPending`（委譲時 959 行）の 4 args pin → key 参照（`c.withGroupKey(ctx, "n12-pin-key")`）。他のテスト・`gateLane` 4 args signature 非触。
+- 新規回帰テスト `app/n12_group_registry_test.go`（5件: effective lane・per-key isolation（claim を lane 共有状態に置かない意味）・TN canceled joiner 解放・info join guard・nozomi claim＋group 完了時台帳消去）＋`claimCount`/`waitForClaim`。
+- 修正バグ: 型/変数同名 `groupKeyCtxKey`（vet error）→ `groupCtxKeyType`/`groupCtxKey`。
+
+### 決定論再実測（r12b・実装後の数値）
+
+`docs/ai/tmp/assess-20261109-1320/r12b/`（正典流儀 mock・外部 API なし・`go test -count=1 -timeout 180s -v .` → `ok 4.380s`・9 run・`results.json`）。数値列: 同一 key の外部呼出し / 同一 key の gate slot / joiner 壁時間 / leader 壁時間（呼出し3は scenario setup のフォア窓呼出しを含む。key group 自体は 1 call・1 slot・joiner slot 0、固定テスト join tests の join 数・marker 数 pin 通過で確認）:
+
+| Run | scheme | calls | slots | joiner | 合格条件 |
+|---|---|---|---|---|---|
+| A data 90 ms | current（前批 baseline） | 3 | 3 | 390 ms | 一致 |
+| A | final（実装機構） | 3 | 3 | **180 ms**（gate 成分改善 209 ms） | ✓（180/181・jitter） |
+| B image 60 ms・network 679 ms | current | 3 | 3 | 1040 ms | 一致（1039・±1） |
+| B | final | 3 | 3 | **800 ms**（gate 成分改善 240 ms・network 非解消） | ✓ |
+| C fg leader + bg joiner | current | 3 | 3 | 180 ms | ✓（逆転なし） |
+| D 上界（3×interval＋grace） | current | 3 | 3 | 380 ms | ✓（上界非変更） |
+| E canceled joiner | final（join helper） | 2（leader 1＋fg 1） | 2（leader 1・joiner 0） | **0 ms 即 return・claim 解放 true** | ✓（leader 300 ms・1 call 非影響。joiner 即 return を確定するため leader fetch を解放までブロック） |
+
+- metrics: joiner 非計上（既存意味維持・kind 分類不変）。gate_wait 数値は leader の lane 归属で変わる（decision 記録済み）。
+
+### Verification（本実装）
+
+- `go vet .`（`app`）: clean。
+- `go test -count=1 -timeout 300s .`（`app`）: `ok hitomi-hub/app 39.410s`（出力 `docs\ai\tmp\assess-20261109-1320\impl_go_test.txt`）。個別 PASS: 固定テスト① 0.20 s・effective lane 0.10 s・per key isolation 0.40 s・TN canceled joiner 0.11 s・info guard 0.18 s・nozomi claim 0.08 s。既存 join 固定テスト（viewer_test.go TN/info/nozomi）通過。
+- `python -m pytest tests/ -v`: 66 passed in 25.94 s（fresh canonical build 後・freshness 2件 PASS 含む）。正典 build fresh 成功（`output\hitomi-hub\hub.exe`）。
+- 実動作確認（viewer 変更・正典 build・外部 API 許可 decision 2026-11-01）:
+  - CLI download（実在 gallery 4294614・scratch root）: `attempted 1 = written 1`（一致）✓。
+  - viewer `/api/image/2d18a9a8fb2d971ec67f4287a13322738c04b8111e4cf4c8d73b2745a5942b89?format=webp`: **200・x-cache: miss・210784 bytes**（remote live gg hit・no_full なし）。同一ハッシュ `&gallery=4294614` では **200・x-cache: local・210784 bytes**（local full 経路）。byte 数は前批 cbz 実測（210784）と一致 ✓。
+- 画面確認: 該当なし（UI 項目でない・表示源・`x-cache` 判定・generation guard 非変更。本実装は server 機構のみ）。Drive 保存なし。
 
 ## 完了時 Memory Bank 操作

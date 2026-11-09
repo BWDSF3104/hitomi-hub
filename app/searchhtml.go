@@ -141,6 +141,10 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 			c.searchGroupJoinObserver(cacheKey)
 		}
 		c.searchGroupMu.Unlock()
+		// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md）: joiner priority
+		// claim を group registry（key 台帳）へ記録。join block に ctx guard がない既存流儀（固定テスト pin）
+		// では canceled joiner が成立しないため claim 解放は該当なし（解放は group 完了時の台帳削除のみ）。
+		c.recordGroupClaim(cacheKey, !state.background)
 		<-call.done
 		if call.err != nil {
 			return nil, call.err
@@ -152,7 +156,7 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 	c.searchGroup[cacheKey] = call
 	c.searchGroupMu.Unlock()
 
-	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+path, [2]int64{-1, -1}, state.background)
+	body, err := c.get(c.withGroupKey(context.Background(), cacheKey), "https://ltn."+hitomiDomain+path, [2]int64{-1, -1}, state.background)
 	if err != nil {
 		c.searchGroupMu.Lock()
 		if c.searchGroup[cacheKey] == call {
@@ -160,6 +164,7 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 		}
 		call.err = err
 		c.searchGroupMu.Unlock()
+		c.deleteGroupClaim(cacheKey) // group 完了＝台帳の group 消滅（claim 消去）
 		close(call.done)
 		return nil, err
 	}
@@ -171,6 +176,7 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 		}
 		call.err = err
 		c.searchGroupMu.Unlock()
+		c.deleteGroupClaim(cacheKey) // group 完了＝台帳の group 消滅（claim 消去）
 		close(call.done)
 		return nil, err
 	}
@@ -191,6 +197,7 @@ func (c *Client) SearchNozomiParts(state *searchState) ([]int, error) {
 		delete(c.searchGroup, cacheKey)
 	}
 	c.searchGroupMu.Unlock()
+	c.deleteGroupClaim(cacheKey) // group 完了＝台帳の group 消滅（claim 消去）
 
 	close(call.done)
 	return copyInts(stored), nil

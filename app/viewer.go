@@ -1390,7 +1390,7 @@ func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery id must be a positive integer", http.StatusBadRequest)
 		return
 	}
-	info, err := v.info(id, background)
+	info, err := v.infoCtx(r.Context(), id, background) // N-12: join guard（即 return）は handler ctx で働く
 	if err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1463,7 +1463,7 @@ func (v *viewer) pageSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "page must be >= 1", http.StatusBadRequest)
 		return
 	}
-	info, err := v.info(id, background)
+	info, err := v.infoCtx(r.Context(), id, background) // N-12: join guard（即 return）は handler ctx で働く
 	if err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1542,10 +1542,14 @@ func (v *viewer) fetchTNOnce(ctx context.Context, hash, format, variant string, 
 			v.tnFetchJoinObserver(key)
 		}
 		v.tnFetchMu.Unlock()
+		// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md）: joiner priority
+		// claim を group registry（key 台帳）へ記録。canceled joiner は claim を解放する。
+		v.client.recordGroupClaim(key, !background)
 		select {
 		case <-call.done:
 			return call.body, call.err
 		case <-ctx.Done():
+			v.client.releaseGroupClaim(key, !background)
 			return nil, ctx.Err()
 		}
 	}
@@ -1554,7 +1558,7 @@ func (v *viewer) fetchTNOnce(ctx context.Context, hash, format, variant string, 
 	v.tnFetchGroup[key] = call
 	v.tnFetchMu.Unlock()
 
-	body, err := v.client.getImage(context.WithoutCancel(ctx), ThumbnailURLVariant(hash, TNFormat(format), variant, gg), [2]int64{-1, -1}, background)
+	body, err := v.client.getImage(v.client.withGroupKey(context.WithoutCancel(ctx), key), ThumbnailURLVariant(hash, TNFormat(format), variant, gg), [2]int64{-1, -1}, background)
 	call.body = body
 	call.err = err
 
@@ -1563,6 +1567,7 @@ func (v *viewer) fetchTNOnce(ctx context.Context, hash, format, variant string, 
 		delete(v.tnFetchGroup, key)
 	}
 	v.tnFetchMu.Unlock()
+	v.client.deleteGroupClaim(key)
 
 	close(call.done)
 	return body, err
@@ -1580,10 +1585,16 @@ func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg
 			v.imageFetchJoinObserver(key)
 		}
 		v.imageFetchMu.Unlock()
+		// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md）: joiner priority
+		// claim を group registry（key 台帳）へ記録。canceled joiner は claim を解放する。
+		// 現行 UI 経路（marker なし full prefetch）では bg leader への join が成立しないが、機構として
+		// 有効なので join helper 流儀を TN と同一にする（TN 正典・x-cache source 判定は非接触）。
+		v.client.recordGroupClaim(key, !background)
 		select {
 		case <-call.done:
 			return call.body, call.err
 		case <-ctx.Done():
+			v.client.releaseGroupClaim(key, !background)
 			return nil, ctx.Err()
 		}
 	}
@@ -1592,7 +1603,7 @@ func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg
 	v.imageFetchGroup[key] = call
 	v.imageFetchMu.Unlock()
 
-	body, err := v.client.getImage(context.WithoutCancel(ctx), StorageURL(hash, format, gg), [2]int64{-1, -1}, background)
+	body, err := v.client.getImage(v.client.withGroupKey(context.WithoutCancel(ctx), key), StorageURL(hash, format, gg), [2]int64{-1, -1}, background)
 	call.body = body
 	call.err = err
 
@@ -1601,6 +1612,7 @@ func (v *viewer) fetchFullImageOnce(ctx context.Context, hash, format string, gg
 		delete(v.imageFetchGroup, key)
 	}
 	v.imageFetchMu.Unlock()
+	v.client.deleteGroupClaim(key)
 
 	close(call.done)
 	return body, err
@@ -1862,7 +1874,13 @@ func (v *viewer) query(w http.ResponseWriter, r *http.Request) {
 // remote 失敗時のみ期限切れ永続 entry を stale 暫定表示に使う（counter+log で判別可）。
 // 壊れた永続ファイルはミス扱い・除去して remote 再取得。Phase 2 の先読み成果もこの helper
 // 経由で自動で永続化される（Phase 2 側追加作業不要）。
+// info は 2 args pin（既存テスト）で wrapper を維持する。join guard（N-12・canceled joiner 即 return）は
+// core 側 infoCtx が request ctx を受けて働かせる（handler 流儀は TN・full の ctx select と同一）。
 func (v *viewer) info(id int, background bool) (*GalleryInfo, error) {
+	return v.infoCtx(context.Background(), id, background)
+}
+
+func (v *viewer) infoCtx(ctx context.Context, id int, background bool) (*GalleryInfo, error) {
 	v.infoCacheMu.Lock()
 	entry, ok := v.infoCache[id]
 	if ok {
@@ -1883,16 +1901,21 @@ func (v *viewer) info(id int, background bool) (*GalleryInfo, error) {
 		return &persisted.GalleryInfo, nil
 	}
 
-	return v.resolveInfoOnce(id, background, persisted)
+	return v.resolveInfoOnce(ctx, id, background, persisted)
 }
 
 // resolveInfoOnce は remote `Client.Gallery` の singleflight（R-13・案 A・key = id）。memory・disk を
 // 通過した request だけがこの helper に入る（disk hit は network/gate を消費しない）。network 中に mutex を
 // 保持しない。joiner は leader result を共有する（既存 infoCache が pointer を共有する意味と同一）。
-// info は ctx を持たない（既存 guard test の signature を変えないため join は ctx guard なし・EnsureGG
-// 流儀）。joiner は gate lane を消費しない。stale 暫定表示と disk persist・memory cache 書き込みは leader
+// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md・ユーザー承認 2026-11-09）:
+// joiner priority claim を group registry（key = strconv.Itoa(id)）へ記録し、canceled joiner は claim を
+// 解放する。info join guard を追加（挙動は TN と同じ「即 return」へ改善）。既存 pin（`v.info`・`Gallery` の
+// 2 args signature）は wrapper で維持し、ctx は handler（`infoCtx`）から core へ通す。joiner は gate lane を
+// 消費しない。stale 暫定表示と disk persist・memory cache 書き込みは leader
 // 側のみで 1 回（joiner は skip しない per-request の memory/disk hit は info 側）。
-func (v *viewer) resolveInfoOnce(id int, background bool, persisted *persistedGalleryInfo) (*GalleryInfo, error) {
+func (v *viewer) resolveInfoOnce(ctx context.Context, id int, background bool, persisted *persistedGalleryInfo) (*GalleryInfo, error) {
+	key := strconv.Itoa(id)
+
 	v.infoFetchMu.Lock()
 	if v.infoFetchGroup == nil {
 		v.infoFetchGroup = map[int]*infoFetchCall{}
@@ -1902,15 +1925,21 @@ func (v *viewer) resolveInfoOnce(id int, background bool, persisted *persistedGa
 			v.infoFetchJoinObserver(id)
 		}
 		v.infoFetchMu.Unlock()
-		<-call.done
-		return call.info, call.err
+		v.client.recordGroupClaim(key, !background)
+		select {
+		case <-call.done:
+			return call.info, call.err
+		case <-ctx.Done():
+			v.client.releaseGroupClaim(key, !background)
+			return nil, ctx.Err()
+		}
 	}
 
 	call := &infoFetchCall{done: make(chan struct{})}
 	v.infoFetchGroup[id] = call
 	v.infoFetchMu.Unlock()
 
-	info, err := v.client.Gallery(id, background)
+	info, err := v.client.galleryCtx(v.client.withGroupKey(ctx, key), id, background)
 	if err != nil {
 		if persisted != nil {
 			v.recordInfoDiskStaleHit(id, persisted.FetchedAt)
@@ -1924,6 +1953,7 @@ func (v *viewer) resolveInfoOnce(id int, background bool, persisted *persistedGa
 			delete(v.infoFetchGroup, id)
 		}
 		v.infoFetchMu.Unlock()
+		v.client.deleteGroupClaim(key)
 		close(call.done)
 		if call.err != nil {
 			return nil, err
@@ -1950,6 +1980,7 @@ func (v *viewer) resolveInfoOnce(id int, background bool, persisted *persistedGa
 		delete(v.infoFetchGroup, id)
 	}
 	v.infoFetchMu.Unlock()
+	v.client.deleteGroupClaim(key)
 
 	close(call.done)
 	return info, nil

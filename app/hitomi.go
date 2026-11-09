@@ -250,6 +250,72 @@ type gateLaneState struct {
 	bgWaitSince time.Time
 }
 
+// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md・ユーザー承認 2026-11-09）:
+// group registry（key 単位の map・group→claim）。joiner priority claim を `mu`（既存 mutex）で保持する。
+// gateLane は ctx に載った key を参照して registry から effective lane を決める。
+// effective lane = 参加者最高優先度。claim の消費・gate slot を増やさない（joiner slot 0 維持）。
+// fg claim のみが effective lane を変える（bg joiner は group effective lane を上げない）。
+type groupClaim struct {
+	fgCount int
+	wake    chan struct{}
+}
+
+type groupCtxKeyType struct{}
+
+var groupCtxKey groupCtxKeyType
+
+// withGroupKey は join helper が leader fetch の ctx へ key を載せる carrier（per-key 正確性の必須条件。
+// claim を gateLaneState（lane 単位）に置くと同一 lane の無関係 group（他 key）へ漏れる）。
+func (c *Client) withGroupKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, groupCtxKey, key)
+}
+
+func groupKeyFromCtx(ctx context.Context) (string, bool) {
+	key, ok := ctx.Value(groupCtxKey).(string)
+	return key, ok
+}
+
+func (c *Client) recordGroupClaim(key string, fg bool) {
+	if !fg {
+		return
+	}
+	c.mu.Lock()
+	if c.groupClaims == nil {
+		c.groupClaims = map[string]*groupClaim{}
+	}
+	claim := c.groupClaims[key]
+	if claim == nil {
+		claim = &groupClaim{wake: make(chan struct{}, 1)}
+		c.groupClaims[key] = claim
+	}
+	claim.fgCount++
+	select {
+	case claim.wake <- struct{}{}:
+	default:
+	}
+	c.mu.Unlock()
+}
+
+func (c *Client) releaseGroupClaim(key string, fg bool) {
+	if !fg {
+		return
+	}
+	c.mu.Lock()
+	if claim := c.groupClaims[key]; claim != nil {
+		claim.fgCount--
+		if claim.fgCount <= 0 {
+			delete(c.groupClaims, key)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (c *Client) deleteGroupClaim(key string) {
+	c.mu.Lock()
+	delete(c.groupClaims, key)
+	c.mu.Unlock()
+}
+
 type Client struct {
 	http           *http.Client
 	cfg            HitomiConfig
@@ -266,6 +332,8 @@ type Client struct {
 	// 項目2: blockCooldownUntil は block signal クールダウンの期限（zero = 非発動）。
 	// `mu` 保護。有効中、gateLane は両 lane の effective interval を politeness 既定へ退避。
 	blockCooldownUntil time.Time
+	// N-12: group registry（group→claim・key 単位）。`mu` 保護（上記）。
+	groupClaims map[string]*groupClaim
 	versions       map[string]string
 	versionAt      map[string]time.Time
 	versionForceAt map[string]time.Time
@@ -602,6 +670,12 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 //     override 可）。条件を満たさない間は interval 境界で再チェック（待機）。飢餓防止:
 //     `fgPending` 待機が 3×interval 以上継続し、かつ interval 条件を満たす時点で公平枠と
 //     して予約可。shared `last` 連鎖による global interval 遵守は変更しない。
+// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md・ユーザー承認済み限定例外）:
+// ctx に key が載り、group registry の claim に fg 参加者がいる場合のみ、effective lane が
+// foreground として dispatch 時刻（`last + interval`）を決める（「background は未来予約しない」への
+// 限定例外・FIFO 算術・共有 last 連鎖・interval・grace・公平枠は不変）。key なし・claim なしは
+// 正典条件そのまま（既存固定テストの 4 args 直接呼出は無変更で通過）。joiner arrival は wake select
+// で再評価する。canceled joiner の claim 解放後、bg path へ戻る。
 // metrics（kind 別意味・`marker.<priority>` 分離）は非接触。
 func (c *Client) gateLane(ctx context.Context, intervalMS int, st *gateLaneState, background bool) error {
 	if c.testGateIntervalMS > 0 {
@@ -621,10 +695,19 @@ func (c *Client) gateLane(ctx context.Context, intervalMS int, st *gateLaneState
 		return nil
 	}
 	interval := time.Duration(intervalMS) * time.Millisecond
+	key, hasKey := groupKeyFromCtx(ctx)
 	for {
 		c.mu.Lock()
 		now := time.Now()
-		if !background {
+		var claim *groupClaim
+		if hasKey && c.groupClaims != nil {
+			claim = c.groupClaims[key]
+		}
+		claimFG := claim != nil && claim.fgCount > 0
+		if !background || claimFG {
+			// 承認済み例外の境界: fg claim 決定時の dispatch 時刻（last+interval）のみ先行。共有 last は
+			// interval 分だけ1回進む（二重予約なし・1 slot）。joiner arrival の再評価（wake）でこの分岐へ
+			// 入った後は決定確定。claim 決定後の解放で予約済み slot は撤回しない。
 			if now.Before(st.last.Add(interval)) {
 				next := st.last.Add(interval)
 				st.last = next
@@ -668,9 +751,37 @@ func (c *Client) gateLane(ctx context.Context, intervalMS int, st *gateLaneState
 			}
 		}
 		c.mu.Unlock()
-		if err := sleepCtx(ctx, time.Until(next)); err != nil {
+		if err := sleepWake(ctx, time.Until(next), claimWake(claim)); err != nil {
 			return err
 		}
+	}
+}
+
+func claimWake(claim *groupClaim) chan struct{} {
+	if claim == nil {
+		return nil
+	}
+	return claim.wake
+}
+
+// sleepWake は A-06 意味（sleep 中 ctx cancel 即 return）を保った wake select。joiner arrival（claim
+// 記録）で gate 待機を再評価する。wake なしは sleepCtx と同一条件。
+func sleepWake(ctx context.Context, d time.Duration, wake chan struct{}) error {
+	if d <= 0 {
+		return nil
+	}
+	if wake == nil {
+		return sleepCtx(ctx, d)
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	case <-wake:
+		return nil
 	}
 }
 
@@ -1007,8 +1118,15 @@ func names(entries []map[string]flexString, key string) []string {
 	return out
 }
 
+// Gallery は 2 args pin（既存テスト）で wrapper を維持する。info join helper の key 参照は
+// N-12（decision 2026-11-09-n12-group-registry-effective-lane-exception.md）で core 側（galleryCtx）へ
+// ctx の key を通す（key 単位の claim 参照・lane 単位の漏れ禁止）。
 func (c *Client) Gallery(id int, background bool) (*GalleryInfo, error) {
-	body, err := c.get(context.Background(), "https://ltn."+hitomiDomain+"/galleries/"+strconv.Itoa(id)+".js", [2]int64{-1, -1}, background)
+	return c.galleryCtx(context.Background(), id, background)
+}
+
+func (c *Client) galleryCtx(ctx context.Context, id int, background bool) (*GalleryInfo, error) {
+	body, err := c.get(ctx, "https://ltn."+hitomiDomain+"/galleries/"+strconv.Itoa(id)+".js", [2]int64{-1, -1}, background)
 	if err != nil {
 		return nil, err
 	}

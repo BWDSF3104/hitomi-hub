@@ -1078,7 +1078,14 @@ func TestBackgroundGateDoesNotReserveSlotWhileForegroundPending(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	err := c.gateLane(ctx, c.cfg.MinIntervalMS, &c.dataGate, true)
+	// N-12（ユーザー承認 2026-11-09・承認済み pin 更新この1件）: 4 args pin → key 参照。
+	// claim なしの key は effective lane を変えない（参加者最高優先度＝caller の bg）。
+	// 「フォア待機中に slot を予約しない・未来予約禁止」の意味は更新後も同一で通過する。
+	keyCtx := c.withGroupKey(ctx, "n12-pin-key")
+	if _, ok := groupKeyFromCtx(keyCtx); !ok {
+		t.Fatal("key reference must resolve via ctx (group registry lookup path)")
+	}
+	err := c.gateLane(keyCtx, c.cfg.MinIntervalMS, &c.dataGate, true)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("background gate must not reserve while fg pending, must return on cancel: got %v", err)
 	}
