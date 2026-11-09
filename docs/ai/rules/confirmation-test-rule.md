@@ -1,7 +1,7 @@
 # 本プロジェクトルール: 確認テスト系正典（単一ルール）
 
-**Date**: 2026-11-06
-**Status**: active（ユーザー指示 2026-11-06 08:13 UTC）
+**Date**: 2026-11-09
+**Status**: active（ユーザー指示 2026-11-06 08:13 UTC / 2026-11-09 ユーザー指示でブラウザ開閉ルールを追記）
 **Scope**: hitomi-hub
 
 テスト系規則は本ファイルに集約する。AGENTS.md の Rules ポインタは本ファイル1本のみ。
@@ -36,6 +36,9 @@ cold state を claim する UI/network 実測は、測定時点で次の3条件�
 - 確認スクリプトは browser executable を launch しない。Playwright browser tool の target を直接使用する。
 - 通常確認で OS foreground 化は不要。`kilo-screen-capture.ps1` は Playwright browser 画面画像で確認できない OS-level exception（フルスクリーン状態・window state・viewport 外・複数 monitor）のためだけ使う exception script。その場合 `ExceptionReason` に「Playwright browser screenshot で確認できない理由」を記録し、画像は例外的 OS full-screen 確認として区別する。
 - Playwright の出力 root 制限により、まず `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`（または project `scratch/`）へ保存し、PowerShell `Copy-Item` で Drive へコピーする。
+- ブラウザは、開いたセッションが責任を持って閉じる。画面確認のため Playwright browser tool でブラウザを開いた場合は、スクリーンショットの Drive 保存とタスクへの記録が終わった時点で、他の工程へ進む前に browser tool の終了操作で閉じること。その後に不合格・未解決・判断の持ち帰り等のどの経路で終了する場合でも、結果を返す時点でブラウザは閉じていること。閉じられない場合は、その旨と理由を結果に明記する。
+- 委譲元の統括セッションは、委譲のたびに、結果へ「ブラウザを閉じた（または開いていない）」旨が含まれていることと、Playwright のブラウザ本体プロセス（コマンドラインに専用プロファイル／一時フォルダを含むもの。MCP サーバー本体は除く）の残存が 0 であることを機械的に確認する。残存がある場合は、その識別条件に一致するブラウザ本体プロセスだけを終了させ、終了させた件数を記録する。
+- 委譲を使わない単独実行でも同じ規律とする。タスク終了時にブラウザを閉じ、閉じた事実をタスク記録または報告に残す。
 
 ## 5. 操作前後（before / after）
 

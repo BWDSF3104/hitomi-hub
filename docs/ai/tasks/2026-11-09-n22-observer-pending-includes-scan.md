@@ -1,6 +1,6 @@
 # loadSearchCards の pending.includes が O(n)
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: 調査委譲（assess-20261109-1320）
 
@@ -54,11 +54,33 @@ harness: `docs/ai/tmp/assess-20261109-1320/harness_observer_pending.mjs`（現�
 - 重要度: 低（実害 µs 級）。緊急度: 低。リスク: 低（意味一致確認済み・pin なし）。依存: なし
 - 単独で着手する価値は薄く、observer 周辺に触れる変更のついでに載せる掃除項目
 
+### 実装（2026-11-09・n22 実行・実施 phase）
+
+- 採用: 同意済みの推奨案（補助 `pendingSet`＝membership 補助のみ・差分最小）。full Set 化・insertion 順意味変更はスコープ外につき実施せず。#10（saveTitleGroups・debounce）には触れない（別項目・混同回避）。
+- `app/search.html` `loadSearchCards` の変更（3か所・差分最小）:
+  1. `const pending = ids.slice();` の直後に `const pendingSet = new Set(pending);` を追加
+  2. observer コールバック `if (!pending.includes(id)) continue;` → `if (!pendingSet.has(id)) continue;`
+  3. worker pop `pending.splice(pending.indexOf(id), 1);` の直後に `pendingSet.delete(id);` を追加（membership の同期点・gate の意味は pop 瞬間のまま）
+- `pending` 配列の正典意味（insertion 順・`takeNextSearchCard`・`indexOf`）は無変更。Set は membership 補助のみ。
+- 回帰 pin（承認範囲: 合格条件が必要とする pin 更新のみ・既存テスト非影響）: `tests/search_visible_priority_harness.mjs` に check「observer membership uses pendingSet kept in sync with the pending array」を追加し、`tests/test_search_visible_priority.py` の required に同一ラベルを追加。
+
 ## Verification
 
-- 本項目はソースコード変更なし（調査子・変更は本タスク記録のみ）。Go 変更なし → 検証コマンド（`go vet . && go test -count=1 -timeout 300s .`）は docs-only 例外（global AGENTS.md コード検証条）で適用なし
+### 調査 phase（2026-11-09・この段階はコード変更なし）
+
 - 実測: `node docs/ai/tmp/assess-20261109-1320/harness_observer_pending.mjs`（正典流儀 tests/harness_lib.mjs）— 実行 2026-11-09、経過約 0.09s、結果は上記（84 checks・999 comparisons・includes miss 25.1 ns/回・Set.has 10.5 ns/回・セッション合計 array 1.0 µs vs Set 0.89 µs）
-- 画面確認: UI 項目でないため省略（スクリーンショット該当なし）
+
+### 実装 phase（n22・2026-11-09）
+
+- 再実測 harness: `node docs/ai/tmp/assess-20261109-1320/n22_remeasure_pendingset.mjs`（正典流儀 tests/harness_lib.mjs・mock・外部 API なし・9 checks）— 9/9 PASS・経過約 0.12s（node v24.22.1）:
+  - scenario 再現で調査値一致: membership checks 84（hit 42・miss 42）・comparisons 999。Set 判定と array oracle の divergence 0（全 check で membership 一致・insertion 順＝ids 順・決定と処理順は repeated run で一致＝決定論的）。配列 membership モデル（修正前コードの文字復元）と比較し処理順・リクエスト数一致（25・重複なし・追加リクエストなし）
+  - microbench: `Array(25).includes` miss 25.7 ns/回・`Set.has` 11.2 ns/回 → セッション合計 array 約 1.03 µs・Set 約 0.94 µs・delta 約 0.09 µs（改善正・記録の 0.12 µs と同オーダー。microbench は実行により変動する実測値）
+- 既存 harness 回帰: `node tests/search_visible_priority_harness.mjs` — 25 checks PASS（新規 pin を含む・他の check に影響なし）
+- 正典検証:
+  - `go vet . && go test -count=1 -timeout 300s .`（app）— 合格（go test 経過 26.9s）
+  - `python -m pytest tests/ -v` — 64 passed in 24.75s（`test_canonical_build_freshness.py` 含む）
+  - 正典 build: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` を現 app から実行（freshness test 前提）
+- 画面確認: UI 項目でないため該当なし（記録に明記・Drive 保存なし・local copy cleanup 該当なし）。動作一致は mock harness で固定（served 画面確認は実施しない）
 
 ## 完了時 Memory Bank 操作
 
