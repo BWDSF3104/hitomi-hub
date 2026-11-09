@@ -19,6 +19,7 @@ check(helperBlock.includes("function distanceToVisibleArea(id, visibleIds, resul
 check(loadBlock.includes("new IntersectionObserver(") && loadBlock.includes("observer.observe(el)"), "visibility comes from IntersectionObserver on the placeholder li");
 check(loadBlock.includes("{ root: visibleRoot }"), "observer root is the results scroll container");
 check(loadBlock.includes("const id = takeNextSearchCard(pending, visibleIds, results, visibleRoot);"), "worker pop uses priority selection takeNextSearchCard");
+check(loadBlock.includes("const pendingSet = new Set(pending);") && loadBlock.includes("if (!pendingSet.has(id)) continue;") && loadBlock.includes("pendingSet.delete(id);"), "observer membership uses pendingSet kept in sync with the pending array");
 check(!loadBlock.includes("queue.shift()"), "FIFO shift pop replaced by takeNextSearchCard");
 check(!helperBlock.includes("setInterval(") && !loadBlock.includes("setInterval(") && !loadBlock.includes("requestAnimationFrame"), "no polling loop for the visibility judgement");
 check(loadBlock.includes("if (searchGen !== searchGeneration) return;") && loadBlock.includes("const li = results.querySelector(\"[data-search-id='\" + id + \"']\");"), "search generation guard and card selector kept");

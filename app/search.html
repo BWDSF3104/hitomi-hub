@@ -636,6 +636,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
   const status = document.getElementById("search-status");
   const results = document.getElementById("results");
   const pending = ids.slice();
+  const pendingSet = new Set(pending);
   const visibleIds = new Set();
   const visibleRoot = results.parentElement || document.documentElement;
   let processed = 0;
@@ -645,7 +646,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
     if (searchGen !== searchGeneration) return;
     for (const entry of entries) {
       const id = Number(entry.target.dataset.searchId);
-      if (!pending.includes(id)) continue;
+      if (!pendingSet.has(id)) continue;
       if (entry.isIntersecting) visibleIds.add(id);
       else visibleIds.delete(id);
     }
@@ -689,6 +690,7 @@ async function loadSearchCards(ids, searchGen = searchGeneration) {
     while (pending.length && searchGen === searchGeneration) {
       const id = takeNextSearchCard(pending, visibleIds, results, visibleRoot);
       pending.splice(pending.indexOf(id), 1);
+      pendingSet.delete(id);
       await processCard(id);
     }
   }

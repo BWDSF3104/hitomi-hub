@@ -21,6 +21,7 @@ def test_search_visible_priority_order_and_promotion():
         "visibility comes from IntersectionObserver on the placeholder li",
         "observer root is the results scroll container",
         "worker pop uses priority selection takeNextSearchCard",
+        "observer membership uses pendingSet kept in sync with the pending array",
         "FIFO shift pop replaced by takeNextSearchCard",
         "no polling loop for the visibility judgement",
         "search generation guard and card selector kept",
