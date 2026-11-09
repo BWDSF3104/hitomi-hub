@@ -1708,8 +1708,8 @@ s := uiText(t, "viewer.html")
 	if !strings.Contains(s, `const items = stripItems();`) || !strings.Contains(s, `const group = stripGroupPage(items);`) {
 		t.Errorf("ui reader strip should use hitomi work page scene items and group of 50 entries: got %q", s)
 	}
-	if !strings.Contains(s, `current.sceneIndexes.slice(0, current.sceneIndexes.length - 1).map`) || !strings.Contains(s, `sceneIndex + 1`) {
-		t.Errorf("ui reader strip should render hitomi scene_indexes pages when present: got %q", s)
+	if !strings.Contains(s, `current.files.map((entry, idx) => ({ page: idx + 1, entry, badge: badges.get(idx) || 0 }))`) || !strings.Contains(s, `badges.set(current.sceneIndexes[i], current.sceneIndexes[i + 1] - current.sceneIndexes[i])`) {
+		t.Errorf("KI-20261106-01 re-anchor: ui reader strip should render files-basis pages while keeping scene badges for scenes with multiple images: got %q", s)
 	}
 	if !strings.Contains(s, `item.badge > 1`) {
 		t.Errorf("ui should render hitomi scene badge count for scenes with multiple images: got %q", s)
@@ -3684,6 +3684,43 @@ s := uiText(t, "viewer.html")
 	loadingBody := s[loadingStart:strings.Index(s, "\nfunction updatePrefetchCounts(status, entry, galleryId = current.id, allowRecount = false) {")]
 	if !strings.Contains(loadingBody, `renderLoadingPosition(id, pageLabel, pairLabel);`) {
 		t.Errorf("renderGalleryLoading should render loading position: got %q", loadingBody)
+	}
+}
+
+func TestEmbeddedUIPageBasisUnifiedToFiles(t *testing.T) {
+s := uiText(t, "viewer.html")
+	setStart := strings.Index(s, "function setGalleryMeta(data) {")
+	if setStart < 0 {
+		t.Fatalf("setGalleryMeta function not found")
+	}
+	setBody := s[setStart:strings.Index(s, "\nfunction fileFormatFromName(name) {")]
+	if !strings.Contains(setBody, `const count = g.files.length;`) {
+		t.Errorf("KI-20261106-01: setGalleryMeta should unify the page count to the files basis even with scene indexes: got %q", setBody)
+	}
+	if strings.Contains(setBody, `sceneIndexes.length - 1`) {
+		t.Errorf("KI-20261106-01: setGalleryMeta must not keep the scene-ordinal count basis: got %q", setBody)
+	}
+	readerBody := sliceBetween(t, s, "function readerItems() {", "function movePage(delta) {")
+	if !strings.Contains(readerBody, `entryForPage(first.page + 1)`) {
+		t.Errorf("KI-20261106-01: readerItems second should take the next file through entryForPage on the files basis: got %q", readerBody)
+	}
+	if strings.Contains(readerBody, `second = items[firstIdx + 1]`) {
+		t.Errorf("KI-20261106-01: readerItems second must not take the next scene strip item inside a sparse scene: got %q", readerBody)
+	}
+	moveBody := sliceBetween(t, s, "function movePage(delta) {", "function fullscreenTarget() {")
+	if !strings.Contains(moveBody, `next > current.count`) || !strings.Contains(moveBody, `prev > current.count`) {
+		t.Errorf("KI-20261106-01: movePage bounds must run through the unified current.count: got %q", moveBody)
+	}
+	pagenumBody := sliceBetween(t, s, `document.getElementById("pagenum").addEventListener("change",`, "\n});")
+	if !strings.Contains(pagenumBody, `page >= 1 && page <= current.count`) {
+		t.Errorf("KI-20261106-01: pagenum guard must run through the unified current.count: got %q", pagenumBody)
+	}
+	readBody := sliceBetween(t, s, "function runBackgroundRead(showGen, openGen) {", "async function showPage() {")
+	if !strings.Contains(readBody, `const lastPage = current.count || (current.files || []).length;`) {
+		t.Errorf("KI-20261106-01: read complete must run through the unified current.count: got %q", readBody)
+	}
+	if !strings.Contains(s, `item.badge > 1`) {
+		t.Errorf("KI-20261106-01: the scene badge display on the strip must be kept after the count unification: got %q", s)
 	}
 }
 

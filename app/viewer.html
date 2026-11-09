@@ -260,7 +260,7 @@ function updateTabTitle(title) {
 function setGalleryMeta(data) {
   const g = data.gallery, s = data.read_state;
   const sceneIndexes = g.scene_indexes || [];
-  const count = sceneIndexes.length ? sceneIndexes.length - 1 : g.files.length;
+  const count = g.files.length;
   current = {
     id: g.id, page: current.page || s.last_page || 1, count, favorite: s.favorite, files: g.files,
     sceneIndexes, format: data.format || "webp"
@@ -461,14 +461,13 @@ function renderPrefetchStatus() {
   renderRetryButtonState();
 }
 function stripItems() {
+  const badges = new Map();
   if (current.sceneIndexes && current.sceneIndexes.length) {
-    return current.sceneIndexes.slice(0, current.sceneIndexes.length - 1).map((sceneIndex, idx) => ({
-      page: sceneIndex + 1,
-      entry: current.files[sceneIndex],
-      badge: current.sceneIndexes[idx + 1] ? current.sceneIndexes[idx + 1] - sceneIndex : 0
-    }));
+    for (let i = 0; i < current.sceneIndexes.length - 1; i++) {
+      badges.set(current.sceneIndexes[i], current.sceneIndexes[i + 1] - current.sceneIndexes[i]);
+    }
   }
-  return current.files.map((entry, idx) => ({ page: idx + 1, entry, badge: 0 }));
+  return current.files.map((entry, idx) => ({ page: idx + 1, entry, badge: badges.get(idx) || 0 }));
 }
 function stripGroupTotal(items) {
   return Math.max(1, Math.ceil(items.length / 50));
@@ -533,7 +532,6 @@ function readerItems() {
   if (doubleActive() && first.entry && !isAlreadyDoublePage(first.entry)) {
     let second = null;
     if (currentPairEnd > current.page) second = { page: currentPairEnd, entry: entryForPage(currentPairEnd), badge: 0 };
-    else if (firstIdx >= 0 && firstIdx + 1 < items.length) second = items[firstIdx + 1];
     else {
       const e = entryForPage(first.page + 1);
       if (e) second = { page: first.page + 1, entry: e, badge: 0 };
