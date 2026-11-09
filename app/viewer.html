@@ -1540,7 +1540,7 @@ applyViewerConfigCap();
 
 loadSpreadDirection();
 const spreadButton = document.getElementById("spread-direction");
-if (spreadButton) spreadButton.textContent = spreadDirection;
+if (spreadButton) spreadButton.textContent = spreadButtonText(spreadDirection);
 const initial = parseReaderHash(window.location.hash);
 if (initial) {
   openGallery(initial.id, initial.page, initial.end);

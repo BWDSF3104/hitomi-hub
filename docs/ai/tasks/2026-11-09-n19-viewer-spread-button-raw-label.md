@@ -1,6 +1,6 @@
 # viewer.html 起動時の spreadButton が生値表示
 
-**Status**: 進行中
+**Status**: 完了
 **Date**: 2026-11-09
 **Next Action**: 調査委譲（assess-20261109-1320）
 
@@ -19,7 +19,13 @@
 - 有効性: 一部有効。コード整合性の指摘（1506 が `spreadButtonText()` を使わない）は有効（事実）。ユーザー可见の表示バグとしては実測で無効。
 - 対応の実現可能性: 修正は `app/viewer.html:1506` を `spreadButtonText(spreadDirection)` 使用への変更（1行）。または生値代入行を削除し `syncViewModeButtons()` に依存。推奨: `spreadButtonText()` 使用（理論上の例外経路 `!reader` 早期 return — served markup では到達不能 — でも安全）。
 - 副作用・影響範囲: 表示文字列のみ。`app/viewer_test.go` にこの行の文字列アサーションなし（`TestEmbeddedUIHasSpreadDirectionToggle` はアサーション変更不要と確認）。価値は衛生修正（起動順序が将来変わり renderViewState が await 後へ回ると初めて可见化しうる Regression 防止）。
-- 参照（変更なし）: `docs/ai/tasks/2026-11-03-viewer-keyboard-spread-direction.md`。作業前チェック読了 decision: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。正典文書間の状態記述矛盾なし。
+- 参照（変更なし）: `docs/ai/tasks/2026-11-03-viewer-keyboard-spread-direction.md`。作業前チェック読了 decision: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。正典文書間の状態記述矛盾なし（実装実行で再読し確認）。
+
+### 実装（assess-20261109-1320 実行・2026-11-09）
+
+- 採用: ユーザー同意済みの推奨案どおり、`app/viewer.html:1543` を `if (spreadButton) spreadButton.textContent = spreadDirection;`（生値）→ `if (spreadButton) spreadButton.textContent = spreadButtonText(spreadDirection);`（1行のラベル映射）へ変更。内部値 `spreadDirection`・保存値意味・`spreadButtonText()`（日本語映射）意味・テスト pin（`app/viewer_test.go`）は変更なし。根拠: 正典流儀 harness 13 checks + served 画面実測（下記）。
+- 回帰テスト追加（正典流儀・`tests/harness_lib.mjs`・`bodyIn` 抽出 + `new Function`・mock・外部 API なし）: `tests/n19_spread_button_label_harness.mjs` + `tests/test_n19_spread_button_label.py`。確認内容: 表示ラベルが日本語映射（rtl=右→左・ltr=左→右）、内部値が生値 "ltr"/"rtl" のまま保たれる、保存値が生値のまま、切替動作・pin 不変。
+- 試行: 実装 1 回で合格。harness 初回実行 2 回失敗（harness 側の欠陥: `bodyIn` openPattern が `syncViewModeButtons` 内出現で曖昧→起動 block 用 pattern を `\nif (spreadButton) spreadButton` で明確化、`SPREAD_DIRECTION_STORAGE_KEY` 未定義→注入）→修正後 3 回目で 13 checks passed。項目合格条件の再検証試行は 1 回（不合格なし）。
 
 ## Verification
 
@@ -28,6 +34,15 @@
 - 画面キャプチャ保存先: `I:\マイドライブ\kilo\2026-11-09-n19-viewer-spread-button-raw-label\`（`n19-spread-button-default-load-20261109.png`、`n19-spread-button-ltr-storage-load-20261109.png`、`spread-button-first-paint-confirmation-2026-11-09.txt`）。操作で表示が変わる項目ではないため前後1組は不要（ルール第5条、1枚ずつ）。ローカルコピー（プロジェクトルート）は正典 `kilo-safe-remove` でゴミ箱へ送信済み。Drive 側は保存済み。
 - 注記: 確認ハーネス初回試行の console error 1件（`documentElement` null での observe 失敗）はハーネス由来、アプリ動作ではない。
 - `go vet . && go test -count=1 -timeout 300s .`（app）は app 変更なしのため適用なし。コード変更なし。
+
+### 実装後の検証（assess-20261109-1320 実行）
+
+- 正典 build（fresh・現 app から）: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .` → 合格。
+- 正典検証: `python -m pytest tests/ -v` → 65 passed（26.36s、`test_canonical_build_freshness.py` 合格、`test_n19_spread_button_label.py` PASSED）。`go vet . && go test -count=1 -timeout 300s .`（app）→ ok hitomi-hub/app 31.326s。
+- harness（正典流儀・mock・外部 API なし）: `node tests/n19_spread_button_label_harness.mjs` → 13 checks passed（表示=日本語映射・内部値=生値維持・保存値=生値・切替後ラベル対応・pin 不変を決定論確認）。
+- served 画面確認（正典ルール準守・fresh canonical build・fresh instance・isolated origin `n19-confirm-20261109`（測定前 storage null 確認）・window size inner 1666x932 実測・cold hygiene 条件1–3充足（起動前に hub.exe プロセス 0・port 8731 listen 0）): before（操作前）= button ラベル「右→左」・view-state「開き方向 右→左」・要素 rect (211.5,126,67.2,34) 切り取りなし → `#spread-direction` click → after（操作後）= ラベル「左→右」・view-state「開き方向 左→右」・localStorage 保存値 生値 "ltr"・aria-pressed false。before/after 1組（同一 window size・同一被写体範囲 full page・同一取得方法）。生値ラベルの描画 0 回。切替動作確認済み。console error は favicon.ico 404 のみ（アプリ動作ではない）。判定: 合格。
+- Drive 保存（フォルダ＝項目 slug `2026-11-09-n19-viewer-spread-button-raw-label`）: `I:\マイドライブ\kilo\2026-11-09-n19-viewer-spread-button-raw-label\` へ `n19-spread-button-before-20261109.png`・`n19-spread-button-after-20261109.png`・`spread-button-served-before-after-confirmation-2026-11-09.txt` 保存。ローカルコピー（プロジェクトルート）2枚は正典 `kilo-safe-remove` でゴミ箱へ送信済み。Drive 側は保存済み。スクリーンショット視覚確認: before「右→左」/after「左→右」。
+- ブラウザ: 保存・記録完了後閉じた（isolated tab・page close）。server（fresh instance）は確認後に停止。
 
 ## 完了時 Memory Bank 操作
 

@@ -9,5 +9,4 @@ docs/ai/tasks/2026-11-08-n05-strip-click-reopens-gallery.md	進行中	調査委�
 docs/ai/tasks/2026-11-08-n10-title-groups-localstorage-every-card.md	進行中	画面確認（served）不合格のまま: 共用 browser の占有解消後、記録の実装 plan（debounce＋同値 skip・named callback 流儀）と scratch の harness コピーを再適用し served 画面確認を再実行 → 正典検証 → task_manager end。実装分は不合格により破棄済み（HEAD d80ca07 復元）
 docs/ai/tasks/2026-11-08-n12-singleflight-lane-priority-inversion.md	進行中	段階3持ち帰り（assess-20261109-1320）: info 分 claim 伝達路の決定が必要（ctx route 変更/getWithGate 参照/lane 単位の3案すべて承認範囲超）。TN・full・nozomi と gateLane 参照1箇所は承認範囲内で実装可。決定後実装委譲
 docs/ai/tasks/2026-11-09-assess-20261109-1320-items.md	進行中	優先順位確定済み（20/20・#17 対応不要で閉）。実装開始指示待ち。上位: #20・#19・#1・#14・#6
-docs/ai/tasks/2026-11-09-n19-viewer-spread-button-raw-label.md	進行中	調査委譲（assess-20261109-1320）
 docs/ai/tasks/2026-11-09-n20-settings-acquisition-dir-validation.md	進行中	調査委譲（assess-20261109-1320）
