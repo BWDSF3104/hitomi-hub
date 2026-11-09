@@ -111,3 +111,58 @@
 
 優先順位付け要素: 重要度 mid（viewer 側は served origin 内 script 実行成立。search 側は実行ではなく link 意味変更のみ。local 専用前提の低優先運用は前批どおり）。緊急度 mid（client 側 escape は単独実施可・小）。リスク low（表示・link 意味不変・テスト pin 両立）。依存なし（N-16（GET Host 検査）とは補完・独立）。entry を落とす案のみ承認案件。
 
+## 2026-11-09 実装（assess-20261109-1320 委譲・実施）
+
+### 変更内容（承認範囲＝記録された推奨のみ・entry を落とす案は実施せず）
+
+- `app/viewer.html`
+  - helper `encodePathSegment`（`encodeURIComponent` + `'` → `%27`）を `escapeHTML` の後に追加（URL path 段の属性境界保存）
+  - `entrySource` の path 段へ適用: `entry.hash` と `formats[0]`（remote 由来）。`galleryId`（server 側 int）は変更なし。query 側 `encodeURIComponent` は既存どおり
+  - `renderReader`（991）・`renderStrip`（1237）で remote 由来値を属性 context へ入れる箇所を `escapeHTML` へ: `data-hash`（entry.hash）・`data-key`（key）・`data-full`（entrySource）・`src`・`alt`。`data-gallery`/`data-id`/`data-page`/`data-render`/`data-local`/`class`/`loading` は app 生成値・server int のため変更なし
+  - selector 文字列を dataset 比較へ: `1086` の `img[data-hash="..."]` → `Array.from(reader.querySelectorAll("img")).find((el) => el.dataset.hash === entry.hash)`、`1277`（`updateThumbCache`）→ `Array.from(document.querySelectorAll("#thumbs img")).find((el) => el.dataset.key === key)`。`#thumbs img` の selector 文字列は既存 harness（`strip_rebuild_dom_harness.mjs:58`）の mock と同一文字列を維持
+- `app/search.html`
+  - helper `encodeURIComponentSingleQuote`（`'` → `%27`）追加、`766` の `#queries` href 生成へ適用。display 側（`escapeHTML(q.name)`/`escapeHTML(q.query)`）は変更なし。`parseSearchHash` の `decodeURIComponent` で route round-trip 成立（実測）
+- 追加テスト（合格条件の before/after を固定するため）: `tests/n15_attribute_escape_harness.mjs`（20 checks・before = identity escape/encode の sim、after = 正典 helper）、`tests/test_n15_attribute_escape.py`（既存 harness pytest 流儀）
+- 採用した判断（段階1・推奨案）: selector は dataset 参照（推奨の選択肢どおり）。`CSS.escape` は node harness の stub 非依存にするため使わず、dataset 比較を採用。`entry.hash` を属性 context へ入れる其余の経路（`localDirectSrc`）は attribute escape で境界保存されるため helper 適用外（表示枚数・fetch URL を変えない）。
+- 正典 decision 照読（作業前チェック): `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。TN display source・full 判定（x-cache・no-store fetch・objectURL 表示・generation guard）・singleflight  gate 値は本項目で変更なし。`entrySource` の valid hex に対する bytes は identity（harness check）→ full 画像経路の順序と URL 意味は不変。
+
+### before / after 実測（served 画面・正典 exe）
+
+条件（両組同一）: window inner 1666x932（Playwright viewport・実測同一）、被写体範囲 viewer pair = `#thumbs` element / search pair = `#queries` element、取得方法 = Playwright element screenshot（scale css）、cold hygiene（fresh canonical build・fresh server instance・isolated context）、外部 hitomi API 非呼出し（mock のみ）。mock で payload entry（hash = `abc' onerror='window.__n15flag = 1' data-x='y`・`local_formats: ["webp"]`）と lists queries 4件（うち2件に `'`）を注入。
+
+- before（委譲時点の canonical build・instance pid 15400・isolated context `n15-assess-20261109-escape`）
+  - `window.__n15flag = 1`（注入 handler が served origin 内実行）
+  - `#thumbs img` 3件中1件: `onerror`・`data-x` が注入属性として出現・`data-hash` = `abc`（切り詰め）・attribute count 13
+  - `#reader img` 2件中1件: `onerror`・`data-x` 出現・`data-hash` = `abc`
+  - `#queries`: li 4・anchors 4中2件が href 境界破壊（href `#/q/galleries`・`#/q/don`、余剰 attribute name `t%20steal'`・`quote'`）
+- after（実装後の fresh canonical build・instance pid 26436・isolated context `n15-assess-20261109-after`）
+  - `window.__n15flag = 0`・注入属性 0
+  - node 数不変（`#thumbs img` 3・`#reader img` 2）。payload img の attribute list = class, data-viewer-display, data-gallery, data-id, data-page, data-hash, data-key, data-source-type, data-local, loading, src, alt（12・正常 entry と同一）
+  - `data-hash` = 原文 `abc' onerror='window.__n15flag = 1' data-x='y`（getAttribute と dataset が一致＝round-trip）
+  - `#queries` li 4（不変）・href 1属性のみ（`#/q/galleries`・`#/q/don%27t%20steal`・`#/q/tag%20name`・`#/q/single%27quote`）・`parseSearchHash` round-trip 4/4
+  - valid hex の `data-hash`・`data-key`・`src`・`entrySource` bytes は before/after 同一（link・fetch 意味不变）
+- 視覚差: viewer pair 4608B 同一、search pair 6752B 同一（injection は DOM 層。意味同一性は実測値で提示）
+
+### 画面確認（合否）
+
+- 合格。Drive 保存: `I:\マイドライブ\kilo\2026-11-08-n15-innerhtml-escape-remote-values\`
+  - `n15-strip-before-20261109.png`・`n15-strip-after-20261109.png`・`n15-search-href-before-20261109.png`・`n15-search-href-after-20261109.png`・`n15-innerhtml-escape-remote-values-confirmation-2026-11-09.txt`
+- local copy（project `scratch/n15-20261109/screenshots/` の 4 枚）は Drive 保存後正典 `kilo-safe-remove` でゴミ箱へ送った。Drive 側は保持。
+- project root 外残件（削除せず記録）: Playwright output 4枚（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n15-*.png`）。正典 tool は project root 外削除不可。汚染: before 側 isolated context の localStorage に `hitomi_hub_last_search`（`furry`）が観測され tab hash へ反映。`#queries` 内容（names saved/corner/plain/quote）と flags は自 mock 由来で帰属確立。viewer pair は汚染なし。after 側は新規 isolated context を使用（測定時 clean）。
+
+## Verification（実装 2026-11-09）
+
+- `python -m pytest tests/ -v` → **61 passed**（13.27s。追加テスト 1件含む。fresh canonical build 後。`test_canonical_build_freshness.py` 合格）
+- `go vet . && go test -count=1 -timeout 300s .`（app）→ vet clean・**ok 26.449s**。既存 pin 通過（`viewer_test.go:1699` の `data-key='`/`data-hash='`・`1997` の `entrySource` pin・`3369` の `const fullSrc = entrySource(entry, galleryId, force);`・search 側 `2893`/`2968` escapeHTML pin）。テスト pin の anchor 更新は不要（衝突なし）
+- `node tests/n15_attribute_escape_harness.mjs` → **20 checks passed**
+- 正典 build（fresh）→ `output/hitomi-hub/hub.exe`  rebuild。served 画面は上記の項どおり
+- 正典 server 実測（scratch data-dir/root・port 8743・isolated）:
+  - CLI download（実在 gallery 4252697・limit 1）→ `attempted 1` / `written 1` / `skipped 0`（一致）
+  - `GET /api/image/899dc18877a116799a4ab10f2e6e2a27a19ebd4785f7cf0ab5ede2e65d1281f9?format=webp` → **200**・`X-Cache: miss`・**357106 bytes**・`no_full` なし
+  - `GET /api/image/abc%27%20onerror%3D%22x%22?format=webp`（fresh instance）→ `400 hash must be 64 lowercase hex chars`・remote 呼出しなし
+- 修正・再検証の試行回数: 1（初回で合格条件を満たした）
+- Status・Next Action と `current-task.tsv` の管理は親（正典 task_manager）側に残置。子は個別タスク記録へ追記のみ（委譲制約）。
+
+未解決事項: なし（entry を落とす案は承認案件として分離維持・実施せず）。他項目への影響: なし（N-16 の GET Host 検査とは独立・補完）。
+
+

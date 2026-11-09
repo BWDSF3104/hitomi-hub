@@ -232,6 +232,10 @@ function escapeHTML(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 }
+// URL path 段は percent encode で属性境界を保存する（encodeURIComponent は ' を変換しないため明示的に %27 へ）
+function encodePathSegment(s) {
+  return encodeURIComponent(String(s ?? "")).replace(/'/g, "%27");
+}
 function targetAttr() {
   return newTabMode ? " target='_blank'" : "";
 }
@@ -809,9 +813,9 @@ function updatePrefetchCounts(status, entry, galleryId = current.id, allowRecoun
 function entrySource(entry, galleryId = current.id, force = false) {
   const formats = entry.local_formats || [];
   if (formats.length) {
-    return "/files/" + galleryId + "/" + entry.hash + "." + formats[0];
+    return "/files/" + galleryId + "/" + encodePathSegment(entry.hash) + "." + encodePathSegment(formats[0]);
   }
-  let src = "/api/image/" + entry.hash + "?format=" + encodeURIComponent(entryFormat(entry, galleryId)) + "&gallery=" + encodeURIComponent(galleryId);
+  let src = "/api/image/" + encodePathSegment(entry.hash) + "?format=" + encodeURIComponent(entryFormat(entry, galleryId)) + "&gallery=" + encodeURIComponent(galleryId);
   if (force) src += "&force=1";
   return src;
 }
@@ -988,7 +992,7 @@ function renderReader() {
     }
     const marker = entry.local ? " title='ローカル'" : "";
     const alt = "ページ " + item.page + (entry.local ? "・ローカル" : "");
-    parts.push("<img data-viewer-display='1' data-gallery='" + current.id + "' data-page='" + item.page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-render='" + renderGeneration + "' data-full='" + entrySource(entry, current.id) + "' src='" + src + "'" + marker + " alt='" + alt + "'>");
+    parts.push("<img data-viewer-display='1' data-gallery='" + current.id + "' data-page='" + item.page + "' data-hash='" + escapeHTML(entry.hash) + "' data-key='" + escapeHTML(key) + "' data-source-type='" + sourceType + "' data-render='" + renderGeneration + "' data-full='" + escapeHTML(entrySource(entry, current.id)) + "' src='" + escapeHTML(src) + "'" + marker + " alt='" + escapeHTML(alt) + "'>");
   }
   if (spreadDirection === "rtl" && items.length > 1) parts.reverse();
   container.innerHTML = parts.join("");
@@ -1083,7 +1087,7 @@ async function manualRetryFailedFullImages() {
       try {
         await prefetchPageImage(entry, signal, current.id, true, true);
 
-        const img = reader && reader.querySelector("img[data-hash=\"" + entry.hash + "\"]");
+        const img = reader && Array.from(reader.querySelectorAll("img")).find((el) => el.dataset.hash === entry.hash);
         if (img) await loadFullImage(img, entry, signal, current.id, showGeneration, openGeneration, renderGeneration, true);
       } catch (err) {
         if (signal.aborted) break;
@@ -1234,7 +1238,7 @@ function renderStrip() {
     const marker = entry.local ? " title='ローカル'" : "";
     const localMark = entry.local ? "・ローカル" : "";
     const badge = item.badge > 1 ? "<div class='badge'>" + item.badge + "</div>" : "";
-    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-viewer-display='1' data-gallery='" + current.id + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + entry.hash + "' data-key='" + key + "' data-source-type='" + sourceType + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + src + "' alt='ページ " + page + localMark + "'>" + badge + "</a>");
+    parts.push("<a href='" + route(current.id, page) + "'" + marker + targetAttr() + "><img class='" + (page === current.page ? "current" : "") + "' data-viewer-display='1' data-gallery='" + current.id + "' data-id='" + current.id + "' data-page='" + page + "' data-hash='" + escapeHTML(entry.hash) + "' data-key='" + escapeHTML(key) + "' data-source-type='" + sourceType + "' data-local='" + (entry.local ? "1" : "0") + "' loading='lazy' src='" + escapeHTML(src) + "' alt='ページ " + page + localMark + "'>" + badge + "</a>");
   }
   document.getElementById("thumbs").innerHTML = parts.join("");
   attachDisplayLoadHandlers(document.getElementById("thumbs"));
@@ -1274,7 +1278,7 @@ function showGalleryMetaFromCache(id) {
 }
 function updateThumbCache(key, objectUrl) {
   if (!objectUrl) return;
-  const stripImg = document.querySelector("#thumbs img[data-key=\"" + key + "\"]");
+  const stripImg = Array.from(document.querySelectorAll("#thumbs img")).find((el) => el.dataset.key === key);
   if (stripImg) stripImg.src = objectUrl;
 }
 function formatForEntry(entry) {

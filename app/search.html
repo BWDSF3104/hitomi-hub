@@ -196,6 +196,10 @@ function escapeHTML(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 }
+// route path 段の href は encodeURIComponent でも ' が残るため属性境界が壊れる。' を %27 へ変換して境界を保存する
+function encodeURIComponentSingleQuote(s) {
+  return encodeURIComponent(String(s ?? "")).replace(/'/g, "%27");
+}
 function targetAttr() {
   return newTabMode ? " target='_blank'" : "";
 }
@@ -763,7 +767,7 @@ async function showLists(searchGen) {
     readStateByGallery.set(id, mergeReadState(id, row));
   }
   document.getElementById("queries").innerHTML = lists.queries.map((q) =>
-    "<li><a href='#/q/" + encodeURIComponent(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
+    "<li><a href='#/q/" + encodeURIComponentSingleQuote(q.query) + "'" + targetAttr() + ">" + escapeHTML(q.name) + "</a> <span class='meta'>" + escapeHTML(q.query) + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("favorites").innerHTML = lists.favorites.map((row) =>
     "<li><a href='" + viewerLink(row.gallery_id, row.last_page || 1) + "'" + targetAttr() + ">" + escapeHTML(row.gallery_id) + "</a> <span class='meta'>p" + row.last_page + (row.fully_read ? " 既読" : "") + "</span></li>").join("") || "<li>なし</li>";
   document.getElementById("unread").innerHTML = lists.unread.map((row) =>
