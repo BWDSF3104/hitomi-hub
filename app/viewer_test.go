@@ -4866,12 +4866,19 @@ func TestSettingsEndpointServesEditableSettingsWithoutAPIKey(t *testing.T) {
 	if viewer["max_object_urls"] != float64(4500) {
 		t.Fatalf("configured max_object_urls must pass through, got %v", viewer["max_object_urls"])
 	}
+	settingsCache, ok := out["cache"].(map[string]any)
+	if !ok {
+		t.Fatalf("cache settings object missing: %+v", out)
+	}
+	if settingsCache["cache_disk_max_entries"] != float64(defaultCacheDiskMaxEntries) {
+		t.Fatalf("cache settings must use canonical default, got %v", settingsCache["cache_disk_max_entries"])
+	}
 	constants, ok := out["constants"].(map[string]any)
 	if !ok {
 		t.Fatalf("constants object missing: %+v", out)
 	}
-	if constants["cache_disk_max_entries"] != float64(defaultCacheDiskMaxEntries) {
-		t.Fatalf("constants cache cap must use canonical default, got %v", constants["cache_disk_max_entries"])
+	if _, ok := constants["cache_disk_max_entries"]; ok {
+		t.Fatalf("cache cap must be moved out of constants, got %+v", constants)
 	}
 	if constants["viewer_floor"] != float64(minViewerMaxObjectURLs) {
 		t.Fatalf("constants viewer floor must use canonical default, got %v", constants["viewer_floor"])
@@ -4902,7 +4909,7 @@ func TestViewerPageDoesNotRenderSettingsPanel(t *testing.T) {
 	}
 }
 
-func TestSettingsPageRendersJapaneseLabelsAndEditableForm(t *testing.T) {
+func TestSettingsPageRendersJapaneseLabelsAndGroupCards(t *testing.T) {
 	s := uiText(t, "settings.html")
 	for _, want := range []string{
 		`<title>hitomi hub settings</title>`,
@@ -4910,20 +4917,22 @@ func TestSettingsPageRendersJapaneseLabelsAndEditableForm(t *testing.T) {
 		`id="settings-constants"`,
 		`id="settings-form"`,
 		`gap: .75rem 1.25rem`,
-		`function addRow(container, label, value, meaning, key) {`,
+		`fieldset`,
+		`legend`,
+		`setAttribute("for", inputId)`,
+		`aria-describedby`,
+		`data-key`,
+		`function addGroup(container, title, editable) {`,
+		`function addSetting(container, label, value, note, key) {`,
 		`function editableInput(key, value) {`,
 		`key === "hitomi.use_live_gg" || key === "limits.yr_fast_scan" || section === "virustotal"`,
 		`function collectPayload() {`,
 		`async function saveSettings(event) {`,
 		`document.getElementById("settings-form")`,
-		`data-key`,
-		`aria-label`,
 		`設定を保存`,
 		`fetch("/api/settings", { cache: "no-store" })`,
 		`fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })`,
-		`document.createElement("dt")`,
-		`document.createElement("dd")`,
-		`String(s.constants.cache_disk_max_entries)`,
+		`String(s.cache.cache_disk_max_entries)`,
 		`DBファイル名 (db)`,
 		`download 完了フォルダ名 (gallery_dir)`,
 		`取得フォルダ (acquisition_dir)`,
@@ -4936,6 +4945,12 @@ func TestSettingsPageRendersJapaneseLabelsAndEditableForm(t *testing.T) {
 		`Scan cache TTL (scan_cache_ttl_ms)`,
 		`negative scan TTL (negative_scan_cache_ttl_ms)`,
 		`YARA path (yr)`,
+		`キャッシュ`,
+		`Viewer memory`,
+		`取得・rate`,
+		`scan limits`,
+		`VirusTotal`,
+		`内部定数`,
 		`renderSettings();`,
 	} {
 		if !strings.Contains(s, want) {
@@ -5042,6 +5057,9 @@ func TestSettingsPostRejectsUnknownKeysAndValuesBelowFloors(t *testing.T) {
 		{"type", `{"limits":{"max_entries":"5000"}}`, "max_entries"},
 		{"null", `{"hitomi":{"use_live_gg":null}}`, "use_live_gg"},
 		{"api_key_env", `{"virustotal":{"api_key_env":"VIRUSTOTAL_API_KEY"}}`, "api_key_env"},
+		{"cache max", `{"cache":{"cache_disk_max_entries":20001}}`, "cache_disk_max_entries"},
+		{"cache negative", `{"cache":{"cache_disk_max_entries":-1}}`, "cache_disk_max_entries"},
+		{"cache unknown", `{"cache":{"no_full_cache_max_entries":1024}}`, "no_full_cache_max_entries"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
@@ -5052,6 +5070,44 @@ func TestSettingsPostRejectsUnknownKeysAndValuesBelowFloors(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), c.want) {
 			t.Errorf("%s error must mention %q, got %s", c.name, c.want, rec.Body.String())
 		}
+	}
+}
+
+func TestSettingsPostWritesCacheDiskCapAndAppliesItImmediately(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+	v := newViewer(db, defaultConfigForTest(), dir)
+	v.configPath = filepath.Join(dir, "config.json")
+	if err := os.WriteFile(v.configPath, []byte(`{"db":"hub.db","cache":{"cache_disk_max_entries":4000}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	v.handler().ServeHTTP(rec, jsonPOSTRequest("/api/settings", `{"cache":{"cache_disk_max_entries":6000}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %q", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	cache, ok := out["cache"].(map[string]any)
+	if !ok || cache["cache_disk_max_entries"] != float64(6000) {
+		t.Fatalf("cache cap must be updated immediately, got %+v", out)
+	}
+	if v.cacheDiskMaxEntries != 6000 {
+		t.Fatalf("viewer cache cap memory must reflect write, got %d", v.cacheDiskMaxEntries)
+	}
+
+	raw, err := os.ReadFile(v.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"cache_disk_max_entries": 6000`) {
+		t.Fatalf("settings file must contain cache cap, got %s", raw)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "config.json.tmp")); err != nil || len(matches) != 0 {
+		t.Fatalf("atomic settings write must not leave temp files, got %v", matches)
 	}
 }
 

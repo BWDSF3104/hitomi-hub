@@ -1716,6 +1716,36 @@ func TestConfigExampleViewerMaxObjectURLsMatchCodeDefault(t *testing.T) {
 	}
 }
 
+// decision 2026-11-09-settings-webui-approved-recommendations.md:
+// `cache.cache_disk_max_entries` は settings 化。`viewer_floor` は定数のまま。
+func TestConfigExampleCacheMatchCodeDefaults(t *testing.T) {
+	path := filepath.Join(dataRoot(), "config.example.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	cache, ok := raw["cache"].(map[string]any)
+	if !ok {
+		t.Fatal("config.example.json missing cache object")
+	}
+	if got, ok := cache["cache_disk_max_entries"]; !ok || got != float64(defaultCacheDiskMaxEntries) {
+		t.Errorf("config.example.json cache.cache_disk_max_entries: got %v want %d", got, defaultCacheDiskMaxEntries)
+	}
+
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cache.CacheDiskMaxEntries != defaultCacheDiskMaxEntries {
+		t.Errorf("config.example.json cache should load to default: got %d", cfg.Cache.CacheDiskMaxEntries)
+	}
+}
+
 func TestDefaultHitomiConfigUsesCanonicalBgGraceConst(t *testing.T) {
 	if defaultHitomiConfig().BgGraceMS != defaultBgGraceMS {
 		t.Errorf("defaultHitomiConfig BgGraceMS should output canonical const: got %d want %d", defaultHitomiConfig().BgGraceMS, defaultBgGraceMS)

@@ -52,6 +52,10 @@ type UIConfig struct {
 	MaxObjectURLs int    `json:"max_object_urls"`
 }
 
+type CacheConfig struct {
+	CacheDiskMaxEntries int `json:"cache_disk_max_entries"`
+}
+
 type Config struct {
 	DB             string        `json:"db"`
 	GalleryDir     string        `json:"gallery_dir"`
@@ -62,6 +66,7 @@ type Config struct {
 	Hitomi         HitomiConfig  `json:"hitomi"`
 	Viewer         UIConfig      `json:"viewer"`
 	Limits         Limits        `json:"limits"`
+	Cache          CacheConfig   `json:"cache"`
 }
 
 // 名前の既定値の単一出力元（decision docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md）。
@@ -81,6 +86,16 @@ func (c Config) GalleryDirName() string { return orDefault(c.GalleryDir, default
 func (c Config) CacheDirName() string { return orDefault(c.CacheDir, defaultCacheDirName) }
 func (c Config) InfoCacheDirName() string { return orDefault(c.CacheDir, defaultInfoCacheDirName) }
 func (c Config) AcquisitionDirName() string { return orDefault(c.AcquisitionDir, defaultAcquisitionDirName) }
+
+func (c Config) EffectiveCacheDiskMaxEntries() int {
+	if c.Cache.CacheDiskMaxEntries <= 0 {
+		return defaultCacheDiskMaxEntries
+	}
+	if c.Cache.CacheDiskMaxEntries > maxCacheDiskMaxEntries {
+		return maxCacheDiskMaxEntries
+	}
+	return c.Cache.CacheDiskMaxEntries
+}
 
 
 func fileSize(path string) int64 {
@@ -176,6 +191,7 @@ const minViewerMaxObjectURLs = 1000
 // disk cache cap は件数（byte 計算なし）で、decision docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md。
 // 既定 4000 件・kind（full / thumbs）単位・作成順（created_at）。last access 列は置かない。
 const defaultCacheDiskMaxEntries = 4000
+const maxCacheDiskMaxEntries = 20000
 
 func loadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
@@ -230,6 +246,11 @@ func loadConfig(path string) (Config, error) {
 		cfg.Viewer.MaxObjectURLs = defaultMaxObjectURLs
 	} else if cfg.Viewer.MaxObjectURLs < minViewerMaxObjectURLs {
 		return Config{}, fmt.Errorf("config error: viewer.max_object_urls must be 0 (unspecified, use default) or >= %d, got %d", minViewerMaxObjectURLs, cfg.Viewer.MaxObjectURLs)
+	}
+	if cfg.Cache.CacheDiskMaxEntries <= 0 {
+		cfg.Cache.CacheDiskMaxEntries = defaultCacheDiskMaxEntries
+	} else if cfg.Cache.CacheDiskMaxEntries > maxCacheDiskMaxEntries {
+		return Config{}, fmt.Errorf("config error: cache.cache_disk_max_entries must be 0 (unspecified, use default) or <= %d, got %d", maxCacheDiskMaxEntries, cfg.Cache.CacheDiskMaxEntries)
 	}
 	return cfg, nil
 }

@@ -3,6 +3,9 @@
   "gallery_dir": "Galleries",
   "cache_dir": "cache/images",
   "acquisition_dir": "acquisition",
+  "cache": {
+    "cache_disk_max_entries": 4000
+  },
   "yr": null,
   "virustotal": {
     "enabled": false,

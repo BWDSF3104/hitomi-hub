@@ -20,6 +20,7 @@
     --space-2: .5rem;
     --space-3: .75rem;
     --space-4: 1rem;
+    --space-5: 1.25rem;
     --radius: 6px;
     --line-height: 1.5;
   }
@@ -30,22 +31,25 @@
   nav { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); }
   a { color: var(--link); text-decoration: none; }
   a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  section { margin-bottom: var(--space-4); }
   p { margin: 0 0 var(--space-3); max-width: 65ch; color: var(--muted); }
   .status { margin-bottom: var(--space-3); color: var(--focus); }
-  dl { margin: 0; display: grid; grid-template-columns: minmax(12rem, 20rem) minmax(18rem, 1fr); gap: .75rem 1.25rem; }
-  dt { color: var(--muted); font-weight: 600; }
-  dd { margin: 0; overflow-wrap: anywhere; }
-  dd.value { font-family: var(--font-value); min-height: 2rem; }
-  dd.meaning { grid-column: 2; min-width: 0; }
-  input { min-width: 12rem; padding: var(--space-1) var(--space-2); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-value); }
+  .settings-list { display: grid; gap: .75rem 1.25rem; }
+  fieldset { margin: 0 0 var(--space-4); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+  legend { font-weight: 700; color: var(--text); }
+  .setting-row { display: grid; grid-template-columns: minmax(12rem, 20rem) minmax(18rem, 1fr); gap: var(--space-3) var(--space-5); align-items: start; padding: var(--space-2) 0; border-bottom: 1px solid var(--border-soft); }
+  .setting-row:last-child { border-bottom: 0; }
+  .setting-row label { color: var(--muted); font-weight: 600; }
+  .setting-row .value { font-family: var(--font-value); min-height: 2rem; overflow-wrap: anywhere; }
+  .setting-row .note { grid-column: 2; color: var(--muted); }
+  input { min-width: 12rem; padding: var(--space-1) var(--space-2); background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-value); }
   input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   button { padding: var(--space-1) var(--space-3); min-height: 34px; background: var(--border); color: var(--text); border: 0; border-radius: var(--radius); cursor: pointer; font: inherit; }
   button:hover { background: var(--border-soft); }
   button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   @media (max-width: 54rem) {
-    dl { grid-template-columns: 1fr; }
-    dd.meaning { grid-column: 1; }
+    .settings-list { grid-template-columns: 1fr; }
+    .setting-row { grid-template-columns: 1fr; }
+    .setting-row .note { grid-column: 1; }
   }
 </style>
 </head>
@@ -58,39 +62,60 @@
   </nav>
   <p>この設定ページは allowlist の項目だけ変更できます。allowlist 外は read-only です。</p>
   <div id="settings-status" class="status" role="status" aria-live="polite"></div>
-  <section>
+  <form id="settings-form">
     <h2>設定値</h2>
-    <dl class="settings-list" id="settings-values"></dl>
-    <form id="settings-form">
-      <button type="submit">設定を保存</button>
-    </form>
-  </section>
+    <div class="settings-list" id="settings-values"></div>
+    <button type="submit">設定を保存</button>
+  </form>
   <section>
     <h2>内部定数</h2>
-    <dl class="settings-list" id="settings-constants"></dl>
+    <div class="settings-list" id="settings-constants"></div>
   </section>
 </main>
 <script>
-function addRow(container, label, value, meaning, key) {
-  const dt = document.createElement("dt");
-  dt.textContent = label;
+function addGroup(container, title, editable) {
+  const group = document.createElement("fieldset");
+  const legend = document.createElement("legend");
+  legend.textContent = title;
+  if (editable) {
+    group.classList.add("editable");
+  }
+  group.append(legend);
+  container.append(group);
+  return group;
+}
 
-  const valueEl = document.createElement("dd");
+function addSetting(container, label, value, note, key) {
+  const row = document.createElement("div");
+  row.className = "setting-row";
+
+  const rowLabel = document.createElement("label");
+  const inputId = "input-" + key;
+  const noteId = "note-" + key;
+  rowLabel.setAttribute("for", inputId);
+  rowLabel.textContent = label;
+
+  const valueEl = document.createElement("div");
   valueEl.className = "value";
 
   if (key) {
     const input = editableInput(key, value);
-    input.setAttribute("aria-label", label);
+    input.id = inputId;
+    input.setAttribute("aria-describedby", noteId);
     valueEl.append(input);
   } else {
     valueEl.textContent = value;
   }
 
-  const meaningEl = document.createElement("dd");
-  meaningEl.className = "meaning";
-  meaningEl.textContent = meaning;
+  const noteEl = document.createElement("div");
+  noteEl.className = "note";
+  if (key) {
+    noteEl.id = noteId;
+  }
+  noteEl.textContent = note;
 
-  container.append(dt, valueEl, meaningEl);
+  row.append(rowLabel, valueEl, noteEl);
+  container.append(row);
 }
 
 function editableInput(key, value) {
@@ -119,50 +144,64 @@ function getValue(settings, key) {
   return key.split(".").reduce((obj, part) => obj && obj[part], settings);
 }
 
+let s = null;
+
 function renderSettings() {
+  if (!s) return;
+
   const settingsList = document.getElementById("settings-values");
   const constantsList = document.getElementById("settings-constants");
 
-  fetch("/api/settings", { cache: "no-store" }).then((r) => r.json()).then((s) => {
-    settingsList.innerHTML = "";
-    constantsList.innerHTML = "";
+  settingsList.innerHTML = "";
+  constantsList.innerHTML = "";
 
-    addRow(settingsList, "DBファイル名 (db)", String(s.db), "ローカル DB file。UI write 対象外。", "");
-    addRow(settingsList, "download 完了フォルダ名 (gallery_dir)", String(s.gallery_dir), "download 成果物 folder。取得 folder ではない。", "");
-    addRow(settingsList, "永続 cache フォルダ (cache_dir)", String(s.cache_dir), "full cache root。galleryinfo は <cache_dir>/galleryinfo。UI write 対象外。", "");
-    addRow(settingsList, "取得フォルダ (acquisition_dir)", String(s.acquisition_dir), "画面「取得」で write する folder。download 完了 folder ではない。", "");
-    addRow(settingsList, "Viewer port / bind (viewer.port / viewer.bind)", `${s.viewer.port} / ${s.viewer.bind}`, "listener setting。restart が必要。UI write 対象外。", "");
-    addRow(settingsList, "ブラウザメモリ cap (viewer.max_object_urls)", String(getValue(s, "viewer.max_object_urls")), "page objectURL 件数 cap。変更可能。", "viewer.max_object_urls");
-    addRow(settingsList, "データレーン interval (hitomi.min_interval_ms)", String(getValue(s, "hitomi.min_interval_ms")), "data lane gate interval。変更可能。", "hitomi.min_interval_ms");
-    addRow(settingsList, "画像レーン interval (hitomi.image_min_interval_ms)", String(getValue(s, "hitomi.image_min_interval_ms")), "image lane gate interval。変更可能。", "hitomi.image_min_interval_ms");
-    addRow(settingsList, "gg force interval (hitomi.gg_force_min_interval_ms)", String(getValue(s, "hitomi.gg_force_min_interval_ms")), "gg force refresh window。変更可能。", "hitomi.gg_force_min_interval_ms");
-    addRow(settingsList, "max retry count (hitomi.max_retries)", String(getValue(s, "hitomi.max_retries")), "retry count。変更可能。", "hitomi.max_retries");
-    addRow(settingsList, "retry backoff interval (hitomi.retry_backoff_ms)", String(getValue(s, "hitomi.retry_backoff_ms")), "retry backoff。変更可能。", "hitomi.retry_backoff_ms");
-    addRow(settingsList, "画像 format (hitomi.image_format)", String(getValue(s, "hitomi.image_format")), "shard URL format。galleryinfo name 拡張子は使わない。変更可能。", "hitomi.image_format");
-    addRow(settingsList, "live gg を使用 (hitomi.use_live_gg)", String(getValue(s, "hitomi.use_live_gg")), "live gg が既定、snapshot は fallback。変更可能。", "hitomi.use_live_gg");
-    addRow(settingsList, "VirusTotal flags (virustotal.enabled / hash_only / upload_unknown)", `${String(s.virustotal.enabled)} / ${String(s.virustotal.hash_only)} / ${String(s.virustotal.upload_unknown)}`, "enabled / hash_only / upload_unknown。API key value は表示しない。env 名だけ表示。", "");
-    addRow(settingsList, "VirusTotal env name (virustotal.api_key_env)", String(s.virustotal.api_key_env), "API key value は表示しない。env 名だけ表示。", "");
-    addRow(settingsList, "Limits max entries (limits.max_entries)", String(getValue(s, "limits.max_entries")), "export entry count cap。変更可能。", "limits.max_entries");
-    addRow(settingsList, "Limits max uncompressed bytes (limits.max_uncompressed_bytes)", String(getValue(s, "limits.max_uncompressed_bytes")), "1 entry uncompressed size cap。変更可能。", "limits.max_uncompressed_bytes");
-    addRow(settingsList, "Limits max ratio (limits.max_ratio)", String(getValue(s, "limits.max_ratio")), "zip bomb ratio judgment。変更可能。", "limits.max_ratio");
-    addRow(settingsList, "Limits max scan bytes (limits.max_scan_bytes)", String(getValue(s, "limits.max_scan_bytes")), "head read limit。変更可能。", "limits.max_scan_bytes");
-    addRow(settingsList, "YARA timeout seconds (limits.yr_timeout_sec)", String(getValue(s, "limits.yr_timeout_sec")), "YARA-X timeout。変更可能。", "limits.yr_timeout_sec");
-    addRow(settingsList, "YARA cpu limit (limits.yr_cpu_limit)", String(getValue(s, "limits.yr_cpu_limit")), "YARA-X cpu limit。変更可能。", "limits.yr_cpu_limit");
-    addRow(settingsList, "YARA skip larger bytes (limits.yr_skip_larger)", String(getValue(s, "limits.yr_skip_larger")), "YARA-X skip larger。変更可能。", "limits.yr_skip_larger");
-    addRow(settingsList, "YARA fast scan (limits.yr_fast_scan)", String(getValue(s, "limits.yr_fast_scan")), "YARA-X fast scan flag。変更可能。", "limits.yr_fast_scan");
+  const readOnlyGroup = addGroup(settingsList, "読み取り専用", false);
+  addSetting(readOnlyGroup, "DBファイル名 (db)", String(s.db), "ローカル DB file。UI write 対象外。", "");
+  addSetting(readOnlyGroup, "download 完了フォルダ名 (gallery_dir)", String(s.gallery_dir), "download 成果物 folder。取得 folder ではない。", "");
+  addSetting(readOnlyGroup, "永続 cache フォルダ (cache_dir)", String(s.cache_dir), "full cache root。galleryinfo は <cache_dir>/galleryinfo。UI write 対象外。", "");
+  addSetting(readOnlyGroup, "取得フォルダ (acquisition_dir)", String(s.acquisition_dir), "画面「取得」で write する folder。download 完了 folder ではない。", "");
+  addSetting(readOnlyGroup, "Viewer port / bind (viewer.port / viewer.bind)", `${s.viewer.port} / ${s.viewer.bind}`, "listener setting。restart が必要。UI write 対象外。", "");
 
-    addRow(constantsList, "Disk cache cap (cache_disk_max_entries)", String(s.constants.cache_disk_max_entries), "full/thumbs 件数 cap。kind 単位・作成順。UI write 対象外。", "");
-    addRow(constantsList, "Viewer lower bound (viewer_floor)", String(s.constants.viewer_floor), "memory cap lower bound。UI write 対象外。", "");
-    addRow(constantsList, "negative cache cap (negative_cache_max_entries)", String(s.constants.negative_cache_max_entries), "no_full negative cache cap。変更可能ではない。", "");
-    addRow(constantsList, "negative cache TTL (negative_cache_ttl_ms)", `${s.constants.negative_cache_ttl_ms} ms`, "no_full、search result、block penalty window。変更可能ではない。", "");
-    addRow(constantsList, "politely backoff interval (politeness_default_interval_ms)", `${s.constants.politeness_default_interval_ms} ms`, "block が active の間の backoff target。変更可能ではない。", "");
-    addRow(constantsList, "gallery info disk cap (galleryinfo_disk_max_entries / galleryinfo_disk_max_bytes)", `${s.constants.galleryinfo_disk_max_entries} entries / ${s.constants.galleryinfo_disk_max_bytes} bytes`, "galleryinfo disk cache cap。変更可能ではない。", "");
-    addRow(constantsList, "Scan cache TTL (scan_cache_ttl_ms)", `${s.constants.scan_cache_ttl_ms} ms`, "positive VT verdict cache TTL。変更可能ではない。", "");
-    addRow(constantsList, "negative scan TTL (negative_scan_cache_ttl_ms)", `${s.constants.negative_scan_cache_ttl_ms} ms`, "negative VT verdict cache TTL。変更可能ではない。", "");
-    addRow(constantsList, "YARA path (yr)", "not shown", "executable path は UI に表示しない。UI write 対象外。", "");
-  }).catch((e) => {
-    document.getElementById("settings-status").textContent = e.message || "settings fetch failed";
-  });
+  const cacheGroup = addGroup(settingsList, "キャッシュ", true);
+  addSetting(cacheGroup, "Disk cache cap (cache_disk_max_entries)", String(s.cache.cache_disk_max_entries), "full/thumbs 件数 cap。kind 単位・作成順。変更可能。", "cache.cache_disk_max_entries");
+
+  const viewerGroup = addGroup(settingsList, "Viewer memory", true);
+  addSetting(viewerGroup, "Browser memory cap (viewer.max_object_urls)", String(getValue(s, "viewer.max_object_urls")), "page objectURL 件数 cap。変更可能。", "viewer.max_object_urls");
+
+  const hitomiGroup = addGroup(settingsList, "取得・rate", true);
+  addSetting(hitomiGroup, "データレーン interval (hitomi.min_interval_ms)", String(getValue(s, "hitomi.min_interval_ms")), "data lane gate interval。変更可能。", "hitomi.min_interval_ms");
+  addSetting(hitomiGroup, "画像レーン interval (hitomi.image_min_interval_ms)", String(getValue(s, "hitomi.image_min_interval_ms")), "image lane gate interval。変更可能。", "hitomi.image_min_interval_ms");
+  addSetting(hitomiGroup, "gg force interval (hitomi.gg_force_min_interval_ms)", String(getValue(s, "hitomi.gg_force_min_interval_ms")), "gg force refresh window。変更可能。", "hitomi.gg_force_min_interval_ms");
+  addSetting(hitomiGroup, "max retry count (hitomi.max_retries)", String(getValue(s, "hitomi.max_retries")), "retry count。変更可能。", "hitomi.max_retries");
+  addSetting(hitomiGroup, "retry backoff interval (hitomi.retry_backoff_ms)", String(getValue(s, "hitomi.retry_backoff_ms")), "retry backoff。変更可能。", "hitomi.retry_backoff_ms");
+  addSetting(hitomiGroup, "画像 format (hitomi.image_format)", String(getValue(s, "hitomi.image_format")), "shard URL format。galleryinfo name 拡張子は使わない。変更可能。", "hitomi.image_format");
+  addSetting(hitomiGroup, "live gg を使用 (hitomi.use_live_gg)", String(getValue(s, "hitomi.use_live_gg")), "live gg が既定、snapshot は fallback。変更可能。", "hitomi.use_live_gg");
+
+  const limitsGroup = addGroup(settingsList, "scan limits", true);
+  addSetting(limitsGroup, "Limits max entries (limits.max_entries)", String(getValue(s, "limits.max_entries")), "export entry count cap。変更可能。", "limits.max_entries");
+  addSetting(limitsGroup, "Limits max uncompressed bytes (limits.max_uncompressed_bytes)", String(getValue(s, "limits.max_uncompressed_bytes")), "1 entry uncompressed size cap。変更可能。", "limits.max_uncompressed_bytes");
+  addSetting(limitsGroup, "Limits max ratio (limits.max_ratio)", String(getValue(s, "limits.max_ratio")), "zip bomb ratio judgment。変更可能。", "limits.max_ratio");
+  addSetting(limitsGroup, "Limits max scan bytes (limits.max_scan_bytes)", String(getValue(s, "limits.max_scan_bytes")), "head read limit。変更可能。", "limits.max_scan_bytes");
+  addSetting(limitsGroup, "YARA timeout seconds (limits.yr_timeout_sec)", String(getValue(s, "limits.yr_timeout_sec")), "YARA-X timeout。変更可能。", "limits.yr_timeout_sec");
+  addSetting(limitsGroup, "YARA cpu limit (limits.yr_cpu_limit)", String(getValue(s, "limits.yr_cpu_limit")), "YARA-X cpu limit。変更可能。", "limits.yr_cpu_limit");
+  addSetting(limitsGroup, "YARA skip larger bytes (limits.yr_skip_larger)", String(getValue(s, "limits.yr_skip_larger")), "YARA-X skip larger。変更可能。", "limits.yr_skip_larger");
+  addSetting(limitsGroup, "YARA fast scan (limits.yr_fast_scan)", String(getValue(s, "limits.yr_fast_scan")), "YARA-X fast scan flag。変更可能。", "limits.yr_fast_scan");
+
+  const vtGroup = addGroup(settingsList, "VirusTotal", true);
+  addSetting(vtGroup, "VirusTotal enabled (virustotal.enabled)", String(s.virustotal.enabled), "enabled flag。変更可能。", "virustotal.enabled");
+  addSetting(vtGroup, "VirusTotal hash_only (virustotal.hash_only)", String(s.virustotal.hash_only), "hash_only flag。変更可能。", "virustotal.hash_only");
+  addSetting(vtGroup, "VirusTotal upload_unknown (virustotal.upload_unknown)", String(s.virustotal.upload_unknown), "upload_unknown flag。変更可能。", "virustotal.upload_unknown");
+  addSetting(vtGroup, "VirusTotal env name (virustotal.api_key_env)", String(s.virustotal.api_key_env), "API key value は表示しない。env 名だけ表示。", "");
+
+  const constantsGroup = addGroup(constantsList, "内部定数", false);
+  addSetting(constantsGroup, "Viewer lower bound (viewer_floor)", String(s.constants.viewer_floor), "memory cap lower bound。UI write 対象外。", "");
+  addSetting(constantsGroup, "negative cache cap (negative_cache_max_entries)", String(s.constants.negative_cache_max_entries), "no_full negative cache cap。変更可能ではない。", "");
+  addSetting(constantsGroup, "negative cache TTL (negative_cache_ttl_ms)", `${s.constants.negative_cache_ttl_ms} ms`, "no_full、search result、block penalty window。変更可能ではない。", "");
+  addSetting(constantsGroup, "politely backoff interval (politeness_default_interval_ms)", `${s.constants.politeness_default_interval_ms} ms`, "block が active の間の backoff target。変更可能ではない。", "");
+  addSetting(constantsGroup, "gallery info disk cap (galleryinfo_disk_max_entries / galleryinfo_disk_max_bytes)", `${s.constants.galleryinfo_disk_max_entries} entries / ${s.constants.galleryinfo_disk_max_bytes} bytes`, "galleryinfo disk cache cap。変更可能ではない。", "");
+  addSetting(constantsGroup, "Scan cache TTL (scan_cache_ttl_ms)", `${s.constants.scan_cache_ttl_ms} ms`, "positive VT verdict cache TTL。変更可能ではない。", "");
+  addSetting(constantsGroup, "negative scan TTL (negative_scan_cache_ttl_ms)", `${s.constants.negative_scan_cache_ttl_ms} ms`, "negative VT verdict cache TTL。変更可能ではない。", "");
+  addSetting(constantsGroup, "YARA path (yr)", "not shown", "executable path は UI に表示しない。UI write 対象外。", "");
 }
 
 function collectPayload() {
@@ -197,8 +236,36 @@ async function saveSettings(event) {
   }
 }
 
+async function loadSettings() {
+  try {
+    const response = await fetch("/api/settings", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `GET /api/settings failed: ${response.status}`);
+    s = data;
+    renderSettings();
+  } catch (e) {
+    document.getElementById("settings-status").textContent = e.message || "settings fetch failed";
+  }
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  const status = document.getElementById("settings-status");
+  const payload = collectPayload();
+  try {
+    const response = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `POST /api/settings failed: ${response.status}`);
+    s = data;
+    status.textContent = "Saved";
+    renderSettings();
+  } catch (e) {
+    status.textContent = e.message || "settings save failed";
+  }
+}
+
 document.getElementById("settings-form").addEventListener("submit", saveSettings);
-renderSettings();
+loadSettings();
 </script>
 </body>
 </html>

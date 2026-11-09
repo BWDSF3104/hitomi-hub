@@ -34,6 +34,15 @@ Web UI settings は recommended form で承認した。実装済み範囲は ded
 - Immediate memory update は successful write 後に `v.cfg` へ反映し、`v.client.cfg = v.cfg.Hitomi` で client request-time interval values を即時反映する。
 - Settings page button は `設定を保存`、labels は Japanese name + original constant name を使う。
 
+## 実施（cache settings and group card UI）
+
+- `cache.cache_disk_max_entries` を settings group に追加し、allowlist へ含める。Value semantics は `0` = 未指定で canonical default `defaultCacheDiskMaxEntries = 4000`、explicit positive は `1..maxCacheDiskMaxEntries = 20000`。Negative と `20000` 超過は reject。
+- Successful write 後は `v.cfg.Cache.CacheDiskMaxEntries` と `v.cacheDiskMaxEntries` を memory へ即時反映する。Settings API response の `cache` group から current memory value を返す。
+- `viewer_floor` は settings 化しない。Runtime cap と lower-bound guard の性格が異なるため、`minViewerMaxObjectURLs = 1000` を定数正典として read-only constants group で表示する。
+- Settings page は accessible group card を使う。Group は `fieldset` / `legend` で区切り、editable input は `input[data-key]`、label は `for` association で input に結び付け、note は `aria-describedby` で参照する。Settings page test anchor は `setAttribute("for", inputId)`、`aria-describedby`、`data-key`、`キャッシュ`、`Viewer memory`、`取得・rate`、`scan limits`、`VirusTotal`、`内部定数`。
+- `config.example.json` に `cache` block を追加し、`cache_disk_max_entries` key を canonical default `4000` の写しとして列挙する。Existing `limits` test は `cache_disk_max_entries` を `limits` key として検出しない。
+- Settings page で `viewer_floor` を `内部定数` の read-only row として表示し、`cache_disk_max_entries` は `キャッシュ` の editable row として表示する。Viewer page の settings panel、settings fetch、`settings-values`、`renderSettings()` 禁止条件は維持する。
+
 ## Supersedes
 
-この decision の page 配置点だけ、同日の初期 viewer panel 案を supersede する。R-15 の viewer cap notification UI 禁止、設定化範囲、secret 表示条件は維持する。`docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md` の cap notification UI 条件、`docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md` の設定化範囲、`docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md` の disk cap 値を変えない。
+この decision の page 配置点だけ、同日の初期 viewer panel 案を supersede する。R-15 の viewer cap notification UI 禁止、secret 表示条件は維持する。`docs/ai/decisions/2026-11-06-review-findings-approval-decisions.md` の cap notification UI 条件は維持する。`cache_disk_max_entries` を settings へ移動する点だけ、`docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md` の「cap・floor・TTL は settings 化しない」条件のうち cache cap 部分を supersede する。`viewer_floor` の settings 化は supersede しない。`docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md` の canonical default 値 `4000` はそのまま。

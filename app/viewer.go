@@ -132,7 +132,7 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		infoCache:       map[int]*infoCacheEntry{},
 		infoCacheRoot:   filepath.Join(root, cfg.InfoCacheDirName(), "galleryinfo"),
 		infoDiskTTL:     galleryInfoCacheTTL,
-		cacheDiskMaxEntries: defaultCacheDiskMaxEntries,
+		cacheDiskMaxEntries: cfg.EffectiveCacheDiskMaxEntries(),
 	}
 }
 
@@ -581,8 +581,11 @@ type settingsVirusTotal struct {
 	MaxDaily      int    `json:"max_daily_requests"`
 }
 
+type settingsCache struct {
+	CacheDiskMaxEntries int `json:"cache_disk_max_entries"`
+}
+
 type settingsConstants struct {
-	CacheDiskMaxEntries         int `json:"cache_disk_max_entries"`
 	ViewerFloor                 int `json:"viewer_floor"`
 	NegativeCacheMaxEntries     int `json:"negative_cache_max_entries"`
 	NegativeCacheTTLMS          int `json:"negative_cache_ttl_ms"`
@@ -605,6 +608,7 @@ type settingsResponse struct {
 	Hitomi         HitomiConfig      `json:"hitomi"`
 	VirusTotal     settingsVirusTotal `json:"virustotal"`
 	Limits         Limits            `json:"limits"`
+	Cache          settingsCache     `json:"cache"`
 	Constants      settingsConstants `json:"constants"`
 }
 
@@ -636,8 +640,10 @@ func settingsView(v *viewer) settingsResponse {
 			MaxDaily:      v.cfg.VirusTotal.MaxDaily,
 		},
 		Limits: v.cfg.Limits,
+		Cache: settingsCache{
+			CacheDiskMaxEntries: v.cacheDiskMaxEntries,
+		},
 		Constants: settingsConstants{
-			CacheDiskMaxEntries:         v.cacheDiskMaxEntries,
 			ViewerFloor:                 minViewerMaxObjectURLs,
 			NegativeCacheMaxEntries:     defaultNoFullCacheMaxEntries,
 			NegativeCacheTTLMS:          int(negativeNoFullCacheTTL / time.Millisecond),
@@ -652,6 +658,7 @@ func settingsView(v *viewer) settingsResponse {
 
 func settingsEditableKeys() []string {
 	return []string{
+		"cache.cache_disk_max_entries",
 		"viewer.max_object_urls",
 		"hitomi.min_interval_ms",
 		"hitomi.image_min_interval_ms",
@@ -675,11 +682,13 @@ func settingsEditableKeys() []string {
 }
 
 func isAllowedSettingsTopKey(key string) bool {
-	return key == "viewer" || key == "hitomi" || key == "limits" || key == "virustotal"
+	return key == "cache" || key == "viewer" || key == "hitomi" || key == "limits" || key == "virustotal"
 }
 
 func isAllowedSettingsField(section, key string) bool {
 	switch section {
+	case "cache":
+		return key == "cache_disk_max_entries"
 	case "viewer":
 		return key == "max_object_urls"
 	case "hitomi":
@@ -711,6 +720,9 @@ func settingsNumberError(section, key string, value int64) error {
 	if value < 0 {
 		return fmt.Errorf("%s.%s must not be negative", section, key)
 	}
+	if section == "cache" && key == "cache_disk_max_entries" && value > maxCacheDiskMaxEntries {
+		return fmt.Errorf("cache.cache_disk_max_entries must be 0 (unspecified, use default) or <= %d", maxCacheDiskMaxEntries)
+	}
 	if section == "viewer" && key == "max_object_urls" && value != 0 && value < minViewerMaxObjectURLs {
 		return fmt.Errorf("viewer.max_object_urls must be 0 (unspecified, use default) or >= %d", minViewerMaxObjectURLs)
 	}
@@ -741,6 +753,9 @@ func settingsBaseMap(v *viewer) map[string]any {
 		"cache_dir":       v.cfg.CacheDirName(),
 		"acquisition_dir": v.cfg.AcquisitionDirName(),
 		"yr":              yr,
+		"cache": map[string]any{
+			"cache_disk_max_entries": v.cacheDiskMaxEntries,
+		},
 		"viewer": map[string]any{
 			"port":            v.cfg.Viewer.Port,
 			"bind":            orDefault(v.cfg.Viewer.Bind, "127.0.0.1"),
@@ -937,6 +952,11 @@ func (v *viewer) updateSettings(w http.ResponseWriter, r *http.Request) {
 	for topKey, fields := range updates {
 		for key, value := range fields {
 			switch topKey {
+			case "cache":
+				if key == "cache_disk_max_entries" {
+					v.cfg.Cache.CacheDiskMaxEntries = int(value.(int64))
+					v.cacheDiskMaxEntries = int(value.(int64))
+				}
 			case "viewer":
 				if key == "max_object_urls" {
 					v.cfg.Viewer.MaxObjectURLs = int(value.(int64))
