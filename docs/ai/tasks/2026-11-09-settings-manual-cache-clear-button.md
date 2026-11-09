@@ -144,7 +144,23 @@
   - 拒否後の file 数: acquisition 7・Galleries 2・cache\images 1366・thumbs 436・galleryinfo 429（観測前と一致。削除 0）
   - つまり実データ側で、完成フォルダへ向く clear は実行前段で拒否され、実 file は無変更
 - 未実施（実データ側の実削除）: 実 root での actual clear は実 cache（1366 + 436 + 429 file・DB 行 51/40）を消す操作になるため、ユーザー確認なしには実行していない。実データ folder の survival は「guard 拒否 + file 数一致」で確認済み。actual clear 中の survival は未観測。
-- 前回の確認 text の「Galleries・acquisition 前後一致」は scratch measurement root の数字であり、実データ folder の数字ではない。実データ folder は上記の別 root に在る。
+- 前回の確認 text の「Galleries・acquisition 前後一致」は scratch measurement root（`Common_Operations\scratch\p3_canonical_fresh`）の数字であり、実データ folder の数字ではない。実データ folder は上記の別 root に在る。
+
+#### actual clear の実データ copy 実測（2026-11-09 03:55 UTC・ユーザー選択 = scratch copy）
+
+- copy root: `S:\Documents\Kilo_Commons\Common_Operations\scratch\p3_realdata_copy`（実 root の `cache`・`Galleries`・`acquisition`・`hitomi.db`(+`-shm`/`-wal`)・`config.json` をコピー。正典 exe は `output\hitomi-hub\hub.exe`。実データは無変更）
+- 実 root の config 形（`output\hitomi-hub\config.json`）: `cache_dir = cache/images`・`gallery_dir = Galleries`・`acquisition_dir = acquisition` → app cache 経路 `cache\images`（thumbs 下位フォルダ）・galleryinfo app 経路 `cache\images\galleryinfo`
+- before（copy・実 data と同数）: `cache\images` 1366（うち thumbs 436 → full 直下 930）・`cache\galleryinfo` 429（historical shape）・app galleryinfo 経路 0・DB 行 full 51・thumbs 40
+- POST /api/cache/clear（canonical build・fresh instance・port 8746・confirm true・scope full/thumbs/galleryinfo/memory）応答 200:
+  - `deleted`: full 51・thumbs 40・galleryinfo 0・`unlisted_full` 879・`unlisted_thumbs` 396・memory 0
+  - `rows_deleted` 91・`skipped_inflight` 0・`failed` 0・`truncated` false
+  - 突合: full 51 + 879 = 930 = before の full 直下。thumbs 40 + 396 = 436 = before の thumbs。list化前（行なし）879 + 396 = 1275 file が削除対象に該当
+- after（copy）: `cache\images` 0・`cache\images\thumbs` 0・DB 行 0（`cache_counts` full 0・thumbs 0）
+- survival（copy）: `acquisition` 7 file（`001.avif`〜`007.avif`・LastWriteTime 2026-11-08 23:12:04 のまま・名前一致）・`Galleries` 2 file（`2d18a9a8…webp` 2026-11-05 19:40:57・`09e34fd…webp` 2026-11-03 16:19:54・名前と LastWriteTime 一致）。`scan_cache` は copy root に存在せず（削除 0・対象外）
+- `cache\galleryinfo` 429 は after でも 429（app 経路ではない historical shape → 削除 0。`KI-20261109-01` と一致）
+- 実 root（`output\hitomi-hub`）の after 実測: acquisition 7・Galleries 2・`cache\images` 1366・thumbs 436・`cache\galleryinfo` 429 → 観測前と一致（実データは無変更。actual clear は copy でのみ実行）
+- memory 層の clear は今回の copy 実測では remote 呼出しを避け memory 状態を観測していない（削除 0・memory 0 の報告のみ）。memory 層の clear 実測（`x-cache` miss）は 03:41 の scratch 実測で確認済み（`x-cache` を置く `/api/search-card/{id}` を使用）
+- cleanup: copy root は `kilo-safe-rmdir` でゴミ箱へ送る（記録は上記数値と Drive 確認 text）
 
 ## 完了時 Memory Bank 操作
 
