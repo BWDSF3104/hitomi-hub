@@ -180,7 +180,7 @@ func (v *viewer) acquire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.cfg, body.GalleryID)); err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -92,7 +92,7 @@ func exportPages(db *sql.DB, galleryID int, dirName, format string) ([]exportEnt
 
 // exportCBZ は保存済み画像を page 順で zip に詰める（Store・Deflate なし）。hit / scan_error は skip
 func exportCBZ(db *sql.DB, cfg Config, root string, galleryID int, out string) (map[string]any, error) {
-	dirName := orDefault(cfg.GalleryDir, "Galleries")
+	dirName := cfg.GalleryDirName()
 	entries, order, err := exportPages(db, galleryID, dirName, orDefault(cfg.Hitomi.ImageFormat, "webp"))
 	if err != nil {
 		return nil, err

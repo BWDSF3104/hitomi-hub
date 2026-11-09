@@ -414,7 +414,7 @@ def test_second_scan_does_not_change_findings_count(tmp_path):
 
 
 def test_run_yara_exit1_error_is_scan_error():
-    rules, error = scan.run_yara_with_runner(Path("a.cbz"), Path("rules.yar"), "yr", scan.DEFAULT_LIMITS,
+    rules, error = scan.run_yara_with_runner(Path("a.cbz"), Path("rules.yar"), "yr", CFG["limits"],
                                              runner=lambda cmd: SimpleNamespace(returncode=1, stdout='{"rules":[{"identifier":"Zip_Path_Traversal"}]}'))
     assert rules == []
     assert error == "yara_error:exit_1"

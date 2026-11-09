@@ -64,6 +64,25 @@ type Config struct {
 	Limits         Limits        `json:"limits"`
 }
 
+// 名前の既定値の単一出力元（decision docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md）。
+// cap・floor・TTL は設定化せず定数正典（同 decision）。page 側定数は config 外。
+// `defaultInfoCacheDirName` は galleryinfo 用の base。full cache（`defaultCacheDirName`）と
+// 形が異なる点は未確定（shape 決定待ち）で、挙動は変更しない。
+const (
+	defaultDBName             = "hitomi.db"
+	defaultGalleryDirName     = "Galleries"
+	defaultCacheDirName       = "cache/images"
+	defaultInfoCacheDirName   = "cache"
+	defaultAcquisitionDirName = "acquisition"
+)
+
+func (c Config) DBName() string { return orDefault(c.DB, defaultDBName) }
+func (c Config) GalleryDirName() string { return orDefault(c.GalleryDir, defaultGalleryDirName) }
+func (c Config) CacheDirName() string { return orDefault(c.CacheDir, defaultCacheDirName) }
+func (c Config) InfoCacheDirName() string { return orDefault(c.CacheDir, defaultInfoCacheDirName) }
+func (c Config) AcquisitionDirName() string { return orDefault(c.AcquisitionDir, defaultAcquisitionDirName) }
+
+
 func fileSize(path string) int64 {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -154,7 +173,9 @@ const minHitomiRateFloorMS = 50
 // 1〜999 は拒否（下限 1000）。disk cache の kind 別 cap は 8000 件（件数・byte 計算なし）。
 const defaultMaxObjectURLs = 4000
 const minViewerMaxObjectURLs = 1000
-const defaultCacheDiskMaxEntries = 8000
+// disk cache cap は件数（byte 計算なし）で、decision docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md。
+// 既定 4000 件・kind（full / thumbs）単位・作成順（created_at）。last access 列は置かない。
+const defaultCacheDiskMaxEntries = 4000
 
 func loadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
@@ -196,9 +217,6 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.Hitomi.ImageFormat == "" {
 		cfg.Hitomi.ImageFormat = defs.ImageFormat
-	}
-	if cfg.AcquisitionDir == "" {
-		cfg.AcquisitionDir = "acquisition"
 	}
 	if cfg.Viewer.Port == 0 {
 		cfg.Viewer.Port = 8731
@@ -698,10 +716,10 @@ func recordFile(db dbExec, path string, galleryID sql.NullInt64, sha string, siz
 	return err
 }
 
-func recordScanFile(db dbExec, root string, galleryID sql.NullInt64, path string, sha string, size int64, ext, magic, status, source string) error {
+func recordScanFile(db dbExec, cfg Config, root string, galleryID sql.NullInt64, path string, sha string, size int64, ext, magic, status, source string) error {
 	if galleryID.Valid {
 		galleryIDInt := int(galleryID.Int64)
-		if err := recordDiscovered(db, galleryIDInt, galleryDir(root, galleryIDInt)); err != nil {
+		if err := recordDiscovered(db, galleryIDInt, galleryDir(cfg, galleryIDInt)); err != nil {
 			return err
 		}
 	}
@@ -909,7 +927,7 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 		return ""
 	}
 	ext, magic, findings, status := ScanFile(path, cfg)
-	galleryID := galleryIDForPath(rel, orDefault(cfg.GalleryDir, "Galleries"))
+	galleryID := galleryIDForPath(rel, cfg.GalleryDirName())
 
 	source := "structural"
 	cached := false
@@ -1014,7 +1032,7 @@ func processFileWithYara(db *sql.DB, cfg Config, state *RateState, root, path st
 		return status
 	}
 
-	if err := recordScanFile(tx, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
+	if err := recordScanFile(tx, cfg, root, galleryID, rel, sha, fileSize(path), ext, magic, status, source); err != nil {
 		logScanError(err)
 		return status
 	}
@@ -1105,7 +1123,7 @@ func main() {
 		cfg.VirusTotal.Enabled = false
 	}
 
-	dbPath := filepath.Join(root, orDefault(cfg.DB, "hitomi.db"))
+	dbPath := filepath.Join(root, cfg.DBName())
 	db, err := openDB(dbPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "db: "+dbPath+": "+err.Error())
@@ -1118,7 +1136,7 @@ func main() {
 	}
 
 	summary := map[string]int{"pass": 0, "hit": 0, "not_evaluated": 0, "scan_error": 0, "cached": 0, "skipped": 0}
-	galleryRoot := filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries"))
+	galleryRoot := filepath.Join(root, cfg.GalleryDirName())
 
 	switch cmd {
 	case "scan":
@@ -1192,7 +1210,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
 		} else {
 			for _, id := range shown {
-				if err := recordDiscovered(tx, id, galleryDir(root, id)); err != nil {
+				if err := recordDiscovered(tx, id, galleryDir(cfg, id)); err != nil {
 					fmt.Fprintf(os.Stderr, "gallery: %s\n", err.Error())
 				}
 			}
@@ -1220,7 +1238,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
 		}
-		if err := upsertGallery(db, info, galleryDir(root, info.ID)); err != nil {
+		if err := upsertGallery(db, info, galleryDir(cfg, info.ID)); err != nil {
 			fmt.Fprintf(os.Stderr, "upsert: %s\n", err.Error())
 		}
 		printJSON(info)
@@ -1237,12 +1255,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
 		}
-		target := filepath.Join(root, galleryDir(root, info.ID))
+		target := filepath.Join(root, galleryDir(cfg, info.ID))
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "mkdir: "+err.Error())
 			os.Exit(1)
 		}
-		if err := upsertGallery(db, info, galleryDir(root, info.ID)); err != nil {
+		if err := upsertGallery(db, info, galleryDir(cfg, info.ID)); err != nil {
 			fmt.Fprintf(os.Stderr, "upsert: %s\n", err.Error())
 		}
 		state := &RateState{}
@@ -1299,7 +1317,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "read: "+err.Error())
 			os.Exit(2)
 		}
-		if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+		if err := recordDiscovered(db, id, galleryDir(cfg, id)); err != nil {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
 		}
@@ -1334,7 +1352,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "fav: "+err.Error())
 			os.Exit(2)
 		}
-		if err := recordDiscovered(db, id, galleryDir(root, id)); err != nil {
+		if err := recordDiscovered(db, id, galleryDir(cfg, id)); err != nil {
 			fmt.Fprintln(os.Stderr, "gallery: "+err.Error())
 			os.Exit(1)
 		}
@@ -1346,7 +1364,7 @@ func main() {
 	case "check":
 		client := &Client{http: &http.Client{Timeout: 30 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi}
 		warnGG(loadGG(client))
-		results, err := runSavedQueries(db, client, root, f.lang, f.limit)
+		results, err := runSavedQueries(db, client, cfg, f.lang, f.limit)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "check: "+err.Error())
 			os.Exit(1)
@@ -1471,8 +1489,9 @@ func recordDiscovered(db execer, galleryID int, dir string) error {
 
 // recordDiscoveredBatch は 1 request（1 saved query）分の ids を 1 transaction で記録する。
 // external fetch は tx の外で完了してから呼ぶ。ids が空のときは tx を開かない（commit 0）。
-func recordDiscoveredBatch(db *sql.DB, ids []int, root string) error {
-	return recordDiscoveredBatchTx(&sqlTransactor{db}, ids, root)
+// dir は cfg.GalleryDirName() から組み立てる（単一出力元）。root は DB 記録へ使わない。
+func recordDiscoveredBatch(db *sql.DB, cfg Config, ids []int) error {
+	return recordDiscoveredBatchTx(&sqlTransactor{db}, cfg, ids)
 }
 
 // sqlTransactor は *sql.DB を dbTransactor へ橋渡しする。テスト fake が同じ口を満たせる
@@ -1527,7 +1546,7 @@ func recordDiscoveredIfMissing(store cardStore, galleryID int, dir string) error
 	return recordDiscovered(store, galleryID, dir)
 }
 
-func recordDiscoveredBatchTx(t dbTransactor, ids []int, root string) error {
+func recordDiscoveredBatchTx(t dbTransactor, cfg Config, ids []int) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -1537,7 +1556,7 @@ func recordDiscoveredBatchTx(t dbTransactor, ids []int, root string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, id := range ids {
-		if err := recordDiscovered(tx, id, galleryDir(root, id)); err != nil {
+		if err := recordDiscovered(tx, id, galleryDir(cfg, id)); err != nil {
 			return err
 		}
 	}

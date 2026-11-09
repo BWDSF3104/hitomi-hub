@@ -19,16 +19,8 @@ SCAN_TARGETS = {"pdf", "cbz", "zip"}
 IMAGE_EXTS = {"webp", "avif", "png", "jpg", "jpeg", "gif", "bmp"}
 EXEC_EXT = {"exe", "dll", "scr", "jar", "js", "vbs", "ps1", "bat", "cmd", "com", "msi", "lnk"}
 
-DEFAULT_LIMITS = {
-    "max_entries": 2000,
-    "max_uncompressed_bytes": 209715200,
-    "max_ratio": 100,
-    "max_scan_bytes": 2097152,
-    "yr_timeout_sec": 10,
-    "yr_cpu_limit": 50,
-    "yr_skip_larger": 67108864,
-    "yr_fast_scan": True,
-}
+# 設定値の単一出力元は config JSON（decision docs/ai/decisions/2026-11-09-settings-centralization-scope-approved.md）。
+# 自前既定表を持たない。`load_config` が `limits` を要求し、欠ければ config error。
 
 STATUS_VALUES = {"pass", "hit", "not_evaluated", "external_removal", "scan_error"}
 SCAN_CACHE_TTL_SECONDS = 30 * 24 * 3600
@@ -158,7 +150,7 @@ def scan_pdf(path: Path, limits: dict) -> list:
 
 
 def scan_file(path: Path, cfg: dict) -> tuple:
-    limits = cfg.get("limits", DEFAULT_LIMITS)
+    limits = cfg["limits"]
     ext = ext_of(path)
     size = path.stat().st_size
     with path.open("rb") as fh:
@@ -388,14 +380,14 @@ def yara_gate(ext: str, cfg: dict) -> bool:
 
 def run_yara_with_runner(path: Path, rules_path: Path, yr: str, limits: dict, runner=None) -> tuple:
     cmd = [yr, "scan", str(rules_path), str(path), "--output-format", "ndjson",
-           "--timeout", str(limits.get("yr_timeout_sec", 10)),
-           "--cpu-limit", str(limits.get("yr_cpu_limit", 50)),
-           "--skip-larger", str(limits.get("yr_skip_larger", 67108864))]
-    if limits.get("yr_fast_scan"):
+           "--timeout", str(limits["yr_timeout_sec"]),
+           "--cpu-limit", str(limits["yr_cpu_limit"]),
+           "--skip-larger", str(limits["yr_skip_larger"])]
+    if limits["yr_fast_scan"]:
         cmd.append("--fast-scan")
     if runner is None:
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=limits.get("yr_timeout_sec", 10) + 15)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=limits["yr_timeout_sec"] + 15)
         except Exception as exc:
             return ([], "yara_error:%s" % exc)
     else:
@@ -428,9 +420,10 @@ def resolve_root(explicit: str) -> Path:
 
 def load_config(cfg_path: Path) -> dict:
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg.setdefault("limits", DEFAULT_LIMITS)
-    for key, value in DEFAULT_LIMITS.items():
-        cfg["limits"].setdefault(key, value)
+    if not isinstance(cfg.get("limits"), dict):
+        raise ValueError("config error: limits object is required (config JSON is the single source)")
+    if not cfg.get("gallery_dir"):
+        raise ValueError("config error: gallery_dir is required (config JSON is the single source)")
     return cfg
 
 
@@ -535,7 +528,7 @@ def main(argv=None) -> int:
     conn = open_db(db_path)
     ensure_schema(conn, DATA_DIR / "schema.sql")
 
-    gallery = root / cfg.get("gallery_dir", "Galleries")
+    gallery = root / cfg["gallery_dir"]
     if not gallery.exists():
         print("gallery dir not found: %s" % gallery, file=sys.stderr)
         return 2

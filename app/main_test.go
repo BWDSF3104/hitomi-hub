@@ -547,7 +547,7 @@ func TestRecordScanFileCreatesKnownGalleryParent(t *testing.T) {
 	db := openTestDB(t)
 	root := t.TempDir()
 	galleryID := sql.NullInt64{Int64: 123, Valid: true}
-	if err := recordScanFile(db, root, galleryID, filepath.Join("Galleries", "123", "file.cbz"), "0", 1, "cbz", "zip", "pass", "structural"); err != nil {
+	if err := recordScanFile(db, defaultConfigForTest(), root, galleryID, filepath.Join("Galleries", "123", "file.cbz"), "0", 1, "cbz", "zip", "pass", "structural"); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -1572,6 +1572,74 @@ func TestConfigExampleHitomiKeysMatchCodeDefaults(t *testing.T) {
 	}
 }
 
+// decision 2026-11-09-settings-centralization-scope-approved: 名前の既定値はコード既定が単一出力元。
+// example はその写しで、key の存在と値をテストが自動照合する。
+func TestConfigExampleDirNamesMatchCodeDefaults(t *testing.T) {
+	path := filepath.Join(dataRoot(), "config.example.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"db":              defaultDBName,
+		"gallery_dir":     defaultGalleryDirName,
+		"cache_dir":       defaultCacheDirName,
+		"acquisition_dir": defaultAcquisitionDirName,
+	} {
+		got, ok := raw[key]
+		if !ok {
+			t.Errorf("config.example.json missing key %s", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("config.example.json %s: got %v want %s", key, got, want)
+		}
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DBName() != defaultDBName || cfg.GalleryDirName() != defaultGalleryDirName ||
+		cfg.CacheDirName() != defaultCacheDirName || cfg.AcquisitionDirName() != defaultAcquisitionDirName {
+		t.Errorf("resolved names must equal the code defaults: %+v", cfg)
+	}
+}
+
+// 設定化しない値（cap・floor・TTL）は example に key を置かない（同 decision）。
+// limits は例に列挙済みで、コード既定と一致することを固定する。
+func TestConfigExampleLimitsMatchCodeDefaults(t *testing.T) {
+	path := filepath.Join(dataRoot(), "config.example.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	limits, ok := raw["limits"].(map[string]any)
+	if !ok {
+		t.Fatal("config.example.json missing limits object")
+	}
+	for key := range limits {
+		switch key {
+		case "cache_disk_max_entries", "no_full_cache_max_entries", "info_disk_max_entries", "info_disk_max_bytes":
+			t.Errorf("non-configurable cap must not appear as a limits key: %s", key)
+		}
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits != defaultLimits() {
+		t.Errorf("config.example.json limits values should match code defaults: got %+v", cfg.Limits)
+	}
+}
+
 // R-15（decision 2026-11-06 確定 10:52・実施 2026-11-08）: viewer.max_object_urls の
 // memory cap 設定化。0 は「未指定＝既定 4000」、下限 guard 1000。
 func TestLoadConfigViewerMaxObjectURLsZeroNegativeUseDefaultAndFloorRejects(t *testing.T) {
@@ -1581,8 +1649,9 @@ func TestLoadConfigViewerMaxObjectURLsZeroNegativeUseDefaultAndFloorRejects(t *t
 	if minViewerMaxObjectURLs != 1000 {
 		t.Fatalf("approved floor must be 1000: got %d", minViewerMaxObjectURLs)
 	}
-	if defaultCacheDiskMaxEntries != 8000 {
-		t.Fatalf("approved disk cap must be 8000 per kind: got %d", defaultCacheDiskMaxEntries)
+	// decision 2026-11-09-disk-cache-cap-count-4000（件数・4000・kind 単位）
+	if defaultCacheDiskMaxEntries != 4000 {
+		t.Fatalf("approved disk cap must be 4000 per kind: got %d", defaultCacheDiskMaxEntries)
 	}
 	path := filepath.Join(t.TempDir(), "config.json")
 	write := func(body string) {
@@ -1821,7 +1890,6 @@ func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
 	counter := &testCommitCounter{}
 	fake := &fakeExec{counter: counter, galleries: map[int]bool{}}
 	tr := &fakeTransactor{fake: fake, counter: counter}
-	root := t.TempDir()
 	ids := make([]int, 25)
 	for i := range ids {
 		ids[i] = 1000 + i
@@ -1833,7 +1901,7 @@ func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
 		return ids
 	}
 	got := mockedFetch()
-	if err := recordDiscoveredBatchTx(tr, got, root); err != nil {
+	if err := recordDiscoveredBatchTx(tr, defaultConfigForTest(), got); err != nil {
 		t.Fatal(err)
 	}
 	events := counter.snapshot()
@@ -1862,7 +1930,7 @@ func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
 	// 修正前の基準（1 Exec = 1 autocommit commit）: mocked DB で request あたり commit 回数が 25 になることを示す
 	counter.reset()
 	for _, id := range ids {
-		if _, err := fake.Exec(`INSERT INTO galleries (gallery_id, dir) VALUES (?, ?)`, id, galleryDir(root, id)); err != nil {
+		if _, err := fake.Exec(`INSERT INTO galleries (gallery_id, dir) VALUES (?, ?)`, id, galleryDir(defaultConfigForTest(), id)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1872,7 +1940,7 @@ func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
 
 	// 2 回目（同じ ids）も 1 commit。行数は 2 回実行で不変（unique key・INSERT OR IGNORE の意味を変えない）
 	counter.reset()
-	if err := recordDiscoveredBatchTx(tr, ids, root); err != nil {
+	if err := recordDiscoveredBatchTx(tr, defaultConfigForTest(), ids); err != nil {
 		t.Fatal(err)
 	}
 	if counter.commits() != 1 {
@@ -1884,7 +1952,7 @@ func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
 
 	// ids が空のときは tx を開かない（修正前と同じく commit 0・書き込みなし）
 	counter.reset()
-	if err := recordDiscoveredBatchTx(tr, nil, root); err != nil {
+	if err := recordDiscoveredBatchTx(tr, defaultConfigForTest(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(counter.snapshot()) != 0 {
@@ -1895,12 +1963,11 @@ func TestRecordDiscoveredBatchCommitsOncePerRequestMockedFetch(t *testing.T) {
 // real DB 側で commit が実際に永続化する（commit 0 で終わらない）ことを openTestDB で確認する
 func TestRecordDiscoveredBatchPersistsRowsOnRealDB(t *testing.T) {
 	db := openTestDB(t)
-	root := t.TempDir()
 	ids := make([]int, 25)
 	for i := range ids {
 		ids[i] = 1000 + i
 	}
-	if err := recordDiscoveredBatch(db, ids, root); err != nil {
+	if err := recordDiscoveredBatch(db, defaultConfigForTest(), ids); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
@@ -1910,7 +1977,7 @@ func TestRecordDiscoveredBatchPersistsRowsOnRealDB(t *testing.T) {
 	if rows != 25 {
 		t.Fatalf("galleries rows: got %d", rows)
 	}
-	if err := recordDiscoveredBatch(db, ids, root); err != nil {
+	if err := recordDiscoveredBatch(db, defaultConfigForTest(), ids); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow("SELECT COUNT(1) FROM galleries").Scan(&rows); err != nil {
@@ -1928,14 +1995,13 @@ func TestSearchCardRecordDedupSkipsExistingRowsMockedDB(t *testing.T) {
 	counter := &testCommitCounter{}
 	fake := &fakeExec{counter: counter, galleries: map[int]bool{}}
 	tr := &fakeTransactor{fake: fake, counter: counter}
-	root := t.TempDir()
 	ids := make([]int, 25)
 	for i := range ids {
 		ids[i] = 1000 + i
 	}
 
 	// page 前提: search batch 1 commit（A-02 で固定済み）の後、card 1 ページ 25 件
-	if err := recordDiscoveredBatchTx(tr, ids, root); err != nil {
+	if err := recordDiscoveredBatchTx(tr, defaultConfigForTest(), ids); err != nil {
 		t.Fatal(err)
 	}
 	if counter.commits() != 1 {
@@ -1944,7 +2010,7 @@ func TestSearchCardRecordDedupSkipsExistingRowsMockedDB(t *testing.T) {
 
 	counter.reset()
 	for _, id := range ids {
-		if err := recordDiscoveredIfMissing(fake, id, galleryDir(root, id)); err != nil {
+		if err := recordDiscoveredIfMissing(fake, id, galleryDir(defaultConfigForTest(), id)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1968,7 +2034,7 @@ func TestSearchCardRecordDedupSkipsExistingRowsMockedDB(t *testing.T) {
 	counter.reset()
 	cold := []int{2000, 2001}
 	for _, id := range cold {
-		if err := recordDiscoveredIfMissing(fake, id, galleryDir(root, id)); err != nil {
+		if err := recordDiscoveredIfMissing(fake, id, galleryDir(defaultConfigForTest(), id)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1977,7 +2043,7 @@ func TestSearchCardRecordDedupSkipsExistingRowsMockedDB(t *testing.T) {
 	}
 	counter.reset()
 	for _, id := range cold {
-		if err := recordDiscoveredIfMissing(fake, id, galleryDir(root, id)); err != nil {
+		if err := recordDiscoveredIfMissing(fake, id, galleryDir(defaultConfigForTest(), id)); err != nil {
 			t.Fatal(err)
 		}
 	}

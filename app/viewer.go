@@ -122,12 +122,12 @@ func newViewer(db *sql.DB, cfg Config, root string) *viewer {
 		db:              db,
 		cfg:             cfg,
 		root:            root,
-		galleryRoot:     filepath.Join(root, orDefault(cfg.GalleryDir, "Galleries")),
-		cacheRoot:       filepath.Join(root, orDefault(cfg.CacheDir, "cache/images")),
-		acquisitionRoot: filepath.Join(root, orDefault(cfg.AcquisitionDir, "acquisition")),
+		galleryRoot:     filepath.Join(root, cfg.GalleryDirName()),
+		cacheRoot:       filepath.Join(root, cfg.CacheDirName()),
+		acquisitionRoot: filepath.Join(root, cfg.AcquisitionDirName()),
 		client:          &Client{http: &http.Client{Timeout: 60 * time.Second, Transport: newPooledTransport()}, cfg: cfg.Hitomi},
 		infoCache:       map[int]*infoCacheEntry{},
-		infoCacheRoot:   filepath.Join(root, orDefault(cfg.CacheDir, "cache"), "galleryinfo"),
+		infoCacheRoot:   filepath.Join(root, cfg.InfoCacheDirName(), "galleryinfo"),
 		infoDiskTTL:     galleryInfoCacheTTL,
 		cacheDiskMaxEntries: defaultCacheDiskMaxEntries,
 	}
@@ -595,7 +595,8 @@ func cacheEntryPath(v *viewer, kind, hash, format, variant string) (string, erro
 	return safeThumbnailCachePath(v.cacheRoot, hash, format, variant)
 }
 
-// pruneCacheEntries は kind 単位の disk cap（既定 8000 件・byte 計算なし）を DB 行だけで
+// pruneCacheEntries は kind 単位の disk cap（既定 4000 件・byte 計算なし・decision
+// docs/ai/decisions/2026-11-09-disk-cache-cap-count-4000.md）を DB 行だけで
 // 判定し、作成順（古い順）で超ぶ分をファイル削除 + 1 行 DELETE で捨てる（R-15）。現在閲覧中の
 // gallery の項目は捨ない。表に記録のない項目（表生成以前の file・backfill 禁止）は件数に
 // 入らず prune 対象にならない。ファイル削除に失敗した行は保持（次の prune で再試行）。
@@ -739,7 +740,7 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	}
 	searchMS := int64(time.Since(searchStart) / time.Millisecond)
 	recordStart := time.Now()
-	_ = recordDiscoveredBatch(v.db, ids, v.root)
+	_ = recordDiscoveredBatch(v.db, v.cfg, ids)
 	recordMS := int64(time.Since(recordStart) / time.Millisecond)
 	jsonStart := time.Now()
 	buf := &bytes.Buffer{}
@@ -795,7 +796,7 @@ func (v *viewer) searchCard(w http.ResponseWriter, r *http.Request) {
 	}
 	v.infoCacheMu.Unlock()
 	w.Header().Set("x-cache", cacheState)
-	_ = recordDiscoveredIfMissing(&sqlCardStore{v.db}, id, galleryDir(v.root, id))
+	_ = recordDiscoveredIfMissing(&sqlCardStore{v.db}, id, galleryDir(v.cfg, id))
 	jsonOut(w, v.searchResult(id, background))
 }
 
@@ -852,7 +853,7 @@ func (v *viewer) gallery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	if err := upsertGallery(v.db, info, galleryDir(v.root, info.ID)); err != nil {
+	if err := upsertGallery(v.db, info, galleryDir(v.cfg, info.ID)); err != nil {
 		http.Error(w, "upsert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1196,7 +1197,7 @@ func (v *viewer) read(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery_id and page >= 1 are required", http.StatusBadRequest)
 		return
 	}
-	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.cfg, body.GalleryID)); err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1220,7 +1221,7 @@ func (v *viewer) markViewed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery_id is required", http.StatusBadRequest)
 		return
 	}
-	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.cfg, body.GalleryID)); err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1253,7 +1254,7 @@ func (v *viewer) resetState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target must be viewed, read, or all", http.StatusBadRequest)
 		return
 	}
-	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.cfg, body.GalleryID)); err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1282,7 +1283,7 @@ func (v *viewer) fav(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gallery_id is required", http.StatusBadRequest)
 		return
 	}
-	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.root, body.GalleryID)); err != nil {
+	if err := recordDiscovered(v.db, body.GalleryID, galleryDir(v.cfg, body.GalleryID)); err != nil {
 		http.Error(w, "gallery: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

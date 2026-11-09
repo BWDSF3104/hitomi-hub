@@ -1157,7 +1157,7 @@ func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testin
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	target := filepath.Join(root, galleryDir(root, 125))
+	target := filepath.Join(root, galleryDir(defaultConfigForTest(), 125))
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1171,7 +1171,7 @@ func TestDownloadFilesParallelSkipsExistingFileWhenRecordedSizeMatches(t *testin
 	if calls != 1 {
 		t.Fatalf("run 1 image calls: got %d", calls)
 	}
-	if err := recordTestFileSize(db, filepath.Join(galleryDir(root, 125), "a.webp"), sql.NullInt64{Int64: 125, Valid: true}, int64(len(payload1))); err != nil {
+	if err := recordTestFileSize(db, filepath.Join(galleryDir(defaultConfigForTest(), 125), "a.webp"), sql.NullInt64{Int64: 125, Valid: true}, int64(len(payload1))); err != nil {
 		t.Fatal(err)
 	}
 	content = webpMagicBytes("z") // 2 run で fetch したら内容が変わる。skip なら内容保持のはず。
@@ -1202,7 +1202,7 @@ func TestDownloadFilesParallelRefetchesOnSizeMismatchMissingOrUnrecorded(t *test
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	target := filepath.Join(root, galleryDir(root, 126))
+	target := filepath.Join(root, galleryDir(defaultConfigForTest(), 126))
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1219,7 +1219,7 @@ func TestDownloadFilesParallelRefetchesOnSizeMismatchMissingOrUnrecorded(t *test
 		t.Fatal(err)
 	}
 	for _, hash := range []string{"match", "mismatch", "missing"} {
-		if err := recordTestFileSize(db, filepath.Join(galleryDir(root, 126), hash+".webp"), galleryID, 1); err != nil {
+		if err := recordTestFileSize(db, filepath.Join(galleryDir(defaultConfigForTest(), 126), hash+".webp"), galleryID, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1346,11 +1346,11 @@ func TestDownloadFilesParallelLiveSecondRunSkipsExistingFiles(t *testing.T) {
 	if len(info.Files) < 2 {
 		t.Fatalf("live gallery too small: %d files", len(info.Files))
 	}
-	target := filepath.Join(scratch, galleryDir(scratch, info.ID))
+	target := filepath.Join(scratch, galleryDir(defaultConfigForTest(), info.ID))
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := upsertGallery(db, info, galleryDir(scratch, info.ID)); err != nil {
+	if err := upsertGallery(db, info, galleryDir(defaultConfigForTest(), info.ID)); err != nil {
 		t.Fatal(err)
 	}
 

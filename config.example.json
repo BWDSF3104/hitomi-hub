@@ -1,6 +1,8 @@
 {
   "db": "hitomi.db",
   "gallery_dir": "Galleries",
+  "cache_dir": "cache/images",
+  "acquisition_dir": "acquisition",
   "yr": null,
   "virustotal": {
     "enabled": false,

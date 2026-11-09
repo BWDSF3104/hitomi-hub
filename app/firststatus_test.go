@@ -68,7 +68,7 @@ func TestFirstStatusRankToPageConversion(t *testing.T) {
 	}
 	v, _, _ := firstStatusTestViewer(t, dataset, map[string]string{})
 	db := v.db
-	if err := recordDiscovered(db, 127, galleryDir(v.root, 127)); err != nil {
+	if err := recordDiscovered(db, 127, galleryDir(v.cfg, 127)); err != nil {
 		t.Fatal(err)
 	}
 	if err := setViewed(db, 127); err != nil {
@@ -98,7 +98,7 @@ func TestFirstStatusStatusMaskMembership(t *testing.T) {
 	v, _, _ := firstStatusTestViewer(t, dataset, map[string]string{})
 	db := v.db
 	for _, id := range []int{201, 202} {
-		if err := recordDiscovered(db, id, galleryDir(v.root, id)); err != nil {
+		if err := recordDiscovered(db, id, galleryDir(v.cfg, id)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -157,7 +157,7 @@ func TestFirstStatusSavedEventPreFilterAndStickyAfterDeletion(t *testing.T) {
 	v, galleryRoot, fetches := firstStatusTestViewer(t, []uint32{201, 202, 203, 204, 205}, infos)
 	db := v.db
 	for _, id := range []int{202, 205} {
-		if err := recordDiscovered(db, id, galleryDir(v.root, id)); err != nil {
+		if err := recordDiscovered(db, id, galleryDir(v.cfg, id)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -262,7 +262,7 @@ func TestFirstStatusSharedSearchCacheNoRefetch(t *testing.T) {
 	// cache してから slice。jump は同一 cacheKey を共有し、2 度目の呼出で fetch が増えない。
 	v, _, fetches := firstStatusTestViewer(t, []uint32{401, 402, 403, 404}, map[string]string{})
 	db := v.db
-	if err := recordDiscovered(db, 402, galleryDir(v.root, 402)); err != nil {
+	if err := recordDiscovered(db, 402, galleryDir(v.cfg, 402)); err != nil {
 		t.Fatal(err)
 	}
 	if err := setFavorite(db, 402, true); err != nil {
@@ -303,7 +303,7 @@ func TestSearchFirstStatusHandlerShapeAndReadonly(t *testing.T) {
 	// API は foreground・read-only。DB 書込み（galleries 行）が増えないこと。
 	v, _, _ := firstStatusTestViewer(t, []uint32{501, 502}, map[string]string{})
 	db := v.db
-	if err := recordDiscovered(db, 502, galleryDir(v.root, 502)); err != nil {
+	if err := recordDiscovered(db, 502, galleryDir(v.cfg, 502)); err != nil {
 		t.Fatal(err)
 	}
 	if err := setViewed(db, 502); err != nil {

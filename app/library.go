@@ -150,6 +150,6 @@ func recordPage(db *sql.DB, galleryID, pageIndex int, hash string) error {
 	return err
 }
 
-func galleryDir(root string, galleryID int) string {
-	return filepath.Join("Galleries", strconv.Itoa(galleryID))
+func galleryDir(cfg Config, galleryID int) string {
+	return filepath.Join(cfg.GalleryDirName(), strconv.Itoa(galleryID))
 }

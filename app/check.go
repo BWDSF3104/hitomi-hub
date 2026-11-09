@@ -29,7 +29,7 @@ func savedQueryIDs(client *Client, query, lang string) ([]int, error) {
 }
 
 // runSavedQueries は保存検索の新着を追跡し、表示分を galleries に記録して last_run_at を更新
-func runSavedQueries(db *sql.DB, client *Client, root, lang string, limit int) ([]map[string]any, error) {
+func runSavedQueries(db *sql.DB, client *Client, cfg Config, lang string, limit int) ([]map[string]any, error) {
 	queries, err := listRows(db, "queries")
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func runSavedQueries(db *sql.DB, client *Client, root, lang string, limit int) (
 			if err := markQuerySeen(tx, queryID, id); err != nil {
 				return nil, err
 			}
-			if err := recordDiscovered(tx, id, galleryDir(root, id)); err != nil {
+			if err := recordDiscovered(tx, id, galleryDir(cfg, id)); err != nil {
 				return nil, err
 			}
 			newIDs = append(newIDs, id)

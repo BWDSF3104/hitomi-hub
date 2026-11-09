@@ -21,7 +21,7 @@ func TestRunSavedQueriesTracksNewGalleries(t *testing.T) {
 		}
 		return nil, nil
 	}}
-	results, err := runSavedQueries(db, c, t.TempDir(), "english", 0)
+	results, err := runSavedQueries(db, c, defaultConfigForTest(), "english", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestRunSavedQueriesTracksNewGalleries(t *testing.T) {
 		t.Fatalf("seen %v", got["seen"])
 	}
 
-	results, err = runSavedQueries(db, c, t.TempDir(), "english", 0)
+	results, err = runSavedQueries(db, c, defaultConfigForTest(), "english", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestRunSavedQueriesRollsBackNewIdsWhenGalleryRecordFails(t *testing.T) {
 		return page, nil
 	}}
 
-	if _, err := runSavedQueries(db, c, t.TempDir(), "english", 0); err == nil {
+	if _, err := runSavedQueries(db, c, defaultConfigForTest(), "english", 0); err == nil {
 		t.Fatal("expected gallery record failure")
 	}
 	var seenCount int
@@ -117,7 +117,7 @@ func TestRunSavedQueriesUsesIndexForPlainQuery(t *testing.T) {
 			return data, nil
 		}
 	}}
-	results, err := runSavedQueries(db, c, t.TempDir(), "english", 1)
+	results, err := runSavedQueries(db, c, defaultConfigForTest(), "english", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

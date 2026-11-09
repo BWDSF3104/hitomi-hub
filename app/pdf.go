@@ -285,7 +285,7 @@ func zlibBytes(data []byte, buf *bytes.Buffer, w *zlib.Writer) ([]byte, error) {
 // Flate）を追加 object として書く。opaque のみの page は byte 形式が従来と同一。object
 // 番号は page の base（3+i*3）で連続、SMask を書く page のみ +1 ずれ、xref は object 番号順。
 func exportPDF(db *sql.DB, cfg Config, root string, galleryID int, out string) (map[string]any, error) {
-	dirName := orDefault(cfg.GalleryDir, "Galleries")
+	dirName := cfg.GalleryDirName()
 	format := orDefault(cfg.Hitomi.ImageFormat, "webp")
 	entries, order, err := exportPages(db, galleryID, dirName, format)
 	if err != nil {

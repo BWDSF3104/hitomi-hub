@@ -1559,13 +1559,13 @@ func TestSearchHandlerRecordsAllIDsInOneTransactionAfterFetch(t *testing.T) {
 	}
 	loopStart := time.Now()
 	for _, id := range idsInt {
-		if err := recordDiscovered(v.db, id, galleryDir(v.root, id)); err != nil {
+		if err := recordDiscovered(v.db, id, galleryDir(v.cfg, id)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	loopUS := time.Since(loopStart)
 	batchStart := time.Now()
-	if err := recordDiscoveredBatch(v.db, idsInt, v.root); err != nil {
+	if err := recordDiscoveredBatch(v.db, v.cfg, idsInt); err != nil {
 		t.Fatal(err)
 	}
 	batchUS := time.Since(batchStart)
@@ -1623,7 +1623,7 @@ func TestViewerSearchCardHandlerReturnsResult(t *testing.T) {
 func TestSearchCardHandlerIsReadOnlyForExistingRow(t *testing.T) {
 	galleryJSON := `var galleryinfo = {"id":"1","title":"Kemo","language":"english","type":"doujinshi","tags":[],"artists":[],"files":[{"hash":"` + sampleHash + `","name":"001.png"}]}`
 	v, _ := newTestViewer(t, galleryJSON)
-	if err := recordDiscoveredBatch(v.db, []int{1}, v.root); err != nil {
+	if err := recordDiscoveredBatch(v.db, v.cfg, []int{1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.db.Exec(`UPDATE galleries SET last_seen = 'sentinel' WHERE gallery_id = 1`); err != nil {
@@ -3719,7 +3719,7 @@ func TestViewerAcquisitionCheckReturnsRunStartFolderStatus(t *testing.T) {
 	root := t.TempDir()
 	v := newViewer(db, defaultConfigForTest(), root)
 
-	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(v.cfg, 1)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3760,7 +3760,7 @@ func TestViewerAcquisitionCheckUsesSanitizedTitleFolderMatchingAcquire(t *testin
 	v := newViewer(db, defaultConfigForTest(), root)
 
 	title := `what?/file` // 無効文字を含む title。sanitize 名は `what__file`
-	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: title, Language: "japanese"}, galleryDir(root, 1)); err != nil {
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: title, Language: "japanese"}, galleryDir(v.cfg, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
@@ -3821,7 +3821,7 @@ func TestViewerAcquisitionCopiesCacheFileIntoTitleFolder(t *testing.T) {
 	root := t.TempDir()
 	v := newViewer(db, defaultConfigForTest(), root)
 
-	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(v.cfg, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
@@ -3879,7 +3879,7 @@ func TestViewerAcquisitionExistingTitleFolderRequiresOverwrite(t *testing.T) {
 	root := t.TempDir()
 	v := newViewer(db, defaultConfigForTest(), root)
 
-	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "Kemo", Language: "japanese"}, galleryDir(v.cfg, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
@@ -3944,7 +3944,7 @@ func TestViewerAcquisitionRejectsPathOutsideAcquisitionRoot(t *testing.T) {
 		t.Errorf("path guard must keep traversal-shaped input inside root: got %q err %v", got, err)
 	}
 
-	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "..", Language: "japanese"}, galleryDir(root, 1)); err != nil {
+	if err := upsertGallery(db, &GalleryInfo{ID: 1, Title: "..", Language: "japanese"}, galleryDir(v.cfg, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(v.cacheRoot, 0o755); err != nil {
@@ -4010,7 +4010,7 @@ func TestViewerAcquisitionSameTitleDifferentGalleryWritesDifferentFolders(t *tes
 	// R-05 合格条件: 同名 title（言語違い想定）の 2 gallery が別 folder に分かれ
 	// 同名 page file 上書き衝突が構造的に起きない（新命名）。
 	for _, id := range []int{1, 2} {
-		if err := upsertGallery(db, &GalleryInfo{ID: id, Title: "dup title", Language: "japanese"}, galleryDir(root, id)); err != nil {
+		if err := upsertGallery(db, &GalleryInfo{ID: id, Title: "dup title", Language: "japanese"}, galleryDir(v.cfg, id)); err != nil {
 			t.Fatal(err)
 		}
 	}
