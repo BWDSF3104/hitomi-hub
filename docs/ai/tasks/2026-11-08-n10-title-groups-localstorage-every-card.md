@@ -3,7 +3,7 @@
 **Status**: 進行中
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
-**Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+**Next Action**: 画面確認（served）不合格のまま: 共用 browser の占有解消後、記録の実装 plan（debounce＋同値 skip・named callback 流儀）と scratch の harness コピーを再適用し served 画面確認を再実行 → 正典検証 → task_manager end。実装分は不合格により破棄済み（HEAD d80ca07 復元）
 
 ## 意図 / 背景
 
@@ -162,3 +162,62 @@ localStorage 上限（外部仕様）: origin あたり約 5 MB 級。n=10,000 �
 - 新要素: 画面確認が共用 browser の乗っ取りで実況確立不能（前批・今回同じ）。実装前の画面テスト合格は共用 browser の占有解消に依存。debounce 部分（意味変更なし）は単独実施可のまま。
 
 推定規模: 小〜中（search.html helper 群 約 30–60 行＋新テスト。既存テスト変更なし）— 前批と不変。
+
+## 2026-11-09 実装委譲（項目#10・実装サブエージェント・assess-20261109-1320 分）
+
+**実行固有ID**: assess-20261109-1320（実装委譲）。合否: **不合格（画面確認未検証・帰属確立不能）→ 項目進行中のまま・作業ツリーは委譲前 HEAD d80ca07 へ復元（実装分は破棄・本記録に残置）**。修正・再検証試行: 実装 1 回（合格条件のうち harness＋正典検証は合格・画面確認のみ不合格）。画面確認試行 3 回（すべて共用 browser の乗っ取り）。
+
+### 採用した判断（推奨案・ユーザー同意済み 2026-11-09）
+
+- debounce（既存 debounce helper 流儀＝window 末 1 write）＋同値 skip（flush 時 payload を last persisted と比較、同値なら write skip）のみ。件数上限・淘汰順（bounded 側）は承認案件分離のまま未実施。`readListsDebounceMs`（/api/lists 正典意味）は流用せず、localStorage 側は別実装（`titleGroupsPersistDebounceMs = 250` — 既存 debounce convention 250 ms を新定数として採用・流用ではない）。
+- `loadTitleGroups()` は保存済み raw 文字列を同値 skip の baseline として seeds（解析済みオブジェクトではなく raw 文字列を保持）。
+
+### 実装内容（破棄済・再実行用に要点）
+
+`app/search.html`（persist helper 群・manualBlock/patchHelperBlock/schedulerBlock 境界外）:
+
+```js
+const titleGroupsPersistDebounceMs = 250;
+let titleGroupsPersistTimer = null;
+let lastTitleGroupsPersisted = null;
+
+function loadTitleGroups() { /* raw 文字列を lastTitleGroupsPersisted へ seeds */ }
+function persistTitleGroups() { // payload = JSON.stringify(Object.fromEntries(titleGroups));
+  // payload === lastTitleGroupsPersisted なら skip。setItem 成功時のみ baseline 更新（catch 握りつぶし挙動維持）
+}
+function flushTitleGroups() { titleGroupsPersistTimer = null; persistTitleGroups(); }
+function saveTitleGroups() { // clearTimeout→reschedule（既存流儀）
+  titleGroupsPersistTimer = setTimeout(flushTitleGroups, titleGroupsPersistDebounceMs);
+}
+```
+
+- `setSearchTitleGroup` の group 決定条件・呼出点は不変（呼出ごとに map 更新同一順・persist 束ねのみ）。
+- named callback 採用理由: anonymous arrow の `setTimeout(() => {` 文字列 pin を read_lists_debounce_harness の lists helper 群順序判定（clearTimeout < setTimeout）より前に置かないため（試行中に literal 衝突を 1 回検出し、テスト側変更なしで named callback 流儀へ統一して解決）。
+- 合格条件が必要とするテスト更新（`app/viewer_test.go` pin）は不要だった（全 pin 保持・既存テスト全通過）。テスト追加のみ: `tests/title_groups_persist_debounce_harness.mjs`（正典流儀・mock・外部 API なし・20 checks）＋ `tests/test_title_groups_persist_debounce.py`（pytest 統合）。両ファイルは不合格により `tests/` から除去し、再実行用のコピーを `docs/ai/tmp/n10-impl-20261109/`（gitignore scratch）に残置。
+
+### 検証（実施結果）
+
+- `node tests/title_groups_persist_debounce_harness.mjs` → 20 checks passed（約 1 s）。決定論動作: cold 75 呼出→window 前 write 0・window 末 write 1（payload 75 件）・warm round trip 25 schedule→同値 skip（write 0）・load baseline seeds・condition classes（schedule 15・skip 10）保持。
+- 改善数値再実測（n=10,000 warm・mock）: sync 75 write 累计 **447.3 ms** → debounce 1 write flush **5.2 ms**（run により 596.9→5.6 / 434.2→5.6 / 447.3→5.2。前批 747→11.1 と同一機構・機械分散・bounds >300/<100 合格）。実測で閉じた（壁時間区別: mock の setItem は assignment のみ）。
+- 正典検証: `go vet .` clean・`go test -count=1 -timeout 300s .`（app）→ ok 26.691 s（`TestEmbeddedUIHasSameTitleJapaneseAnchor` pin 全保持）。`python -m pytest tests/ -v` → **65 passed**（25.18 s・freshness test 含む・既存テスト変更なし）。既存 harness: read_lists_debounce 29 checks・manual_jp 20・prefetch 42 → 全通過。
+
+### 画面確認（served）— 不合格（帰属確立不能・3 試行）
+
+- 準備条件は満たした: fresh canonical `hub.exe`（現 app 最終状態から build・freshness test 合格）＋ fresh server instance（pid 14720・port 8753・scratch dataDir `docs/ai/tmp/n10-impl-20261109/served_data`（schema.sql・config.example.json コピー。実 DB・正典 config・完成フォルダ非接触）＋ isolated origin（新 context 3 個）。window size 実測 inner 1666x932（人工 resize なし・自然）。
+- 試行1（context `n10-impl-20261109`）: navigate 後即 evaluate で hash `#/q/furry/page/1`・storage keys（filters/last_search/title_groups）・groups 74・status「検索完了・カード表示済み 25件」= 測定 install 前に外部 run が my tab を乗っ取り search 完了。
+- 試行2（context `n10-own-impl-20261109`）: navigate 呼び出し内で hash `#/q/furry/page/1` 出現（即汚染）。
+- 試行3（context `n10-own-impl-t3`）: navigate 呼び出し内で hash `#/q/furry/page/1`、直後 evaluate で storage keys＋groups 74（帰属確立不能）。前批（assess-20261108-1332・assess-20261109-1320 調査）と同因: 共用 Playwright browser の並行 session（main busy）が my isolated context/tab を数秒内で乗っ取る。per-run 書入回数・before/after（操作前後・同一条件）が成立せず → capture 不合格。
+- 合格条件の served 部分（保存結果＝title groups 表示の正しさ）は**未検証**。Drive 保存なし（`I:\マイドライブ\kilo\` 配下へフォルダ作らず・スクリーンショットなし）。local copy（project root 内 scratch）該当なし → `kilo-safe-remove` 該当なし。server 停止済み（pid 14720）。自分の tab 閉鎖済み（残 tab は共用 browser の他 session 分・非接触）。
+- 残件（gitignore・project root 内 scratch）: `docs/ai/tmp/n10-impl-20261109/`（served_data（server 生成 DB/cache あり・scratch 内・実 DB 非接触）＋ harness/test の再実行用コピー＋ debug_scoping.mjs）。
+
+### 作業ツリーの扱い（不合格時の手順）
+
+- `app/search.html` を `git restore` で d80ca07 へ復元。`tests/` の追加 2 ファイルは正典 `kilo-safe-remove` でゴミ箱へ送り、scratch へコピーを残置（再実行用）。委譲前状態（clean HEAD d80ca07）へ復元し、本記録のみ追記コミット（record only）。
+- 影響疑い（步骤6）: 実装分は pin 全保持・既存 suite 全緑で確認（破棄済み）。破棄した実装分は他項目の合格済み結果へ影響なし。read_lists_debounce_harness は非変更（literal 流儀の衝突は app 側 named callback で解決）。
+
+### 次の対応（parent）
+
+- 共用 browser の占有解消後、同一合格条件で served 画面確認を再実行。実装 plan（上）と harness（scratch コピー）そのまま再適用可。実装→画面確認合格→正典検証→`task_manager end` の順。
+- Status/Next Action は正典 task_manager で更新（本項目は不合格のまま進行中）。
+
+コミット: record only（本項目分）。実装・テスト分は不合格によりコミットしない。
