@@ -1484,13 +1484,20 @@ func TestSearchHandlerIncludesMeasurementShape(t *testing.T) {
 	if !strings.Contains(header, "search=") || !strings.Contains(header, "record=") || !strings.Contains(header, "json=") {
 		t.Errorf("timing header missing phase fields: got %q", header)
 	}
+	headerJSON := 0
 	for _, part := range strings.Split(header, ";") {
 		if strings.HasPrefix(part, "json=") {
 			value, err := strconv.Atoi(strings.TrimPrefix(part, "json="))
 			if err != nil || value <= 0 {
 				t.Errorf("timing header json value must be positive: got %q", part)
 			}
+			headerJSON = value
 		}
+	}
+	// R-21 pin（構造化注入）: timing.json_ms と header の json 値は同一測定値でなければならない。
+	// 後付け文字列置換の复活や key 衝突での誤置換は一致崩れとしてこの assertion が捕捉する。
+	if headerJSON > 0 && jsonMS > 0 && int(jsonMS) != headerJSON {
+		t.Errorf("timing json_ms must match header json value: timing=%v header=%q", jsonMS, header)
 	}
 	metrics, ok := out["metrics"].(map[string]any)
 	if !ok || len(metrics) == 0 {

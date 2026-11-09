@@ -1278,6 +1278,11 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 	recordMS := int64(time.Since(recordStart) / time.Millisecond)
 	jsonStart := time.Now()
 	buf := &bytes.Buffer{}
+	timing := map[string]any{
+		"search_ms": searchMS,
+		"record_ms": recordMS,
+		"json_ms":   0,
+	}
 	payload := map[string]any{
 		"query": q,
 		"lang":  r.URL.Query().Get("lang"),
@@ -1285,11 +1290,7 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 		"total": total,
 		"ids":   ids,
 		"results": []map[string]any{},
-		"timing": map[string]any{
-			"search_ms": searchMS,
-			"record_ms": recordMS,
-			"json_ms":   0,
-		},
+		"timing":  timing,
 		"metrics": v.client.metricsSnapshot(),
 	}
 	if err := json.NewEncoder(buf).Encode(payload); err != nil {
@@ -1302,8 +1303,15 @@ func (v *viewer) search(w http.ResponseWriter, r *http.Request) {
 		jsonMS = 1
 	}
 
+	// R-21（KI-20261106-03）構造化注入（案1・2026-11-09 同意）: 後付け bytes.Replace をやめ、
+	// encode 実測値を timing map 側で組み立てて再 encode。json_ms の意味（encode 実測）不変。
+	timing["json_ms"] = jsonMS
+	buf.Reset()
+	if err := json.NewEncoder(buf).Encode(payload); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	data := buf.Bytes()
-	data = bytes.Replace(data, []byte(`"json_ms":0`), []byte(fmt.Sprintf(`"json_ms":%d`, jsonMS)), 1)
 
 	w.Header().Set("cache-control", "no-store")
 	w.Header().Set("content-type", "application/json; charset=utf-8")

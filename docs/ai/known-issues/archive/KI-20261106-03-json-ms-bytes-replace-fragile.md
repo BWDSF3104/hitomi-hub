@@ -1,6 +1,6 @@
 # R-21（低優先）: search ハンドラの json_ms を bytes.Replace で後付けしている
 
-**Status**: 未解決（壊れやすい実装・判定は読み取り）
+**Status**: 解決済み（2026-11-10 実装・検証合格・案1 構造化注入）
 **Date**: 2026-11-06
 **Source**: 外部指摘（Claude）2026-11-06 補足 → `docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md`
 
@@ -54,3 +54,29 @@
 - 読了（文件名明記）: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。
 - 本再調査は read-only（コード変更なし・変更は本記録のみ）。正典の「変更後」検証条（`go vet . && go test -count=1 -timeout 300s .`）は適用対象外（docs のみの変更は検証不要の共通条）。実測は上記スクラッチ go run の出力で固定。
 - UI 画面確認は該当なし（UI 項目ではない）。
+
+## 2026-11-10 実装（項目 #4・assess-20261109-1320・案1 構造化注入）
+
+### 採用した判断（段階1・ユーザー同意済み 2026-11-09）
+
+- 案1（構造化注入・2 pass 再 encode）採用。後付け `bytes.Replace` を削除し、encode 実測値を timing map 側で組み立てて再 encode。`json_ms` の意味（encode 実測・正値・header `json` と同一測定値）不変。防御強化のみ（脆さをテスト pin で残す案）は不採用（同意済み）。
+- 正典ポインタの食い違い（記録・実測で閉）: 委譲文は `app/hitomi.go:185-187` を指すが、本エントリ正典と実コードは `app/viewer.go` の `search` ハンドラ（現 1244-1313・置換は 1306）。正典＋実コードを正として app/viewer.go を修正。`app/hitomi_test.go` に json_ms pin なし（実測確認・更新なし）。
+
+### 変更
+
+- `app/viewer.go`（search ハンドラ）: 後付け置換 → 構造化注入（timing map 参照・placeholder 0 → 実測 jsonMS → 再 encode）。gate・singleflight・x-cache・TN・full 経路・`validHash`・JSON 出力の意味（key 順・shape・newline）不変。
+- `app/viewer_test.go`（`TestSearchHandlerIncludesMeasurementShape`）: 既存 pin（timing 各 field・正値・metrics 非重複・header 相位）維持＋追加 pin「`timing.json_ms` と header `json` 値の一致」（本節 38 行の最小の実効対策・実効対策の同意済み pin 更新）。後付け置換の復活や key 衝突による誤置換は一致崩れとして捕捉。
+
+### 合格条件の証拠
+
+- 決定論確認（scratch・正典流儀・mock・外部 API なし・stdlib）: `docs/ai/tmp/assess-20261109-1320/ki20261106-03-structured.go`（`go run`）。
+  - case A（query に raw pattern → escape）: 旧・新出力 bytes 完全一致・header==timing 一致（json_ms=1）。
+  - case B（key `marker.json_ms`）: 一致・衝突なし。
+  - case C（hypothetical key 衝突・値数値 0）: 旧は metrics 誤置換で timing=0（header==timing 崩れ）、新は正位置（json_ms=1・metrics 値そのまま）。構造化で衝突経路が構造的に消えることを実測。
+  - case D（key `json_ms`・値 metric map＝実ハンドラの値型）: 旧・新 bytes 完全一致。既存 pin の意味（json_ms 固定）が保たれることの確認。
+- 正典検証: `go vet .` clean・`go test -count=1 -timeout 300s .` ok（約27s・更新 pin 通過・`-count=5` 反復 5/5 安定）。`python -m pytest tests/ -v` 65 passed（canonical build freshness 含む・正典 hub.exe を現 app から fresh build 後）。
+- 画面確認: 該当なし（UI 項目でない）→ 実施なし・Drive 保存なし（未検証扱いではない）。
+
+### 作業前チェック適用記録（実装分）
+
+- 読了（本エントリ 54 行で明記済みの正典を維持参照）: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`、`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`、`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`。本改修は full 画像経路・TN・gate・singleflight に非接触。
