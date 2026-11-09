@@ -1035,12 +1035,14 @@ async function runPriority(displayed, signal) {
   const priorityOpenGen = openGeneration;
   const priorityRenderGen = renderGeneration;
   const priorityGalleryId = current.id;
+  const dispatches = [];
   for (const item of displayed) {
     if (signal.aborted) return;
     if (priorityShowGen !== showGeneration || priorityOpenGen !== openGeneration || priorityRenderGen !== renderGeneration || priorityGalleryId !== current.id) return;
     const img = container && container.querySelector("img[data-page='" + item.page + "']");
-    if (img) await loadFullImage(img, item.entry, signal, priorityGalleryId, priorityShowGen, priorityOpenGen, priorityRenderGen);
+    if (img) dispatches.push(loadFullImage(img, item.entry, signal, priorityGalleryId, priorityShowGen, priorityOpenGen, priorityRenderGen));
   }
+  await Promise.all(dispatches);
 }
 
 function resetBackgroundPrefetch(displayed) {

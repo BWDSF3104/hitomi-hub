@@ -1,6 +1,6 @@
 # N-06: runPriority が表示中の 2 枚を直列取得している
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
@@ -74,6 +74,18 @@
   - Drive files: `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06e-before-3863136-cold.png`, `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06e-after-3863136-cold.png`, `I:\マイドライブ\kilo\2026-11-08-n06-runpriority-serial-display-fetch\n06-cold-display-pair-confirmation-2026-11-08.txt`。
   - local cleanup: `kilo-safe-remove 'C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-before-3863136-cold.png'` と `kilo-safe-remove 'C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06e-after-3863136-cold.png'` は project root 外のため fail。project scratch 内の invalid before screenshot と confirmation text local copy は `kilo-safe-remove` でゴミ箱へ送った。
 
+### 実装後の検証（2026-11-09・assess-20261109-1320 委譲分）
+
+- app verification:
+  - command: `go vet . && go test -count=1 -timeout 300s .`（`app`）
+  - result: `go vet` clean / `ok hitomi-hub/app 26.262s`（既存テスト変更不要・pin 文字列維持で合格）
+- Python verification:
+  - command: `python -m pytest tests/ -v`
+  - result: `64 passed in 21.87s`（`test_canonical_build_freshness.py` 含む。前批の known failure `test_canonical_build_freshness_rule_exists` は現行合格）
+- Canonical build（fresh）: `go build -o S:\Documents\Kilo_Commons\hitomi-hub\output\hitomi-hub\hub.exe .`（`app` で実行）→ freshness test 合格＝canonical exe が現行 `app/viewer.html` を embed
+- harness（正典流儀・mock・外部 API なし）: `node tests/viewer_runpriority_parallel_harness.mjs` → `16 checks passed`。SERIAL reference median `1370 ms` / PARALLEL median `747 ms`（0.54）・dispatch gap median `62 ms`（image lane 60 ms 遵守）
+- served cold 画面確認: before（プレースホルダ）→ after（実像素 9/9・TN fallback なし）合格。詳細は上記「実装」節。Drive 保存先 `I:\マイドライブ\kilo\2026-11-09-n06-runpriority-serial-display-fetch\`
+
 ## 2026-11-09 再調査（assess-20261109-1320）
 
 ### 現在の実装と判断根拠
@@ -117,6 +129,35 @@
 
 - 推定規模: 小（単関数 + tests 維持）。
 - 重要度: 中（cold pair wall 約半減は remote cold のみ）。緊急度: 低（正典条件の破綻なし）。リスク: display order race（承認要）。依存: fast non-blocking viewer policy、TN display fallback 禁止、full actual pixels guard（維持必須）。
+
+### 作業前チェック（正典 3件・ファイル名で確認）
+
+- reading: `docs/ai/decisions/2026-11-01-root-and-tn-display-correction-policy.md`・`docs/ai/decisions/2026-11-01-fast-nonblocking-viewer-policy.md`・`docs/ai/decisions/2026-11-01-ggset-generation-and-drift.md`（本項目の分のみ照合。TN 表示源・TN display fallback 禁止・full 経路順序・generation guard は非接触）
+
+## 実装（2026-11-09・assess-20261109-1320 委譲分）
+
+- 変更: `app/viewer.html` `runPriority`（`app/viewer.html:1032`）の display pair dispatch を並列化。
+  - `for` ループ内の `if (img) await loadFullImage(...)` → `if (img) dispatches.push(loadFullImage(...))`（呼出文字列はそのまま＝テスト pin 維持）
+  - ループ後に `await Promise.all(dispatches);`
+  - `signal.aborted` チェックと generation guard は per-item dispatch 開始へ移動（意味不変・テスト pin 維持）
+  - dispatch order = array order（ソートなし）。完成順は到着順になり得る（同意済み副作用・strict first→second UX 要件は承認案件として分離済み・未実装）
+  - gate 正典（FIFO・将来予約・image lane 60 ms・grace 300 ms・background 未来予約禁止）・singleflight・TN・full actual pixels・x-cache・no-store fetch・objectURL display は非接触
+- 追加（正典流儀 harness）: `tests/viewer_runpriority_parallel_harness.mjs`（`bodyIn` 抽出 + `new Function`・mock・外部 API なし）と `tests/test_viewer_runpriority_parallel.py`
+- 実測（harness・mock network 679 ms・gate は現行 `gateLane` foreground 意味・image lane 60 ms・5 trials median）:
+  - SERIAL reference median wall `1370 ms` → PARALLEL（現行コード）median wall `747 ms`（0.54＝約半分）
+  - SERIAL 2枚目 gate wait `0 ms`（gate idle・無駄待ちは network 直列化）/ PARALLEL 2枚目 gate wait `60 ms`・dispatch gap median `62 ms`（image lane 60 ms 遵守・全 trial >= 60 ms）
+  - 非対称（1枚目 957 ms・2枚目 235 ms）: dispatch order `1,2`（array order 維持）・completion order `2,1`（到着順）
+  - harness 16 checks passed
+- 実測（served cold・正典確認テストルール準守）: fresh canonical build（freshness test 含む）→ fresh server instance pid `25348`・fresh root `scratch/n06_cold_20261109_b`（cold DB/cold cache）・isolated origin `n06-impl-20261109-cold2`・window outer `1679x1025` / inner `1666x932`・devicePixelRatio 2
+  - gallery `4306867` page 7-8 cold pair: 1枚目（`fd489968…`）start `322 ms`・duration `1415 ms`・`805683 bytes`・`x-cache: miss`・200・`image/avif`。2枚目（`f88c78fe…`）start `322 ms`・duration `1288 ms`・`915973 bytes`・`x-cache: miss`・200・`image/avif`
+  - 2枚目が 1枚目の完了（`1737 ms`）を待たず同一時刻 `322 ms` で dispatch（直列なら 1737 ms 以降）→ pair wall `1415 ms`（直列換算 `2703 ms` の約半分）。resource timing 登録順は array order（page 7 → page 8）
+  - background prefetch は priority 完了後（`1741 ms`）から開始（`await currentPriorityDone` 意味維持）
+  - before（load 後 273 ms・実像素 0/9・プレースホルダ）→ after（実像素 9/9・objectURL 9/9・TN fallback なし・`dataset.fullCache=miss`・naturalWidth 2036）
+  - Drive 保存: `I:\マイドライブ\kilo\2026-11-09-n06-runpriority-serial-display-fetch\`（`n06-impl-20261109-4306867-pair78-before-placeholder-cold.png`、`n06-impl-20261109-4306867-pair78-after-cold.png`、`n06-implementation-confirmation-2026-11-09.txt`）
+  - local copy cleanup: 不合格試行の local copy（`docs/ai/tmp/assess-20261109-1320/n06-impl-4306867-pair78-before-placeholder-cold.png`）は正典 `kilo-safe-remove` でゴミ箱へ送った。Playwright output の local copies（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\n06-impl-4306867-pair78-before-placeholder-cold.png`・`-after-cold.png`）は project root 外（作業可能範囲外）のため削除せず残存（Drive へコピー済み。削除には追加承認が必要）
+  - 不合格試行（1回目）: 同一 instance 最初の root `n06_cold_20261109` で tool latency により before 取得時点で pair 読了（実像素 9/9）→ before/after 組として不合格。navigate と screenshot を同一 call 内で行い、fresh instance（pid 25348）で再測定して合格（試行 2 回）
+- 共用 browser の帰属: 測定 tab は isolated origin `n06-impl-20261109-cold2`。同一 port 8731 を参照する他 tab（4299126・733697・358885）は現れるが、本項目 gallery `4306867` を参照する tab はなし（tab list 根拠）。本 instance への他 tab 呼出は同一 tab から観測できないため、cold claims は「本 tab の isolated origin + fresh instance + fresh root」で成立させた
+- server（pid 25348）は確認後に停止済み。実 DB・config・完成フォルダ・cache 実データは非接触
 
 ## 完了時 Memory Bank 操作
 
