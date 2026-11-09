@@ -1,6 +1,6 @@
 # N-15: remote 由来値を innerHTML へ無エスケープ（local origin でスクリプト実行リスク）
 
-**Status**: 進行中
+**Status**: 完了
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
 **Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
