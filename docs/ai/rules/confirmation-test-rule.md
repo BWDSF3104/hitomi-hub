@@ -53,6 +53,7 @@ cold state を claim する UI/network 実測は、測定時点で次の3条件�
 - 保存先: ユーザーやり取りフォルダ `I:\マイドライブ\kilo`。フォルダはタスク別 `I:\マイドライブ\kilo\YYYY-MM-DD-<task-slug>\` を優先（`docs/ai/decisions/2026-11-02-google-drive-task-specific-screenshot-folder.md`）。date folder 条（`docs/ai/decisions/2026-11-02-google-drive-confirmation-storage-procedure.md`）は同日矛盾時に旧記録として扱い、本条の適用範囲は future tasks。
 - 各確認結果は画像（before / after を含む）と確認手順 text（`<confirmation-topic>-confirmation-YYYY-MM-DD.txt`）を同じフォルダへ置く。text は日本語で、日付・ファイル名・目的・操作手順・合格条件・実測値・合否・不合格条件・コード変更・検証コマンドと結果を書く。
 - Drive へ保存した後は、ローカルのスクリーンショットコピー（Playwright output、project `scratch/`）は正典 `kilo-safe-remove` でゴミ箱へ送る。`Remove-Item`・`del`・`Remove-Item -Recurse` は使わない。Drive 側は残す。
+- Playwright tool の output dir（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`）にある tool 生成物（png・yml・log・txt）は Drive 保存後、正典 `kilo-recycle-external <path> -Approved` でゴミ箱へ送る。このフォルダの `-Approved` は 2026-11-10 のユーザー常任承認に基づき（根拠: `docs/ai/decisions/2026-11-10-playwright-temp-cleanup-standing-approval.md`）、実行のたびに再確認しない。gate 自体（`-Approved` 引数）は正典 tool の条どおり有効。「削除せず記録」扱いだった名指しファイルも掃除対象とし、証拠は Drive 側とタスク記録で保持する。
 - git repository に screenshot binary を保存しない。個別タスク記録の Verification に Drive 保存先・ファイル名（before / after）、local copy をゴミ箱へ送った事実を記録する。
 
 ## 判定
