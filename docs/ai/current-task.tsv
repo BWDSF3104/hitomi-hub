@@ -1,9 +1,8 @@
 task_file	status	next_action
-docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	実装完了（17件委譲・16件合格終了）。残件: R-16 TN live write 未確認点（upstream 502・上流回復時に再確認）。記録のみ: KI-20261106-04（pytest 既存 failure・AGENTS.md pointer 修正要・承認案件）、KI-20261107-01（prefetch worker race・表示影響なし）。R-18 終了済み。R-19 実例待ち（非実施）
-docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	優先順位確定済み（17/17・N-13 対応不要で閉）。実装開始指示待ち。上位: N-17・N-15・N-16・N-03
-docs/ai/tasks/2026-11-08-n01-scan-skip-failure-status.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
-docs/ai/tasks/2026-11-08-n02-pdf-danger-keys-head-tail.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
-docs/ai/tasks/2026-11-08-n03-gg-ttl-not-refreshed-in-proxy.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
-docs/ai/tasks/2026-11-08-n04-reader-second-page-landscape.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
-docs/ai/tasks/2026-11-08-n05-strip-click-reopens-gallery.md	進行中	調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
-docs/ai/tasks/2026-11-09-assess-20261109-1320-items.md	進行中	優先順位確定済み（20/20・#17 対応不要で閉）。実装開始指示待ち。上位: #20・#19・#1・#14・#6
+docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	残 R-16（upstream 502・回復時に TN live write 再確認）と R-19（実例待ち）。記録項目は閉済み: KI-20261106-04 は #17 で閉・KI-20261107-01 は guard 実装（3098fb0）で閉
+docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	調査完了 17/17・12件閉（実装11＋N-13 対応不要）。残 N-01〜N-05 は 11-09 queue 非包含の実施抜け。上位残: N-03・N-02・N-01・N-04・N-05（本体単独実施可・承認サブ分分離済み）
+docs/ai/tasks/2026-11-08-n01-scan-skip-failure-status.md	進行中	調査完了・実施未。推奨案（scan_meta.retry_needed 列追加・D-03 非破壊）単独実施可。実施指示待ち
+docs/ai/tasks/2026-11-08-n02-pdf-danger-keys-head-tail.md	進行中	調査完了・実施未。窓分割（head+tail・合計 MaxScanBytes 不変）は本体単独実施可。pass→hit 波及と xref 解凍案は承認サブ分
+docs/ai/tasks/2026-11-08-n03-gg-ttl-not-refreshed-in-proxy.md	進行中	調査完了・実施未。remote path 先頭 EnsureGG(ctx,false) 1行・単独実施可（handler 最頭案は却下済み）
+docs/ai/tasks/2026-11-08-n04-reader-second-page-landscape.md	進行中	調査完了・実施未。2枚目 aspect 判定は本体単独実施可。page 番号・route・hash・既読 step・固定寸法契約は承認サブ分
+docs/ai/tasks/2026-11-08-n05-strip-click-reopens-gallery.md	進行中	調査完了・実施未。同一 gallery の showPage 化（4行・openGeneration guard 維持必須）単独実施可。badge 意味変更は承認サブ分

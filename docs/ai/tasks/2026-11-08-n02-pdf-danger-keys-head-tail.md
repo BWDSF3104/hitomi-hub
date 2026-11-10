@@ -4,7 +4,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+**Next Action**: 調査完了・実施未。窓分割（head+tail・合計 MaxScanBytes 不変）は本体単独実施可。pass→hit 波及と xref 解凍案は承認サブ分
 
 ## 意図 / 背景
 

@@ -4,7 +4,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+**Next Action**: 調査完了・実施未。推奨案（scan_meta.retry_needed 列追加・D-03 非破壊）単独実施可。実施指示待ち
 
 ## 意図 / 背景
 

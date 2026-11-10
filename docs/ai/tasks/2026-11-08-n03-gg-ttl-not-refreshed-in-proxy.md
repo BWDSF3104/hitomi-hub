@@ -4,7 +4,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: 調査委譲（assess-20261108-1332）。記録のみ。実装開始指示待ち
+**Next Action**: 調査完了・実施未。remote path 先頭 EnsureGG(ctx,false) 1行・単独実施可（handler 最頭案は却下済み）
 
 ## 意図 / 背景
 
