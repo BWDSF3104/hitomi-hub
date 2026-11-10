@@ -58,7 +58,7 @@ hitomi.la 用クライアントのハブ。検索・閲覧・ダウンロード�
 ## Rules
 
 - Project rules folder: `docs/ai/rules/`
-- 確認テスト系正典（単一ルール・テスト系は本ファイルに集約）: `docs/ai/rules/confirmation-test-rule.md` — 画面・network・実機の確認テストを行うとき（canonical build / served 画面確認・window size 基準・cold hygiene・screenshot 被写体と取得方法・操作前後の before/after・Drive 保存と local copy cleanup を含む）
+- 確認テスト系正典（単一ルール）: `docs/ai/rules/confirmation-test-rule.md` — canonical build / served 画面確認・cold hygiene・固定寸法例。Playwright 確認（被写体・window size・before/after・Drive 保存と local cleanup・ブラウザ開閉・判定）は global 正典 `AGENTS.md` の Rules ポインタ先の正典 rule を参照
 
 ## Documentation
 
