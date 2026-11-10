@@ -35,7 +35,7 @@ cold state を claim する UI/network 実測は、測定時点で次の3条件�
 - 通常スクリーンショットの被写体は Playwright browser tool で表示したブラウザ画面の画像。
 - 確認スクリプトは browser executable を launch しない。Playwright browser tool の target を直接使用する。
 - 通常確認で OS foreground 化は不要。`kilo-screen-capture.ps1` は Playwright browser 画面画像で確認できない OS-level exception（フルスクリーン状態・window state・viewport 外・複数 monitor）のためだけ使う exception script。その場合 `ExceptionReason` に「Playwright browser screenshot で確認できない理由」を記録し、画像は例外的 OS full-screen 確認として区別する。
-- Playwright の出力 root 制限により、まず `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`（または project `scratch/`）へ保存し、PowerShell `Copy-Item` で Drive へコピーする。
+- スクリーンショットは既定で project root 内（相対 filename・例 `scratch/`）へ保存する。Playwright の出力 root 制限は Drive への直書不可に対するものなので、PowerShell `Copy-Item` で Drive へコピーし、保存後の local copy 掃除は §6どおり（正典 `kilo-safe-remove` で自己完結）。tool が project root への書き出しを拒否した場合のみ temp（`C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`）へ保存し、その削除はユーザー明示承認（`kilo-recycle-external <path> -Approved`）を要る。
 - ブラウザは、開いたセッションが責任を持って閉じる。画面確認のため Playwright browser tool でブラウザを開いた場合は、スクリーンショットの Drive 保存とタスクへの記録が終わった時点で、他の工程へ進む前に browser tool の終了操作で閉じること。その後に不合格・未解決・判断の持ち帰り等のどの経路で終了する場合でも、結果を返す時点でブラウザは閉じていること。閉じられない場合は、その旨と理由を結果に明記する。
 - 委譲元の統括セッションは、委譲のたびに、結果へ「ブラウザを閉じた（または開いていない）」旨が含まれていることと、Playwright のブラウザ本体プロセス（コマンドラインに専用プロファイル／一時フォルダを含むもの。MCP サーバー本体は除く）の残存が 0 であることを機械的に確認する。残存がある場合は、その識別条件に一致するブラウザ本体プロセスだけを終了させ、終了させた件数を記録する。
 - 委譲を使わない単独実行でも同じ規律とする。タスク終了時にブラウザを閉じ、閉じた事実をタスク記録または報告に残す。
