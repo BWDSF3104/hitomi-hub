@@ -258,7 +258,7 @@ function saveTitleGroups() { // clearTimeout→reschedule（既存流儀）
 
 - `I:\マイドライブ\kilo\2026-11-10-hitomi-hub\` へ confirmation txt + 10 png（before/after 各組): `n10-t3-cold-before-20261110.png` / `n10-t3-cold-after-20261110.png` / `n10-t3-page2-before-20261110.png` / `n10-t3-page2-after-20261110.png` / `n10-t3-manualclick-before-20261110.png`（negative 観察）/ `n10-t3-page3-before-20261110.png` / `n10-t3-page3-after-20261110.png` / `n10-t3-page4-before-20261110.png` / `n10-t3-page4-after-20261110.png` / `n10-t3-link4298714-card-20261110.png`（positive link card 被写体）。
 - local copy cleanup: project root 内の `n10-t3-link4298714-card-20261110.png` は正典 `kilo-safe-remove` でゴミ箱へ送った（Drive 側保持）。Playwright 出力 png（project root 外 `C:\Users\fujim\AppData\Local\Temp\kilo-playwright-mcp\`）は正典削除の承認範囲外 → 残存＝追加承認要（正典条の例外として記録）。
-- 2026-11-09 追加承認（7件）の反映: #20 4枚・#12 2枚は `kilo-recycle-external -Approved` でゴミ箱へ送信済み。本項目は記録上の承認1件に対し temp 実残存が9枚（`n10-t3-*20261110.png`）で、承認された1件が特定できない → 削除未実行・ユーザー確認待ち（全9件か特定1件か）。console log・snapshot yml は記録対象のまま残置。
+- 2026-11-09 追加承認（7件）の反映: #20 4枚・#12 2枚は `kilo-recycle-external -Approved` でゴミ箱へ送信済み。本項目は記録上の承認1件に対し temp 実残存が9枚（`n10-t3-*20261110.png`）で不一致 → 確認結果「全9件を削除」（2026-11-09 ユーザー選択）により9枚全部を `kilo-recycle-external <path> -Approved` でゴミ箱へ送信済み（実行確認）。console log・snapshot yml は記録対象のまま残置。
 
 ### ブラウザ
 
