@@ -4,7 +4,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: 調査完了・実施未。推奨案（scan_meta.retry_needed 列追加・D-03 非破壊）単独実施可。実施指示待ち
+**Next Action**: 実施待ち（判断済み・まとめて実施指示）。推奨案: scan_meta.retry_needed 列追加・D-03 非破壊
 
 ## 意図 / 背景
 

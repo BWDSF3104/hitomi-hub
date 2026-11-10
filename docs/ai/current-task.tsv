@@ -1,8 +1,8 @@
 task_file	status	next_action
 docs/ai/tasks/2026-11-06-claude-review-20261106-findings.md	進行中	残 R-16（upstream 502・回復時に TN live write 再確認）と R-19（実例待ち）。記録項目は閉済み: KI-20261106-04 は #17 で閉・KI-20261107-01 は guard 実装（3098fb0）で閉
-docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	調査完了 17/17・12件閉（実装11＋N-13 対応不要）。残 N-01〜N-05 は 11-09 queue 非包含の実施抜け。上位残: N-03・N-02・N-01・N-04・N-05（本体単独実施可・承認サブ分分離済み）
-docs/ai/tasks/2026-11-08-n01-scan-skip-failure-status.md	進行中	調査完了・実施未。推奨案（scan_meta.retry_needed 列追加・D-03 非破壊）単独実施可。実施指示待ち
-docs/ai/tasks/2026-11-08-n02-pdf-danger-keys-head-tail.md	進行中	調査完了・実施未。窓分割（head+tail・合計 MaxScanBytes 不変）は本体単独実施可。pass→hit 波及と xref 解凍案は承認サブ分
-docs/ai/tasks/2026-11-08-n03-gg-ttl-not-refreshed-in-proxy.md	進行中	調査完了・実施未。remote path 先頭 EnsureGG(ctx,false) 1行・単独実施可（handler 最頭案は却下済み）
-docs/ai/tasks/2026-11-08-n04-reader-second-page-landscape.md	進行中	調査完了・実施未。2枚目 aspect 判定は本体単独実施可。page 番号・route・hash・既読 step・固定寸法契約は承認サブ分
-docs/ai/tasks/2026-11-08-n05-strip-click-reopens-gallery.md	進行中	調査完了・実施未。同一 gallery の showPage 化（4行・openGeneration guard 維持必須）単独実施可。badge 意味変更は承認サブ分
+docs/ai/tasks/2026-11-08-claude-review-20261108-findings.md	進行中	12件閉（実装11＋N-13 対応不要）。残 N-01〜N-05: 判断済み（まとめて実施指示＝推奨で確定）・実施待ち（11-09 queue 非包含の抜け）
+docs/ai/tasks/2026-11-08-n01-scan-skip-failure-status.md	進行中	実施待ち（判断済み・まとめて実施指示）。推奨案: scan_meta.retry_needed 列追加・D-03 非破壊
+docs/ai/tasks/2026-11-08-n02-pdf-danger-keys-head-tail.md	進行中	実施待ち（判断済み・まとめて実施指示）。推奨案: 窓分割 head+tail（合計 MaxScanBytes 不変）＋ xref 照合。解凍案のみ未判断
+docs/ai/tasks/2026-11-08-n03-gg-ttl-not-refreshed-in-proxy.md	進行中	実施待ち（判断済み・まとめて実施指示）。remote path 先頭 EnsureGG(ctx,false) 1行
+docs/ai/tasks/2026-11-08-n04-reader-second-page-landscape.md	進行中	実施待ち（判断済み・まとめて実施指示）。推奨案A: 2枚目 aspect 判定
+docs/ai/tasks/2026-11-08-n05-strip-click-reopens-gallery.md	進行中	実施待ち（判断済み・まとめて実施指示）。同一 gallery showPage 化（openGeneration guard 維持）

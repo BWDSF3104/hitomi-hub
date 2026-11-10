@@ -3,7 +3,7 @@
 **Status**: 進行中
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
-**Next Action**: 調査完了・実施未。同一 gallery の showPage 化（4行・openGeneration guard 維持必須）単独実施可。badge 意味変更は承認サブ分
+**Next Action**: 実施待ち（判断済み・まとめて実施指示）。同一 gallery showPage 化（openGeneration guard 維持）
 
 ## 意図 / 背景
 

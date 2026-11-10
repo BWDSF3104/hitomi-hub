@@ -4,7 +4,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: 調査完了・実施未。窓分割（head+tail・合計 MaxScanBytes 不変）は本体単独実施可。pass→hit 波及と xref 解凍案は承認サブ分
+**Next Action**: 実施待ち（判断済み・まとめて実施指示）。推奨案: 窓分割 head+tail（合計 MaxScanBytes 不変）＋ xref 照合。解凍案のみ未判断
 
 ## 意図 / 背景
 

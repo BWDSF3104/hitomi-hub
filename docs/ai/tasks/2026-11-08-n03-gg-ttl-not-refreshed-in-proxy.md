@@ -4,7 +4,7 @@
 
 **Status**: 進行中
 **Date**: 2026-11-08
-**Next Action**: 調査完了・実施未。remote path 先頭 EnsureGG(ctx,false) 1行・単独実施可（handler 最頭案は却下済み）
+**Next Action**: 実施待ち（判断済み・まとめて実施指示）。remote path 先頭 EnsureGG(ctx,false) 1行
 
 ## 意図 / 背景
 

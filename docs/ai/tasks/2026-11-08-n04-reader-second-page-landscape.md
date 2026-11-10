@@ -3,7 +3,7 @@
 **Status**: 進行中
 **実行固有ID**: assess-20261108-1332
 **Date**: 2026-11-08
-**Next Action**: 調査完了・実施未。2枚目 aspect 判定は本体単独実施可。page 番号・route・hash・既読 step・固定寸法契約は承認サブ分
+**Next Action**: 実施待ち（判断済み・まとめて実施指示）。推奨案A: 2枚目 aspect 判定
 
 ## 意図 / 背景
 
